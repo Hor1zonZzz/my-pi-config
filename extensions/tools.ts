@@ -9,9 +9,17 @@
  * 2. Use /tools to open the tool selector
  */
 
-import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ToolInfo,
+} from "@earendil-works/pi-coding-agent";
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList } from "@earendil-works/pi-tui";
+import {
+	Container,
+	type SettingItem,
+	SettingsList,
+} from "@earendil-works/pi-tui";
 
 // State persisted to session
 interface ToolsState {
@@ -35,6 +43,22 @@ export default function toolsExtension(pi: ExtensionAPI) {
 		pi.setActiveTools(Array.from(enabledTools));
 	}
 
+	// Keep the selector state aligned when a preset changes active tools.
+	pi.events.on("preset:tools-changed", (event) => {
+		const { tools } = event as { tools?: unknown };
+		if (
+			!Array.isArray(tools) ||
+			!tools.every((tool): tool is string => typeof tool === "string")
+		) {
+			return;
+		}
+
+		allTools = pi.getAllTools();
+		const allToolNames = new Set(allTools.map((tool) => tool.name));
+		enabledTools = new Set(tools.filter((tool) => allToolNames.has(tool)));
+		persistState();
+	});
+
 	// Find the last tools-config entry in the current branch
 	function restoreFromBranch(ctx: ExtensionContext) {
 		allTools = pi.getAllTools();
@@ -55,7 +79,9 @@ export default function toolsExtension(pi: ExtensionAPI) {
 		if (savedTools) {
 			// Restore saved tool selection (filter to only tools that still exist)
 			const allToolNames = allTools.map((t) => t.name);
-			enabledTools = new Set(savedTools.filter((t: string) => allToolNames.includes(t)));
+			enabledTools = new Set(
+				savedTools.filter((t: string) => allToolNames.includes(t)),
+			);
 			applyTools();
 		} else {
 			// No saved state - sync with currently active tools
@@ -72,8 +98,10 @@ export default function toolsExtension(pi: ExtensionAPI) {
 				return;
 			}
 
-			// Refresh tool list
+			// Refresh tool list and sync with the actual active tool set. This keeps
+			// the selector accurate after a preset or another extension changes tools.
 			allTools = pi.getAllTools();
+			enabledTools = new Set(pi.getActiveTools());
 
 			await ctx.ui.custom((tui, theme, _kb, done) => {
 				// Build settings items for each tool
@@ -107,6 +135,9 @@ export default function toolsExtension(pi: ExtensionAPI) {
 						}
 						applyTools();
 						persistState();
+						pi.events.emit("tools:changed", {
+							tools: Array.from(enabledTools),
+						});
 					},
 					() => {
 						// Close dialog

@@ -138,12 +138,26 @@ export default function presetExtension(pi: ExtensionAPI) {
 	let activePresetName: string | undefined;
 	let activePreset: Preset | undefined;
 	let originalState: OriginalState | undefined;
+	let activeContext: ExtensionContext | undefined;
+	let customTools = false;
 
 	// Register --preset CLI flag
 	pi.registerFlag("preset", {
 		description: "Preset configuration to use",
 		type: "string",
 	});
+
+	function setPresetTools(tools: string[]) {
+		const normalizedTools = Array.from(new Set(tools));
+		pi.setActiveTools(normalizedTools);
+		pi.events.emit("preset:tools-changed", { tools: normalizedTools });
+	}
+
+	function notifyPresetTools(tools: string[]) {
+		pi.events.emit("preset:tools-changed", {
+			tools: Array.from(new Set(tools)),
+		});
+	}
 
 	/**
 	 * Apply a preset configuration.
@@ -153,6 +167,9 @@ export default function presetExtension(pi: ExtensionAPI) {
 		preset: Preset,
 		ctx: ExtensionContext,
 	): Promise<boolean> {
+		activeContext = ctx;
+		customTools = false;
+
 		// Snapshot state before the first preset is applied (i.e. only when transitioning from no-preset)
 		if (activePresetName === undefined) {
 			originalState = {
@@ -202,8 +219,12 @@ export default function presetExtension(pi: ExtensionAPI) {
 			}
 
 			if (validTools.length > 0) {
-				pi.setActiveTools(validTools);
+				setPresetTools(validTools);
+			} else {
+				notifyPresetTools(pi.getActiveTools());
 			}
+		} else {
+			notifyPresetTools(pi.getActiveTools());
 		}
 
 		// Store active preset for system prompt injection
@@ -323,14 +344,15 @@ export default function presetExtension(pi: ExtensionAPI) {
 			// Clear preset and restore original state
 			activePresetName = undefined;
 			activePreset = undefined;
+			customTools = false;
 			if (originalState) {
 				if (originalState.model) {
 					await pi.setModel(originalState.model);
 				}
 				pi.setThinkingLevel(originalState.thinkingLevel);
-				pi.setActiveTools(originalState.tools);
+				setPresetTools(originalState.tools);
 			} else {
-				pi.setActiveTools(["read", "bash", "edit", "write"]);
+				setPresetTools(["read", "bash", "edit", "write"]);
 			}
 			ctx.ui.notify("Preset cleared, defaults restored", "info");
 			updateStatus(ctx);
@@ -350,9 +372,31 @@ export default function presetExtension(pi: ExtensionAPI) {
 	 */
 	function updateStatus(ctx: ExtensionContext) {
 		const mode = activePresetName ?? "default";
+		const suffix = customTools ? " (custom tools)" : "";
 		const color = activePresetName ? "accent" : "dim";
-		ctx.ui.setStatus("preset", ctx.ui.theme.fg(color, `preset: ${mode}`));
+		ctx.ui.setStatus(
+			"preset",
+			ctx.ui.theme.fg(color, `preset: ${mode}${suffix}`),
+		);
 	}
+
+	pi.events.on("tools:changed", (event) => {
+		const { tools } = event as { tools?: unknown };
+		if (
+			!Array.isArray(tools) ||
+			!tools.every((tool): tool is string => typeof tool === "string")
+		) {
+			return;
+		}
+		if (!activePresetName) return;
+
+		customTools = true;
+		pi.appendEntry("preset-state", {
+			name: activePresetName,
+			customTools,
+		});
+		if (activeContext) updateStatus(activeContext);
+	});
 
 	function getPresetOrder(): string[] {
 		return Object.keys(presets).sort();
@@ -378,14 +422,15 @@ export default function presetExtension(pi: ExtensionAPI) {
 		if (nextName === "(none)") {
 			activePresetName = undefined;
 			activePreset = undefined;
+			customTools = false;
 			if (originalState) {
 				if (originalState.model) {
 					await pi.setModel(originalState.model);
 				}
 				pi.setThinkingLevel(originalState.thinkingLevel);
-				pi.setActiveTools(originalState.tools);
+				setPresetTools(originalState.tools);
 			} else {
-				pi.setActiveTools(["read", "bash", "edit", "write"]);
+				setPresetTools(["read", "bash", "edit", "write"]);
 			}
 			ctx.ui.notify("Preset cleared, defaults restored", "info");
 			updateStatus(ctx);
@@ -447,6 +492,8 @@ export default function presetExtension(pi: ExtensionAPI) {
 
 	// Initialize on session start
 	pi.on("session_start", async (_event, ctx) => {
+		activeContext = ctx;
+
 		// Load presets from config files
 		presets = loadPresets(ctx.cwd);
 
@@ -473,13 +520,14 @@ export default function presetExtension(pi: ExtensionAPI) {
 				(e: { type: string; customType?: string }) =>
 					e.type === "custom" && e.customType === "preset-state",
 			)
-			.pop() as { data?: { name: string } } | undefined;
+			.pop() as { data?: { name: string; customTools?: boolean } } | undefined;
 
 		if (presetEntry?.data?.name && !presetFlag) {
 			const preset = presets[presetEntry.data.name];
 			if (preset) {
 				activePresetName = presetEntry.data.name;
 				activePreset = preset;
+				customTools = presetEntry.data.customTools === true;
 				// Don't re-apply model/tools on restore, just keep the name for instructions
 			}
 		}
@@ -490,7 +538,10 @@ export default function presetExtension(pi: ExtensionAPI) {
 	// Persist preset state
 	pi.on("turn_start", async () => {
 		if (activePresetName) {
-			pi.appendEntry("preset-state", { name: activePresetName });
+			pi.appendEntry("preset-state", {
+				name: activePresetName,
+				customTools,
+			});
 		}
 	});
 }

@@ -1,0 +1,63 @@
+# my-pi-config
+
+My public, reproducible configuration for [Pi Coding Agent](https://github.com/earendil-works/pi).
+
+## Included
+
+- `settings.json` — model defaults and installable Pi packages
+- `presets.json` — `quick`, `explore`, and `deep-code` presets
+- `codex-fast.json` — global state for the local Codex priority toggle
+- `extensions/` — local extensions
+- `agents/` — agents used by Pi's official subagent example
+- `prompts/` — subagent workflow prompts
+- `install.sh` — backup and install into `~/.pi/agent`
+
+## Local extensions
+
+- `preset.ts` — switch model, thinking level, tools, and instructions with `/preset`
+- `tools.ts` — interactive `/tools` selector
+- `plan-mode/` — read-only planning mode
+- `question.ts` — Pi's official interactive question tool example
+- `notify.ts` — terminal notification when an agent turn ends
+- `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models
+- `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier while keeping the provider identity as `openai-codex`
+
+## Install
+
+Review the repository before running the installer. Extensions execute with the same permissions as Pi.
+
+```bash
+git clone https://github.com/Hor1zonZzz/my-pi-config.git
+cd my-pi-config
+./install.sh
+```
+
+The installer creates a timestamped backup under `~/.pi/agent/backups/` before replacing managed files. Restart Pi or run:
+
+```text
+/reload
+```
+
+Package dependencies declared in `settings.json` are installed by Pi on startup. Authenticate separately; credentials are intentionally not included.
+
+## Useful commands
+
+```text
+/preset
+/tools
+/plan
+/fast
+/implement <task>
+/scout-and-plan <task>
+/implement-and-review <task>
+```
+
+## Security
+
+This repository intentionally excludes credentials, sessions, MCP configuration, trust decisions, caches, history, `node_modules`, and Herdr-managed integration files. Never commit `~/.pi/agent/auth.json`.
+
+## Attribution and licenses
+
+Several extensions and the subagent workflow are adapted from Pi's official examples. Pi's license is included at `licenses/pi-LICENSE`.
+
+`codex-fast-toggle` derives its streaming approach from `pi-openai-codex-fast`; its upstream MIT license and README are included in that directory. See `THIRD_PARTY_NOTICES.md`.

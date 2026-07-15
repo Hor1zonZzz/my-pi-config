@@ -1,0 +1,25 @@
+# Secrets and local Pi state
+auth.json
+models.json
+mcp.json
+trust.json
+*.env
+.env*
+
+# Runtime state
+sessions/
+backups/
+logs/
+cache/
+*-cache.json
+run-history.jsonl
+node_modules/
+npm/
+git/
+tmp/
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp

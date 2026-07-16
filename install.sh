@@ -9,19 +9,20 @@ BACKUP_DIR="$AGENT_DIR/backups/my-pi-config-$TIMESTAMP"
 mkdir -p "$AGENT_DIR" "$BACKUP_DIR"
 
 backup_path() {
-  local relative="$1"
-  local source="$AGENT_DIR/$relative"
-  if [[ -e "$source" ]]; then
-    mkdir -p "$BACKUP_DIR/$(dirname "$relative")"
-    cp -R "$source" "$BACKUP_DIR/$relative"
-  fi
+	local relative="$1"
+	local source="$AGENT_DIR/$relative"
+	if [[ -e "$source" ]]; then
+		mkdir -p "$BACKUP_DIR/$(dirname "$relative")"
+		cp -R "$source" "$BACKUP_DIR/$relative"
+	fi
 }
 
 for path in settings.json presets.json codex-fast.json extensions agents prompts; do
-  backup_path "$path"
+	backup_path "$path"
 done
 
 mkdir -p "$AGENT_DIR/extensions" "$AGENT_DIR/agents" "$AGENT_DIR/prompts"
+rm -f "$AGENT_DIR/extensions/question.ts"
 cp "$ROOT_DIR/settings.json" "$AGENT_DIR/settings.json"
 cp "$ROOT_DIR/presets.json" "$AGENT_DIR/presets.json"
 cp "$ROOT_DIR/codex-fast.json" "$AGENT_DIR/codex-fast.json"

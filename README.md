@@ -17,7 +17,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `preset.ts` — switch model, thinking level, tools, and instructions with `/preset`
 - `tools.ts` — interactive `/tools` selector
 - `plan-mode/` — read-only planning mode
-- `question.ts` — Pi's official interactive question tool example
+- `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
 - `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models
 - `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier while keeping the provider identity as `openai-codex`

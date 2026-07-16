@@ -19,7 +19,10 @@ function isCodexProvider(provider: string | undefined): boolean {
 	return provider === OPENAI_CODEX_PROVIDER;
 }
 
-function applyFastServiceTier(payload: unknown, enabled: boolean): unknown | undefined {
+function applyFastServiceTier(
+	payload: unknown,
+	enabled: boolean,
+): unknown | undefined {
 	if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
 		return undefined;
 	}

@@ -6,21 +6,8 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
-import {
-	clampThinkingLevel,
-	createAssistantMessageEventStream,
-	streamOpenAICodexResponses,
-	type Api,
-	type AssistantMessage,
-	type Context,
-	type Model,
-	type SimpleStreamOptions,
-} from "@earendil-works/pi-ai/compat";
 
-const OPENAI_CODEX_API = "openai-codex-responses";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
-
-type OpenAICodexApi = typeof OPENAI_CODEX_API;
 
 type FastState = {
 	enabled: boolean;
@@ -30,6 +17,24 @@ const FAST_STATE_PATH = join(getAgentDir(), "codex-fast.json");
 
 function isCodexProvider(provider: string | undefined): boolean {
 	return provider === OPENAI_CODEX_PROVIDER;
+}
+
+function applyFastServiceTier(payload: unknown, enabled: boolean): unknown | undefined {
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+		return undefined;
+	}
+
+	const request = payload as Record<string, unknown>;
+	if (enabled) {
+		return { ...request, service_tier: "priority" };
+	}
+	if (!("service_tier" in request)) {
+		return undefined;
+	}
+
+	const nextRequest = { ...request };
+	delete nextRequest.service_tier;
+	return nextRequest;
 }
 
 async function readFastState(): Promise<boolean> {
@@ -146,94 +151,14 @@ function createFastAutocompleteProvider(
 	};
 }
 
-function endWithCanonicalError(
-	stream: ReturnType<typeof createAssistantMessageEventStream>,
-	modelId: string,
-	errorMessage: string,
-	options?: SimpleStreamOptions,
-): void {
-	const message: AssistantMessage = {
-		role: "assistant",
-		content: [],
-		api: OPENAI_CODEX_API,
-		provider: OPENAI_CODEX_PROVIDER,
-		model: modelId,
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
-		stopReason: options?.signal?.aborted ? "aborted" : "error",
-		errorMessage,
-		timestamp: Date.now(),
-	};
-	stream.push({
-		type: "error",
-		reason: message.stopReason === "aborted" ? "aborted" : "error",
-		error: message,
-	});
-	stream.end(message);
-}
-
-function streamSimpleOpenAICodexToggle(
-	model: Model<Api>,
-	context: Context,
-	options: SimpleStreamOptions | undefined,
-	isFastEnabled: () => boolean,
-) {
-	const outer = createAssistantMessageEventStream();
-
-	void (async () => {
-		try {
-			const codexModel = model as Model<OpenAICodexApi>;
-			if (!options?.apiKey) {
-				endWithCanonicalError(
-					outer,
-					model.id,
-					`No ${OPENAI_CODEX_PROVIDER} auth found. Log in to ${OPENAI_CODEX_PROVIDER} first.`,
-					options,
-				);
-				return;
-			}
-
-			const clampedReasoning = options.reasoning
-				? clampThinkingLevel(codexModel, options.reasoning)
-				: undefined;
-			const reasoningEffort =
-				clampedReasoning === "off" ? undefined : clampedReasoning;
-			const inner = streamOpenAICodexResponses(codexModel, context, {
-				...options,
-				...(isFastEnabled() ? { serviceTier: "priority" as const } : {}),
-				...(reasoningEffort ? { reasoningEffort } : {}),
-			});
-
-			for await (const event of inner) {
-				outer.push(event);
-			}
-			outer.end();
-		} catch (error) {
-			endWithCanonicalError(
-				outer,
-				model.id,
-				error instanceof Error ? error.message : String(error),
-				options,
-			);
-		}
-	})();
-
-	return outer;
-}
-
 export default async function (pi: ExtensionAPI) {
 	let fastEnabled = await readFastState();
 
-	pi.registerProvider(OPENAI_CODEX_PROVIDER, {
-		api: OPENAI_CODEX_API,
-		streamSimple: (model, context, options) =>
-			streamSimpleOpenAICodexToggle(model, context, options, () => fastEnabled),
+	pi.on("before_provider_request", (event, ctx) => {
+		if (!isCodexProvider(ctx.model?.provider)) {
+			return undefined;
+		}
+		return applyFastServiceTier(event.payload, fastEnabled);
 	});
 
 	function updateStatus(ctx: ExtensionContext): void {

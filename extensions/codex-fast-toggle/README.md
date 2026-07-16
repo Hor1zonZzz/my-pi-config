@@ -4,8 +4,8 @@ Local Pi extension derived from `pi-openai-codex-fast` (MIT) with a persistent F
 
 ## Behavior
 
-- Overrides the built-in `openai-codex` streaming handler without registering a second provider.
-- Fast On sends Codex requests with `serviceTier: "priority"`.
+- Keeps Pi's built-in `openai-codex` provider and modifies only the outgoing request payload.
+- Fast On sends Codex requests with `service_tier: "priority"`.
 - Fast Off uses the default service tier.
 - Provider and model identity always remain `openai-codex/<model>`.
 - Global state is stored in `~/.pi/agent/codex-fast.json` and is shared by Pi processes and subagents.
@@ -24,4 +24,4 @@ The extension uses input interception rather than `registerCommand()` so slash c
 
 ## Attribution
 
-The Codex streaming approach is derived from `pi-openai-codex-fast` by Kaan Ozdokmeci / 2h2d-co under the MIT License. See `LICENSE` and `UPSTREAM-README.md`.
+The original fast-mode behavior was derived from `pi-openai-codex-fast` by Kaan Ozdokmeci / 2h2d-co under the MIT License. See `LICENSE` and `UPSTREAM-README.md`.

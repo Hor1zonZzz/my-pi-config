@@ -19,7 +19,7 @@ License: see `licenses/pi-LICENSE`.
 
 ## pi-openai-codex-fast
 
-`extensions/codex-fast-toggle/` derives its Codex streaming approach from `pi-openai-codex-fast` by Kaan Ozdokmeci / 2h2d-co.
+`extensions/codex-fast-toggle/` originally derived its fast-mode behavior from `pi-openai-codex-fast` by Kaan Ozdokmeci / 2h2d-co.
 
 Upstream project: <https://github.com/2h2d-co/pi-openai-codex-fast>
 

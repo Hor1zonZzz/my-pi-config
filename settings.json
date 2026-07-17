@@ -6,7 +6,6 @@
   "packages": [
     "npm:pi-mcp-adapter",
     "npm:pi-lens",
-    "npm:pi-extmgr",
-    "npm:@ff-labs/pi-fff"
+    "npm:pi-extmgr"
   ]
 }

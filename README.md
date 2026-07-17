@@ -5,7 +5,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 ## Included
 
 - `settings.json` — model defaults and installable Pi packages
-- `presets.json` — `quick`, `explore`, and `deep-code` presets
+- `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
 - `codex-fast.json` — global state for the local Codex priority toggle
 - `extensions/` — local extensions
 - `agents/` — agents used by Pi's official subagent example

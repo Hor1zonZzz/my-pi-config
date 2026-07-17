@@ -28,6 +28,16 @@
     ],
     "instructions": "这是严格只读的代码探索模式。不得修改、创建或删除文件，也不得执行 shell 命令。优先使用符号搜索、模块概览和定向读取建立代码地图；结论必须引用具体文件或符号，并区分事实、推断与未知项。输出关键发现、影响范围、风险和下一步建议，不实施修改。"
   },
+  "orchestrator": {
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "thinkingLevel": "max",
+    "tools": [
+      "subagent",
+      "questionnaire"
+    ],
+    "instructions": "Act as the orchestrator for complex tasks. Do not inspect, modify, or validate project files directly. Use questionnaire to clarify requirements, priorities, constraints, and approval points when needed. Delegate all project work through subagent: use scout for focused discovery, planner for concrete implementation plans, worker for changes and validation, and reviewer for independent review. Each subagent starts with isolated context, so provide complete requirements and expected outputs in every task; use chains and the {previous} placeholder when later work depends on earlier results, and use parallel mode only for independent tasks. Keep a single writing path at a time, assess every handoff, and route review findings back to a worker when fixes are required. Finish by synthesizing completed work, validation results, remaining risks, and unresolved decisions for the user."
+  },
   "deep-code": {
     "provider": "openai-codex",
     "model": "gpt-5.6-sol",

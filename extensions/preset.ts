@@ -2,7 +2,7 @@
  * Preset Extension
  *
  * Allows defining named presets that configure model, thinking level, tools,
- * and system prompt instructions. Presets are defined in JSON config files
+ * skill availability, and system prompt instructions. Presets are defined in JSON config files
  * and can be activated via CLI flag, /preset command, or Ctrl+Shift+U to cycle.
  *
  * Config files (merged, project takes precedence):
@@ -75,6 +75,8 @@ interface Preset {
 		| "max";
 	/** Tools to enable (replaces default set) */
 	tools?: string[];
+	/** Skills to expose to the model (replaces global skill defaults) */
+	skills?: string[];
 	/** Instructions to append to system prompt */
 	instructions?: string;
 }
@@ -159,6 +161,16 @@ export default function presetExtension(pi: ExtensionAPI) {
 		});
 	}
 
+	function notifyPresetSkills(
+		skills: string[] | undefined,
+		resetSessionOverride: boolean,
+	) {
+		pi.events.emit("preset:skills-changed", {
+			skills: skills ? Array.from(new Set(skills)) : undefined,
+			resetSessionOverride,
+		});
+	}
+
 	/**
 	 * Apply a preset configuration.
 	 */
@@ -227,9 +239,10 @@ export default function presetExtension(pi: ExtensionAPI) {
 			notifyPresetTools(pi.getActiveTools());
 		}
 
-		// Store active preset for system prompt injection
+		// Store active preset for system prompt injection and skill filtering.
 		activePresetName = name;
 		activePreset = preset;
+		notifyPresetSkills(preset.skills, true);
 
 		return true;
 	}
@@ -248,6 +261,9 @@ export default function presetExtension(pi: ExtensionAPI) {
 		}
 		if (preset.tools) {
 			parts.push(`tools:${preset.tools.join(",")}`);
+		}
+		if (preset.skills) {
+			parts.push(`skills:${preset.skills.join(",")}`);
 		}
 		if (preset.instructions) {
 			const truncated =
@@ -345,6 +361,7 @@ export default function presetExtension(pi: ExtensionAPI) {
 			activePresetName = undefined;
 			activePreset = undefined;
 			customTools = false;
+			notifyPresetSkills(undefined, true);
 			if (originalState) {
 				if (originalState.model) {
 					await pi.setModel(originalState.model);
@@ -423,6 +440,7 @@ export default function presetExtension(pi: ExtensionAPI) {
 			activePresetName = undefined;
 			activePreset = undefined;
 			customTools = false;
+			notifyPresetSkills(undefined, true);
 			if (originalState) {
 				if (originalState.model) {
 					await pi.setModel(originalState.model);
@@ -528,10 +546,12 @@ export default function presetExtension(pi: ExtensionAPI) {
 				activePresetName = presetEntry.data.name;
 				activePreset = preset;
 				customTools = presetEntry.data.customTools === true;
-				// Don't re-apply model/tools on restore, just keep the name for instructions
+				// Don't re-apply model/tools on restore, just keep the name for instructions.
 			}
 		}
 
+		// Restoring a preset must preserve the branch's skill override.
+		notifyPresetSkills(activePreset?.skills, false);
 		updateStatus(ctx);
 	});
 

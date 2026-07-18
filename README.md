@@ -7,6 +7,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `settings.json` — model defaults and installable Pi packages
 - `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
 - `codex-fast.json` — global state for the local Codex priority toggle
+- `skill-settings.json` — global default state for the skills manager
 - `extensions/` — local extensions
 - `agents/` — agents used by Pi's official subagent example
 - `prompts/` — subagent workflow prompts
@@ -16,6 +17,8 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 
 - `preset.ts` — switch model, thinking level, tools, and instructions with `/preset`
 - `tools.ts` — interactive `/tools` selector
+- `skills-manager/` — `/skills` controls model-visible skills globally, per session,
+  and through presets
 - `plan-mode/` — read-only planning mode
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
@@ -45,6 +48,7 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 ```text
 /preset
 /tools
+/skills
 /plan
 /fast
 /implement <task>
@@ -55,6 +59,10 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 ## Security
 
 This repository intentionally excludes credentials, sessions, MCP configuration, trust decisions, caches, history, `node_modules`, and Herdr-managed integration files. Never commit `~/.pi/agent/auth.json`.
+
+`skill-settings.json` is managed configuration, not a secret. The skills manager hides
+disabled skills from the model and blocks `/skill:<name>` expansion; it intentionally
+does not block direct `read` access to known skill paths.
 
 ## Attribution and licenses
 

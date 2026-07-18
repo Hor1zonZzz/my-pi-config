@@ -17,7 +17,7 @@ backup_path() {
 	fi
 }
 
-for path in settings.json presets.json codex-fast.json extensions agents prompts; do
+for path in settings.json presets.json skill-settings.json codex-fast.json extensions agents prompts; do
 	backup_path "$path"
 done
 
@@ -43,6 +43,7 @@ fs.writeFileSync(temporaryPath, `${JSON.stringify(nextSettings, null, 2)}\n`, "u
 fs.renameSync(temporaryPath, targetPath);
 NODE
 cp "$ROOT_DIR/presets.json" "$AGENT_DIR/presets.json"
+cp "$ROOT_DIR/skill-settings.json" "$AGENT_DIR/skill-settings.json"
 cp "$ROOT_DIR/codex-fast.json" "$AGENT_DIR/codex-fast.json"
 cp -R "$ROOT_DIR/extensions/." "$AGENT_DIR/extensions/"
 cp -R "$ROOT_DIR/agents/." "$AGENT_DIR/agents/"

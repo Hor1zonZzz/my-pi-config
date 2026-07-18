@@ -11,6 +11,7 @@ import type {
 	ExtensionCommandContext,
 	ExtensionContext,
 	Skill,
+	SourceInfo,
 } from "@earendil-works/pi-coding-agent";
 import {
 	formatSkillsForPrompt,
@@ -52,6 +53,11 @@ type PersistedSessionSkillsState =
 interface PresetSkillsChangedEvent {
 	skills?: unknown;
 	resetSessionOverride?: unknown;
+}
+
+interface KnownSkill {
+	name: string;
+	sourceInfo: SourceInfo;
 }
 
 function uniqueStrings(value: unknown): string[] {
@@ -118,11 +124,24 @@ export default function skillsManagerExtension(pi: ExtensionAPI) {
 	let presetSkills: Set<string> | undefined;
 	let activeContext: ExtensionContext | undefined;
 
-	function getKnownSkillNames(): string[] {
-		return pi
-			.getCommands()
-			.filter((command) => command.source === "skill")
-			.map((command) => command.name.slice("skill:".length));
+	function getKnownSkills(): KnownSkill[] {
+		return pi.getCommands().flatMap((command) =>
+			command.source === "skill"
+				? [
+						{
+							name: command.name.slice("skill:".length),
+							sourceInfo: command.sourceInfo,
+						},
+					]
+				: [],
+		);
+	}
+
+	function formatSkillSource(skill: KnownSkill): string {
+		const { origin, path, scope, source } = skill.sourceInfo;
+		const provenance =
+			origin === "package" ? `${scope}/package · ${source}` : scope;
+		return `${provenance} · ${path}`;
 	}
 
 	function isEnabledByBaseState(name: string): boolean {
@@ -239,15 +258,18 @@ export default function skillsManagerExtension(pi: ExtensionAPI) {
 	}
 
 	function listSkills(ctx: ExtensionContext): void {
-		const names = getKnownSkillNames().sort();
-		if (names.length === 0) {
+		const skills = getKnownSkills().sort((a, b) =>
+			a.name.localeCompare(b.name),
+		);
+		if (skills.length === 0) {
 			ctx.ui.notify("No skills are currently loaded", "warning");
 			return;
 		}
 
-		const enabled = getEffectiveSkillNames(names);
-		const lines = names.map(
-			(name) => `${enabled.has(name) ? "enabled" : "disabled"}: ${name}`,
+		const enabled = getEffectiveSkillNames(skills.map((skill) => skill.name));
+		const lines = skills.map(
+			(skill) =>
+				`${enabled.has(skill.name) ? "enabled" : "disabled"}: ${skill.name} [${formatSkillSource(skill)}]`,
 		);
 		ctx.ui.notify(`Skills (${getStateLabel()}): ${lines.join("; ")}`, "info");
 	}
@@ -264,22 +286,26 @@ export default function skillsManagerExtension(pi: ExtensionAPI) {
 			return;
 		}
 
-		const names = getKnownSkillNames().sort();
-		if (names.length === 0) {
+		const skills = getKnownSkills().sort((a, b) =>
+			a.name.localeCompare(b.name),
+		);
+		if (skills.length === 0) {
 			ctx.ui.notify("No skills are currently loaded", "warning");
 			return;
 		}
 
+		const names = skills.map((skill) => skill.name);
 		const selected =
 			scope === "session"
 				? getEffectiveSkillNames(names)
 				: new Set(
 						names.filter((name) => !globalState.disabledSkills.includes(name)),
 					);
-		const items: SettingItem[] = names.map((name) => ({
-			id: name,
-			label: name,
-			currentValue: selected.has(name) ? "enabled" : "disabled",
+		const items: SettingItem[] = skills.map((skill) => ({
+			id: skill.name,
+			label: skill.name,
+			description: formatSkillSource(skill),
+			currentValue: selected.has(skill.name) ? "enabled" : "disabled",
 			values: ["enabled", "disabled"],
 		}));
 
@@ -338,7 +364,7 @@ export default function skillsManagerExtension(pi: ExtensionAPI) {
 
 	function getArgumentCompletions(prefix: string) {
 		const normalized = prefix.trim();
-		const names = getKnownSkillNames();
+		const names = getKnownSkills().map((skill) => skill.name);
 		if (!normalized) {
 			return ["list", "enable", "disable", "reset", "global"].map((value) => ({
 				value,
@@ -404,7 +430,7 @@ export default function skillsManagerExtension(pi: ExtensionAPI) {
 			return;
 		}
 
-		if (!getKnownSkillNames().includes(name)) {
+		if (!getKnownSkills().some((skill) => skill.name === name)) {
 			ctx.ui.notify(`Unknown skill: ${name}`, "error");
 			return;
 		}
@@ -445,7 +471,12 @@ export default function skillsManagerExtension(pi: ExtensionAPI) {
 		if (!match) return;
 
 		const name = match[1];
-		if (!getKnownSkillNames().includes(name) || isSkillEnabled(name)) return;
+		if (
+			!getKnownSkills().some((skill) => skill.name === name) ||
+			isSkillEnabled(name)
+		) {
+			return;
+		}
 		ctx.ui.notify(
 			`Skill "${name}" is disabled. Use /skills enable ${name} first.`,
 			"warning",

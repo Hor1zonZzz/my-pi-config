@@ -16,7 +16,18 @@
 /skills global disable <name>
 ```
 
-The TUI selectors support fuzzy search. Non-TUI modes can use the explicit command variants.
+The TUI selectors support fuzzy search. The selected skill's canonical Pi source
+scope and `SKILL.md` path appear below the list. `/skills list` includes the same
+provenance for non-TUI use.
+
+Source labels use Pi's resource metadata rather than path inference:
+
+- `user` — a user-level skill
+- `project` — a trusted project-level skill
+- `temporary` — typically an explicit CLI or SDK skill
+- `<scope>/package · <source>` — a skill supplied by an installed package
+
+Non-TUI modes can use the explicit command variants.
 
 ## Precedence
 

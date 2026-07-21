@@ -17,7 +17,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 ## Local extensions
 
 - `preset.ts` — switch model, thinking level, tools, and instructions with
-  `/preset`; shows the active preset above the input editor
+  `/preset`; embeds the active preset in the input editor's top border
 - `tools.ts` — interactive `/tools` selector
 - `skills-manager/` — `/skills` controls model-visible skills globally, per session,
   and through presets

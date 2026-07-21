@@ -14,7 +14,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `model-overrides.json` — credential-free overrides merged into the local `models.json`.
 - `install.sh` — backs up the current user configuration and copies this repository's managed files into the Pi agent directory.
 - `extensions/` — user-level TypeScript extensions loaded by Pi.
-  - `preset.ts` — implements `/preset`, preset cycling, input-widget display, and preset instruction injection.
+  - `preset.ts` — implements `/preset`, preset cycling, input-border labels, and preset instruction injection.
   - `tools.ts` — implements the interactive `/tools` selector.
   - `plan-mode/` — implements read-only planning, plan extraction, and execution progress tracking.
   - `questionnaire.ts` — registers the TUI-only `questionnaire` tool for one or more interactive questions.
@@ -29,7 +29,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 
 Some files must be maintained together:
 
-- `extensions/preset.ts`, `extensions/tools.ts`, and `presets.json` are coupled. The two extensions exchange `preset:tools-changed` and `tools:changed` events so that preset state, the active tool set, session persistence, and input-widget display remain synchronized.
+- `extensions/preset.ts`, `extensions/tools.ts`, and `presets.json` are coupled. The two extensions exchange `preset:tools-changed` and `tools:changed` events so that preset state, the active tool set, session persistence, and input-border labels remain synchronized.
 - `extensions/subagent/index.ts`, `extensions/subagent/agents.ts`, `agents/*.md`, and `prompts/*.md` form one workflow. Agent names referenced by a prompt must exist in `agents/`.
 - Model identifiers appear in `settings.json`, `presets.json`, `agents/*.md`, and `model-overrides.json`. When models are renamed or removed, inspect all four locations.
 - `extensions/plan-mode/index.ts` and `extensions/plan-mode/utils.ts` must agree on state, plan markers, and the bash safety policy. If a question tool is renamed, update `PLAN_MODE_TOOLS` and the injected instructions.

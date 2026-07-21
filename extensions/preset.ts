@@ -270,13 +270,14 @@ class PresetBorderEditor implements EditorComponent, Focusable {
 		if (labelWidth === 0) return lines;
 
 		const remainingWidth = width - labelWidth;
-		const leftWidth = Math.min(3, remainingWidth);
-		const rightWidth = remainingWidth - leftWidth;
 		const border = this.editor.borderColor ?? ((text: string) => text);
+		const originalBorder = truncateToWidth(lines[0], remainingWidth, "");
+		const paddingWidth = Math.max(
+			0,
+			remainingWidth - visibleWidth(originalBorder),
+		);
 		lines[0] =
-			border("─".repeat(leftWidth)) +
-			border(label) +
-			border("─".repeat(rightWidth));
+			originalBorder + border("─".repeat(paddingWidth)) + border(label);
 		return lines;
 	}
 

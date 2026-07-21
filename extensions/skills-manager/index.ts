@@ -152,7 +152,7 @@ class TabbedSkillsList implements Component, Focusable {
 		const lines = [
 			truncateToWidth(this.theme.title(this.title), availableWidth),
 			"",
-			...this.searchInput.render(availableWidth),
+			...this.renderSearchInput(availableWidth),
 			"",
 			this.renderTabs(matchingItems, availableWidth),
 			"",
@@ -219,6 +219,13 @@ class TabbedSkillsList implements Component, Focusable {
 
 		this.addHint(lines, availableWidth);
 		return lines;
+	}
+
+	private renderSearchInput(width: number): string[] {
+		if (this.focus === "search") {
+			return this.searchInput.render(width);
+		}
+		return [truncateToWidth(`> ${this.searchInput.getValue()}`, width, "")];
 	}
 
 	private handleSearchInput(data: string): void {

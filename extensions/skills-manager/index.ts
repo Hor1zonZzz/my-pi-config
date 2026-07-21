@@ -19,9 +19,15 @@ import {
 	getSettingsListTheme,
 } from "@earendil-works/pi-coding-agent";
 import {
-	Container,
-	type SettingItem,
-	SettingsList,
+	type Component,
+	type Focusable,
+	fuzzyFilter,
+	Input,
+	type KeybindingsManager,
+	type SettingsListTheme,
+	truncateToWidth,
+	visibleWidth,
+	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
 const SETTINGS_FILE = "skill-settings.json";
@@ -58,6 +64,295 @@ interface PresetSkillsChangedEvent {
 interface KnownSkill {
 	name: string;
 	sourceInfo: SourceInfo;
+}
+
+interface SkillSelectorItem {
+	id: string;
+	label: string;
+	description: string;
+	currentValue: SkillSetting;
+}
+
+interface GroupedSkillsListTheme extends SettingsListTheme {
+	title: (text: string) => string;
+	enabledSection: (text: string) => string;
+	disabledSection: (text: string) => string;
+	emptySection: (text: string) => string;
+}
+
+class GroupedSkillsList implements Component, Focusable {
+	private readonly searchInput = new Input();
+	private selectedId: string | undefined;
+
+	constructor(
+		private readonly title: string,
+		private readonly items: SkillSelectorItem[],
+		private readonly maxVisible: number,
+		private readonly theme: GroupedSkillsListTheme,
+		private readonly keybindings: KeybindingsManager,
+		private readonly onChange: (id: string, value: SkillSetting) => void,
+		private readonly onCancel: () => void,
+	) {}
+
+	get focused(): boolean {
+		return this.searchInput.focused;
+	}
+
+	set focused(value: boolean) {
+		this.searchInput.focused = value;
+	}
+
+	invalidate(): void {
+		this.searchInput.invalidate();
+	}
+
+	handleInput(data: string): void {
+		const visibleItems = this.getVisibleItems();
+
+		if (this.keybindings.matches(data, "tui.select.cancel")) {
+			this.onCancel();
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.up")) {
+			this.moveSelection(visibleItems, -1);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.down")) {
+			this.moveSelection(visibleItems, 1);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.pageUp")) {
+			this.moveSelection(visibleItems, -this.maxVisible);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.pageDown")) {
+			this.moveSelection(visibleItems, this.maxVisible);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.confirm") || data === " ") {
+			this.toggleSelected(visibleItems);
+			return;
+		}
+
+		const query = this.searchInput.getValue();
+		this.searchInput.handleInput(data);
+		if (this.searchInput.getValue() !== query) {
+			this.ensureSelection(this.getVisibleItems());
+		}
+	}
+
+	render(width: number): string[] {
+		const availableWidth = Math.max(1, width);
+		const groups = this.getGroups();
+		const visibleItems = [...groups.enabled, ...groups.disabled];
+		this.ensureSelection(visibleItems);
+
+		const lines = [
+			truncateToWidth(this.theme.title(this.title), availableWidth),
+			"",
+			...this.searchInput.render(availableWidth),
+			"",
+		];
+
+		if (visibleItems.length === 0) {
+			lines.push(
+				truncateToWidth(
+					this.theme.hint("  No matching skills"),
+					availableWidth,
+				),
+			);
+			this.addHint(lines, availableWidth);
+			return lines;
+		}
+
+		const selectedIndex = Math.max(
+			0,
+			visibleItems.findIndex((item) => item.id === this.selectedId),
+		);
+		const startIndex = Math.max(
+			0,
+			Math.min(
+				selectedIndex - Math.floor(this.maxVisible / 2),
+				visibleItems.length - this.maxVisible,
+			),
+		);
+		const endIndex = Math.min(
+			startIndex + this.maxVisible,
+			visibleItems.length,
+		);
+		const maxLabelWidth = Math.min(
+			30,
+			Math.max(...visibleItems.map((item) => visibleWidth(item.label))),
+		);
+
+		this.renderGroup(
+			lines,
+			"Enabled",
+			groups.enabled,
+			0,
+			startIndex,
+			endIndex,
+			maxLabelWidth,
+			availableWidth,
+		);
+		this.renderGroup(
+			lines,
+			"Disabled",
+			groups.disabled,
+			groups.enabled.length,
+			startIndex,
+			endIndex,
+			maxLabelWidth,
+			availableWidth,
+		);
+
+		if (startIndex > 0 || endIndex < visibleItems.length) {
+			lines.push(
+				truncateToWidth(
+					this.theme.hint(`  (${selectedIndex + 1}/${visibleItems.length})`),
+					availableWidth,
+				),
+			);
+		}
+
+		const selectedItem = visibleItems[selectedIndex];
+		if (selectedItem) {
+			lines.push("");
+			for (const line of wrapTextWithAnsi(
+				selectedItem.description,
+				Math.max(1, availableWidth - 4),
+			)) {
+				lines.push(
+					truncateToWidth(this.theme.description(`  ${line}`), availableWidth),
+				);
+			}
+		}
+
+		this.addHint(lines, availableWidth);
+		return lines;
+	}
+
+	private getGroups(): {
+		enabled: SkillSelectorItem[];
+		disabled: SkillSelectorItem[];
+	} {
+		const query = this.searchInput.getValue();
+		const matchingItems = query
+			? fuzzyFilter(this.items, query, (item) => item.label)
+			: this.items;
+		return {
+			enabled: matchingItems.filter((item) => item.currentValue === "enabled"),
+			disabled: matchingItems.filter(
+				(item) => item.currentValue === "disabled",
+			),
+		};
+	}
+
+	private getVisibleItems(): SkillSelectorItem[] {
+		const groups = this.getGroups();
+		return [...groups.enabled, ...groups.disabled];
+	}
+
+	private ensureSelection(items: SkillSelectorItem[]): void {
+		if (items.length === 0) {
+			this.selectedId = undefined;
+			return;
+		}
+		if (!items.some((item) => item.id === this.selectedId)) {
+			this.selectedId = items[0]?.id;
+		}
+	}
+
+	private moveSelection(items: SkillSelectorItem[], offset: number): void {
+		if (items.length === 0) return;
+		this.ensureSelection(items);
+		const currentIndex = Math.max(
+			0,
+			items.findIndex((item) => item.id === this.selectedId),
+		);
+		this.selectedId =
+			items[(currentIndex + offset + items.length) % items.length]?.id;
+	}
+
+	private toggleSelected(items: SkillSelectorItem[]): void {
+		this.ensureSelection(items);
+		const selectedItem = items.find((item) => item.id === this.selectedId);
+		if (!selectedItem) return;
+
+		const nextValue: SkillSetting =
+			selectedItem.currentValue === "enabled" ? "disabled" : "enabled";
+		selectedItem.currentValue = nextValue;
+		this.onChange(selectedItem.id, nextValue);
+	}
+
+	private renderGroup(
+		lines: string[],
+		label: "Enabled" | "Disabled",
+		items: SkillSelectorItem[],
+		offset: number,
+		startIndex: number,
+		endIndex: number,
+		maxLabelWidth: number,
+		width: number,
+	): void {
+		const sectionTheme =
+			label === "Enabled"
+				? this.theme.enabledSection
+				: this.theme.disabledSection;
+		lines.push(
+			truncateToWidth(sectionTheme(`${label} (${items.length})`), width),
+		);
+
+		if (items.length === 0) {
+			lines.push(truncateToWidth(this.theme.emptySection("  (none)"), width));
+			return;
+		}
+
+		for (const [index, item] of items.entries()) {
+			const absoluteIndex = offset + index;
+			if (absoluteIndex < startIndex || absoluteIndex >= endIndex) continue;
+
+			const isSelected = item.id === this.selectedId;
+			const prefix = isSelected ? this.theme.cursor : "  ";
+			const labelPadded =
+				item.label +
+				" ".repeat(Math.max(0, maxLabelWidth - visibleWidth(item.label)));
+			const separator = "  ";
+			const valueWidth = Math.max(
+				1,
+				width -
+					visibleWidth(prefix) -
+					maxLabelWidth -
+					visibleWidth(separator) -
+					2,
+			);
+			const value = this.theme.value(
+				truncateToWidth(item.currentValue, valueWidth, ""),
+				isSelected,
+			);
+			lines.push(
+				truncateToWidth(
+					prefix +
+						this.theme.label(labelPadded, isSelected) +
+						separator +
+						value,
+					width,
+				),
+			);
+		}
+	}
+
+	private addHint(lines: string[], width: number): void {
+		lines.push("");
+		lines.push(
+			truncateToWidth(
+				this.theme.hint(
+					"  Type to search · Enter/Space to change · Esc to cancel",
+				),
+				width,
+			),
+		);
+	}
 }
 
 function uniqueStrings(value: unknown): string[] {
@@ -301,35 +596,30 @@ export default function skillsManagerExtension(pi: ExtensionAPI) {
 				: new Set(
 						names.filter((name) => !globalState.disabledSkills.includes(name)),
 					);
-		const items: SettingItem[] = skills.map((skill) => ({
+		const items: SkillSelectorItem[] = skills.map((skill) => ({
 			id: skill.name,
 			label: skill.name,
 			description: formatSkillSource(skill),
 			currentValue: selected.has(skill.name) ? "enabled" : "disabled",
-			values: ["enabled", "disabled"],
 		}));
 
-		await ctx.ui.custom((tui, theme, _keybindings, done) => {
-			const container = new Container();
-			container.addChild(
-				new (class {
-					render(_width: number) {
-						const title =
-							scope === "session"
-								? "Skills (session)"
-								: "Skills (global default)";
-						return [theme.fg("accent", theme.bold(title)), ""];
-					}
-					invalidate() {}
-				})(),
-			);
-
-			const settingsList = new SettingsList(
+		await ctx.ui.custom((tui, theme, keybindings, done) => {
+			const selectorTheme: GroupedSkillsListTheme = {
+				...getSettingsListTheme(),
+				title: (text) => theme.fg("accent", theme.bold(text)),
+				enabledSection: (text) => theme.fg("success", theme.bold(text)),
+				disabledSection: (text) => theme.fg("muted", theme.bold(text)),
+				emptySection: (text) => theme.fg("dim", text),
+			};
+			const title =
+				scope === "session" ? "Skills (session)" : "Skills (global default)";
+			const selector = new GroupedSkillsList(
+				title,
 				items,
 				Math.min(items.length + 2, 15),
-				getSettingsListTheme(),
-				(id, value) => {
-					const setting = value as SkillSetting;
+				selectorTheme,
+				keybindings,
+				(id, setting) => {
 					if (scope === "session") {
 						setSessionSkill(id, setting);
 					} else {
@@ -343,19 +633,23 @@ export default function skillsManagerExtension(pi: ExtensionAPI) {
 					if (activeContext) updateStatus(activeContext);
 				},
 				() => done(undefined),
-				{ enableSearch: true },
 			);
-			container.addChild(settingsList);
 
 			return {
+				get focused() {
+					return selector.focused;
+				},
+				set focused(value: boolean) {
+					selector.focused = value;
+				},
 				render(width: number) {
-					return container.render(width);
+					return selector.render(width);
 				},
 				invalidate() {
-					container.invalidate();
+					selector.invalidate();
 				},
 				handleInput(data: string) {
-					settingsList.handleInput?.(data);
+					selector.handleInput(data);
 					tui.requestRender();
 				},
 			};

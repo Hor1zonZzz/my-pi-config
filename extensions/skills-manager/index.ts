@@ -119,6 +119,14 @@ class TabbedSkillsList implements Component, Focusable {
 			this.onCancel();
 			return;
 		}
+		if (this.keybindings.matches(data, "tui.input.tab")) {
+			if (this.focus === "tabs") {
+				this.changeTab(1);
+			} else {
+				this.setFocus("tabs");
+			}
+			return;
+		}
 
 		switch (this.focus) {
 			case "search":
@@ -400,11 +408,11 @@ class TabbedSkillsList implements Component, Focusable {
 	private getHint(): string {
 		switch (this.focus) {
 			case "search":
-				return "  Type to search all skills · ↓ tabs · Esc to cancel";
+				return "  Type to search all skills · ↓/Tab tabs · Esc to cancel";
 			case "tabs":
-				return "  ←/→ tabs · ↑ search · ↓ skills · Esc to cancel";
+				return "  ←/→/Tab tabs · ↑ search · ↓ skills · Esc to cancel";
 			case "list":
-				return "  ↑ tabs at first skill · Enter/Space to change · Esc to cancel";
+				return "  ↑/Tab tabs · Enter/Space to change · Esc to cancel";
 			default:
 				return "  Esc to cancel";
 		}

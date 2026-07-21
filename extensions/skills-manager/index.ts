@@ -73,33 +73,41 @@ interface SkillSelectorItem {
 	currentValue: SkillSetting;
 }
 
-interface GroupedSkillsListTheme extends SettingsListTheme {
+type SkillTab = "all" | "enabled" | "disabled";
+type SelectorFocus = "search" | "tabs" | "list";
+
+const SKILL_TABS: readonly SkillTab[] = ["all", "enabled", "disabled"];
+
+interface TabbedSkillsListTheme extends SettingsListTheme {
 	title: (text: string) => string;
-	enabledSection: (text: string) => string;
-	disabledSection: (text: string) => string;
-	emptySection: (text: string) => string;
+	activeTab: (text: string) => string;
+	inactiveTab: (text: string) => string;
 }
 
-class GroupedSkillsList implements Component, Focusable {
+class TabbedSkillsList implements Component, Focusable {
 	private readonly searchInput = new Input();
 	private selectedId: string | undefined;
+	private activeTab: SkillTab = "all";
+	private focus: SelectorFocus = "search";
+	private tuiFocused = false;
 
 	constructor(
 		private readonly title: string,
 		private readonly items: SkillSelectorItem[],
 		private readonly maxVisible: number,
-		private readonly theme: GroupedSkillsListTheme,
+		private readonly theme: TabbedSkillsListTheme,
 		private readonly keybindings: KeybindingsManager,
 		private readonly onChange: (id: string, value: SkillSetting) => void,
 		private readonly onCancel: () => void,
 	) {}
 
 	get focused(): boolean {
-		return this.searchInput.focused;
+		return this.tuiFocused;
 	}
 
 	set focused(value: boolean) {
-		this.searchInput.focused = value;
+		this.tuiFocused = value;
+		this.syncSearchFocus();
 	}
 
 	invalidate(): void {
@@ -107,50 +115,38 @@ class GroupedSkillsList implements Component, Focusable {
 	}
 
 	handleInput(data: string): void {
-		const visibleItems = this.getVisibleItems();
-
 		if (this.keybindings.matches(data, "tui.select.cancel")) {
 			this.onCancel();
 			return;
 		}
-		if (this.keybindings.matches(data, "tui.select.up")) {
-			this.moveSelection(visibleItems, -1);
-			return;
-		}
-		if (this.keybindings.matches(data, "tui.select.down")) {
-			this.moveSelection(visibleItems, 1);
-			return;
-		}
-		if (this.keybindings.matches(data, "tui.select.pageUp")) {
-			this.moveSelection(visibleItems, -this.maxVisible);
-			return;
-		}
-		if (this.keybindings.matches(data, "tui.select.pageDown")) {
-			this.moveSelection(visibleItems, this.maxVisible);
-			return;
-		}
-		if (this.keybindings.matches(data, "tui.select.confirm") || data === " ") {
-			this.toggleSelected(visibleItems);
-			return;
-		}
 
-		const query = this.searchInput.getValue();
-		this.searchInput.handleInput(data);
-		if (this.searchInput.getValue() !== query) {
-			this.ensureSelection(this.getVisibleItems());
+		switch (this.focus) {
+			case "search":
+				this.handleSearchInput(data);
+				return;
+			case "tabs":
+				this.handleTabInput(data);
+				return;
+			case "list":
+				this.handleListInput(data);
+				return;
+			default:
+				return;
 		}
 	}
 
 	render(width: number): string[] {
 		const availableWidth = Math.max(1, width);
-		const groups = this.getGroups();
-		const visibleItems = [...groups.enabled, ...groups.disabled];
+		const matchingItems = this.getMatchingItems();
+		const visibleItems = this.getVisibleItems(matchingItems);
 		this.ensureSelection(visibleItems);
 
 		const lines = [
 			truncateToWidth(this.theme.title(this.title), availableWidth),
 			"",
 			...this.searchInput.render(availableWidth),
+			"",
+			this.renderTabs(matchingItems, availableWidth),
 			"",
 		];
 
@@ -185,26 +181,11 @@ class GroupedSkillsList implements Component, Focusable {
 			Math.max(...visibleItems.map((item) => visibleWidth(item.label))),
 		);
 
-		this.renderGroup(
-			lines,
-			"Enabled",
-			groups.enabled,
-			0,
-			startIndex,
-			endIndex,
-			maxLabelWidth,
-			availableWidth,
-		);
-		this.renderGroup(
-			lines,
-			"Disabled",
-			groups.disabled,
-			groups.enabled.length,
-			startIndex,
-			endIndex,
-			maxLabelWidth,
-			availableWidth,
-		);
+		for (let index = startIndex; index < endIndex; index += 1) {
+			const item = visibleItems[index];
+			if (!item) continue;
+			lines.push(this.renderItem(item, maxLabelWidth, availableWidth));
+		}
 
 		if (startIndex > 0 || endIndex < visibleItems.length) {
 			lines.push(
@@ -232,25 +213,83 @@ class GroupedSkillsList implements Component, Focusable {
 		return lines;
 	}
 
-	private getGroups(): {
-		enabled: SkillSelectorItem[];
-		disabled: SkillSelectorItem[];
-	} {
+	private handleSearchInput(data: string): void {
+		if (this.keybindings.matches(data, "tui.select.down")) {
+			this.setFocus("tabs");
+			return;
+		}
+
 		const query = this.searchInput.getValue();
-		const matchingItems = query
-			? fuzzyFilter(this.items, query, (item) => item.label)
-			: this.items;
-		return {
-			enabled: matchingItems.filter((item) => item.currentValue === "enabled"),
-			disabled: matchingItems.filter(
-				(item) => item.currentValue === "disabled",
-			),
-		};
+		this.searchInput.handleInput(data);
+		if (this.searchInput.getValue() !== query) {
+			this.ensureSelection(this.getVisibleItems());
+		}
 	}
 
-	private getVisibleItems(): SkillSelectorItem[] {
-		const groups = this.getGroups();
-		return [...groups.enabled, ...groups.disabled];
+	private handleTabInput(data: string): void {
+		if (this.keybindings.matches(data, "tui.select.up")) {
+			this.setFocus("search");
+			return;
+		}
+		if (
+			this.keybindings.matches(data, "tui.select.down") ||
+			this.keybindings.matches(data, "tui.select.confirm")
+		) {
+			this.setFocus("list");
+			this.ensureSelection(this.getVisibleItems());
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.editor.cursorLeft")) {
+			this.changeTab(-1);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.editor.cursorRight")) {
+			this.changeTab(1);
+		}
+	}
+
+	private handleListInput(data: string): void {
+		const visibleItems = this.getVisibleItems();
+		if (this.keybindings.matches(data, "tui.select.up")) {
+			const selectedIndex = visibleItems.findIndex(
+				(item) => item.id === this.selectedId,
+			);
+			if (selectedIndex <= 0) {
+				this.setFocus("tabs");
+			} else {
+				this.moveSelection(visibleItems, -1);
+			}
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.down")) {
+			this.moveSelection(visibleItems, 1);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.pageUp")) {
+			this.moveSelection(visibleItems, -this.maxVisible);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.pageDown")) {
+			this.moveSelection(visibleItems, this.maxVisible);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.confirm") || data === " ") {
+			this.toggleSelected(visibleItems);
+		}
+	}
+
+	private getMatchingItems(): SkillSelectorItem[] {
+		const query = this.searchInput.getValue();
+		return query
+			? fuzzyFilter(this.items, query, (item) => item.label)
+			: this.items;
+	}
+
+	private getVisibleItems(
+		matchingItems: SkillSelectorItem[] = this.getMatchingItems(),
+	): SkillSelectorItem[] {
+		if (this.activeTab === "all") return matchingItems;
+		return matchingItems.filter((item) => item.currentValue === this.activeTab);
 	}
 
 	private ensureSelection(items: SkillSelectorItem[]): void {
@@ -283,75 +322,92 @@ class GroupedSkillsList implements Component, Focusable {
 			selectedItem.currentValue === "enabled" ? "disabled" : "enabled";
 		selectedItem.currentValue = nextValue;
 		this.onChange(selectedItem.id, nextValue);
+		this.ensureSelection(this.getVisibleItems());
 	}
 
-	private renderGroup(
-		lines: string[],
-		label: "Enabled" | "Disabled",
-		items: SkillSelectorItem[],
-		offset: number,
-		startIndex: number,
-		endIndex: number,
+	private setFocus(focus: SelectorFocus): void {
+		this.focus = focus;
+		this.syncSearchFocus();
+	}
+
+	private syncSearchFocus(): void {
+		this.searchInput.focused = this.tuiFocused && this.focus === "search";
+	}
+
+	private changeTab(offset: number): void {
+		const currentIndex = SKILL_TABS.indexOf(this.activeTab);
+		const nextIndex =
+			(currentIndex + offset + SKILL_TABS.length) % SKILL_TABS.length;
+		this.activeTab = SKILL_TABS[nextIndex] ?? "all";
+		this.ensureSelection(this.getVisibleItems());
+	}
+
+	private renderTabs(items: SkillSelectorItem[], width: number): string {
+		const counts = {
+			all: items.length,
+			enabled: items.filter((item) => item.currentValue === "enabled").length,
+			disabled: items.filter((item) => item.currentValue === "disabled").length,
+		};
+		const labels: Record<SkillTab, string> = {
+			all: "All",
+			enabled: "Enabled",
+			disabled: "Disabled",
+		};
+		const tabs = SKILL_TABS.map((tab) => {
+			const label = `${labels[tab]} (${counts[tab]})`;
+			if (tab !== this.activeTab) return this.theme.inactiveTab(`  ${label}`);
+			const prefix = this.focus === "tabs" ? this.theme.cursor : "  ";
+			return this.theme.activeTab(`${prefix}[${label}]`);
+		});
+		return truncateToWidth(tabs.join("  "), width);
+	}
+
+	private renderItem(
+		item: SkillSelectorItem,
 		maxLabelWidth: number,
 		width: number,
-	): void {
-		const sectionTheme =
-			label === "Enabled"
-				? this.theme.enabledSection
-				: this.theme.disabledSection;
-		lines.push(
-			truncateToWidth(sectionTheme(`${label} (${items.length})`), width),
+	): string {
+		const isSelected = item.id === this.selectedId;
+		const prefix =
+			isSelected && this.focus === "list" ? this.theme.cursor : "  ";
+		const labelPadded =
+			item.label +
+			" ".repeat(Math.max(0, maxLabelWidth - visibleWidth(item.label)));
+		const separator = "  ";
+		const valueWidth = Math.max(
+			1,
+			width -
+				visibleWidth(prefix) -
+				maxLabelWidth -
+				visibleWidth(separator) -
+				2,
 		);
-
-		if (items.length === 0) {
-			lines.push(truncateToWidth(this.theme.emptySection("  (none)"), width));
-			return;
-		}
-
-		for (const [index, item] of items.entries()) {
-			const absoluteIndex = offset + index;
-			if (absoluteIndex < startIndex || absoluteIndex >= endIndex) continue;
-
-			const isSelected = item.id === this.selectedId;
-			const prefix = isSelected ? this.theme.cursor : "  ";
-			const labelPadded =
-				item.label +
-				" ".repeat(Math.max(0, maxLabelWidth - visibleWidth(item.label)));
-			const separator = "  ";
-			const valueWidth = Math.max(
-				1,
-				width -
-					visibleWidth(prefix) -
-					maxLabelWidth -
-					visibleWidth(separator) -
-					2,
-			);
-			const value = this.theme.value(
-				truncateToWidth(item.currentValue, valueWidth, ""),
-				isSelected,
-			);
-			lines.push(
-				truncateToWidth(
-					prefix +
-						this.theme.label(labelPadded, isSelected) +
-						separator +
-						value,
-					width,
-				),
-			);
-		}
+		const value = this.theme.value(
+			truncateToWidth(item.currentValue, valueWidth, ""),
+			isSelected,
+		);
+		return truncateToWidth(
+			prefix + this.theme.label(labelPadded, isSelected) + separator + value,
+			width,
+		);
 	}
 
 	private addHint(lines: string[], width: number): void {
 		lines.push("");
-		lines.push(
-			truncateToWidth(
-				this.theme.hint(
-					"  Type to search · Enter/Space to change · Esc to cancel",
-				),
-				width,
-			),
-		);
+		lines.push(truncateToWidth(this.theme.hint(this.getHint()), width));
+	}
+
+	private getHint(): string {
+		switch (this.focus) {
+			case "search":
+				return "  Type to search all skills · ↓ tabs · Esc to cancel";
+			case "tabs":
+				return "  ←/→ tabs · ↑ search · ↓ skills · Esc to cancel";
+			case "list":
+				return "  ↑ tabs at first skill · Enter/Space to change · Esc to cancel";
+			default:
+				return "  Esc to cancel";
+		}
 	}
 }
 
@@ -604,16 +660,15 @@ export default function skillsManagerExtension(pi: ExtensionAPI) {
 		}));
 
 		await ctx.ui.custom((tui, theme, keybindings, done) => {
-			const selectorTheme: GroupedSkillsListTheme = {
+			const selectorTheme: TabbedSkillsListTheme = {
 				...getSettingsListTheme(),
 				title: (text) => theme.fg("accent", theme.bold(text)),
-				enabledSection: (text) => theme.fg("success", theme.bold(text)),
-				disabledSection: (text) => theme.fg("muted", theme.bold(text)),
-				emptySection: (text) => theme.fg("dim", text),
+				activeTab: (text) => theme.fg("accent", theme.bold(text)),
+				inactiveTab: (text) => theme.fg("muted", text),
 			};
 			const title =
 				scope === "session" ? "Skills (session)" : "Skills (global default)";
-			const selector = new GroupedSkillsList(
+			const selector = new TabbedSkillsList(
 				title,
 				items,
 				Math.min(items.length + 2, 15),

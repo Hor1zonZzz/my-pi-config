@@ -16,10 +16,13 @@
 /skills global disable <name>
 ```
 
-The TUI selectors support fuzzy search and display separate `Enabled` and
-`Disabled` sections. Changing a skill immediately moves it to the other section.
-The selected skill's canonical Pi source scope and `SKILL.md` path appear below
-the list. `/skills list` includes the same provenance for non-TUI use.
+The TUI selectors default to the `All` tab and provide `Enabled` and `Disabled`
+tabs. Search always matches against every loaded skill before the current tab
+filters the results. Press `↓` to move from search to the tabs, use `←`/`→` to
+switch tabs, then press `↓` to enter the list; `↑` reverses those transitions.
+Changing a skill updates its state immediately. The selected skill's canonical Pi
+source scope and `SKILL.md` path appear below the list. `/skills list` includes
+the same provenance for non-TUI use.
 
 Source labels use Pi's resource metadata rather than path inference:
 

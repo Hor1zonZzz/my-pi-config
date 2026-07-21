@@ -16,12 +16,11 @@
 /skills global disable <name>
 ```
 
-The TUI selectors default to the `All` tab and provide `Enabled` and `Disabled`
-tabs. Search always matches against every loaded skill before the current tab
-filters the results. Press `↓` or `Tab` to move from search to the tabs, then
-use `←`/`→` or `Tab` to switch tabs. Press `↓` to enter the list; `↑` reverses
-those transitions. The selector keeps terminal and text cursors hidden in every
-focus region; typing still filters skills while search is focused.
+The TUI selectors default to the `All` filter and also provide `Enabled` and
+`Disabled` filters. Typing always searches the full skill list, while the active
+filter controls which matches are shown. Use `←`/`→` or `Tab` to cycle filters,
+`↑`/`↓` to navigate matches, and `Enter` or `Space` to change the selected
+skill. The selector keeps terminal and text cursors hidden.
 Changing a skill updates its state immediately. The selected skill's canonical Pi
 source scope and `SKILL.md` path appear below the list. `/skills list` includes
 the same provenance for non-TUI use.

@@ -73,7 +73,6 @@ interface SkillSelectorItem {
 }
 
 type SkillTab = "all" | "enabled" | "disabled";
-type SelectorFocus = "search" | "tabs" | "list";
 
 const SKILL_TABS: readonly SkillTab[] = ["all", "enabled", "disabled"];
 
@@ -87,7 +86,6 @@ class TabbedSkillsList implements Component {
 	private readonly searchInput = new Input();
 	private selectedId: string | undefined;
 	private activeTab: SkillTab = "all";
-	private focus: SelectorFocus = "search";
 
 	constructor(
 		private readonly title: string,
@@ -109,26 +107,44 @@ class TabbedSkillsList implements Component {
 			return;
 		}
 		if (this.keybindings.matches(data, "tui.input.tab")) {
-			if (this.focus === "tabs") {
-				this.changeTab(1);
-			} else {
-				this.setFocus("tabs");
-			}
+			this.changeTab(1);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.editor.cursorLeft")) {
+			this.changeTab(-1);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.editor.cursorRight")) {
+			this.changeTab(1);
 			return;
 		}
 
-		switch (this.focus) {
-			case "search":
-				this.handleSearchInput(data);
-				return;
-			case "tabs":
-				this.handleTabInput(data);
-				return;
-			case "list":
-				this.handleListInput(data);
-				return;
-			default:
-				return;
+		const visibleItems = this.getVisibleItems();
+		if (this.keybindings.matches(data, "tui.select.up")) {
+			this.moveSelection(visibleItems, -1);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.down")) {
+			this.moveSelection(visibleItems, 1);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.pageUp")) {
+			this.moveSelection(visibleItems, -this.maxVisible);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.pageDown")) {
+			this.moveSelection(visibleItems, this.maxVisible);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.confirm") || data === " ") {
+			this.toggleSelected(visibleItems);
+			return;
+		}
+
+		const query = this.searchInput.getValue();
+		this.searchInput.handleInput(data);
+		if (this.searchInput.getValue() !== query) {
+			this.ensureSelection(this.getVisibleItems());
 		}
 	}
 
@@ -214,71 +230,6 @@ class TabbedSkillsList implements Component {
 		return [truncateToWidth(`> ${this.searchInput.getValue()}`, width, "")];
 	}
 
-	private handleSearchInput(data: string): void {
-		if (this.keybindings.matches(data, "tui.select.down")) {
-			this.setFocus("tabs");
-			return;
-		}
-
-		const query = this.searchInput.getValue();
-		this.searchInput.handleInput(data);
-		if (this.searchInput.getValue() !== query) {
-			this.ensureSelection(this.getVisibleItems());
-		}
-	}
-
-	private handleTabInput(data: string): void {
-		if (this.keybindings.matches(data, "tui.select.up")) {
-			this.setFocus("search");
-			return;
-		}
-		if (
-			this.keybindings.matches(data, "tui.select.down") ||
-			this.keybindings.matches(data, "tui.select.confirm")
-		) {
-			this.setFocus("list");
-			this.ensureSelection(this.getVisibleItems());
-			return;
-		}
-		if (this.keybindings.matches(data, "tui.editor.cursorLeft")) {
-			this.changeTab(-1);
-			return;
-		}
-		if (this.keybindings.matches(data, "tui.editor.cursorRight")) {
-			this.changeTab(1);
-		}
-	}
-
-	private handleListInput(data: string): void {
-		const visibleItems = this.getVisibleItems();
-		if (this.keybindings.matches(data, "tui.select.up")) {
-			const selectedIndex = visibleItems.findIndex(
-				(item) => item.id === this.selectedId,
-			);
-			if (selectedIndex <= 0) {
-				this.setFocus("tabs");
-			} else {
-				this.moveSelection(visibleItems, -1);
-			}
-			return;
-		}
-		if (this.keybindings.matches(data, "tui.select.down")) {
-			this.moveSelection(visibleItems, 1);
-			return;
-		}
-		if (this.keybindings.matches(data, "tui.select.pageUp")) {
-			this.moveSelection(visibleItems, -this.maxVisible);
-			return;
-		}
-		if (this.keybindings.matches(data, "tui.select.pageDown")) {
-			this.moveSelection(visibleItems, this.maxVisible);
-			return;
-		}
-		if (this.keybindings.matches(data, "tui.select.confirm") || data === " ") {
-			this.toggleSelected(visibleItems);
-		}
-	}
-
 	private getMatchingItems(): SkillSelectorItem[] {
 		const query = this.searchInput.getValue();
 		return query
@@ -326,10 +277,6 @@ class TabbedSkillsList implements Component {
 		this.ensureSelection(this.getVisibleItems());
 	}
 
-	private setFocus(focus: SelectorFocus): void {
-		this.focus = focus;
-	}
-
 	private changeTab(offset: number): void {
 		const currentIndex = SKILL_TABS.indexOf(this.activeTab);
 		const nextIndex =
@@ -352,8 +299,7 @@ class TabbedSkillsList implements Component {
 		const tabs = SKILL_TABS.map((tab) => {
 			const label = `${labels[tab]} (${counts[tab]})`;
 			if (tab !== this.activeTab) return this.theme.inactiveTab(`  ${label}`);
-			const prefix = this.focus === "tabs" ? this.theme.cursor : "  ";
-			return this.theme.activeTab(`${prefix}[${label}]`);
+			return this.theme.activeTab(`  [${label}]`);
 		});
 		return truncateToWidth(tabs.join("  "), width);
 	}
@@ -364,8 +310,7 @@ class TabbedSkillsList implements Component {
 		width: number,
 	): string {
 		const isSelected = item.id === this.selectedId;
-		const prefix =
-			isSelected && this.focus === "list" ? this.theme.cursor : "  ";
+		const prefix = isSelected ? this.theme.cursor : "  ";
 		const labelPadded =
 			item.label +
 			" ".repeat(Math.max(0, maxLabelWidth - visibleWidth(item.label)));
@@ -390,20 +335,14 @@ class TabbedSkillsList implements Component {
 
 	private addHint(lines: string[], width: number): void {
 		lines.push("");
-		lines.push(truncateToWidth(this.theme.hint(this.getHint()), width));
-	}
-
-	private getHint(): string {
-		switch (this.focus) {
-			case "search":
-				return "  Type to search all skills · ↓/Tab tabs · Esc to cancel";
-			case "tabs":
-				return "  ←/→/Tab tabs · ↑ search · ↓ skills · Esc to cancel";
-			case "list":
-				return "  ↑/Tab tabs · Enter/Space to change · Esc to cancel";
-			default:
-				return "  Esc to cancel";
-		}
+		lines.push(
+			truncateToWidth(
+				this.theme.hint(
+					"  Type to search · ←/→/Tab filter · ↑/↓ navigate · Enter/Space change · Esc close",
+				),
+				width,
+			),
+		);
 	}
 }
 

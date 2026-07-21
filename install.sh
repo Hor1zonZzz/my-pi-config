@@ -17,7 +17,7 @@ backup_path() {
 	fi
 }
 
-for path in settings.json presets.json skill-settings.json codex-fast.json extensions agents prompts; do
+for path in settings.json presets.json skill-settings.json models.json codex-fast.json extensions agents prompts; do
 	backup_path "$path"
 done
 
@@ -40,6 +40,70 @@ try {
 
 const temporaryPath = `${targetPath}.${process.pid}.tmp`;
 fs.writeFileSync(temporaryPath, `${JSON.stringify(nextSettings, null, 2)}\n`, "utf8");
+fs.renameSync(temporaryPath, targetPath);
+NODE
+node - "$ROOT_DIR/model-overrides.json" "$AGENT_DIR/models.json" <<'NODE'
+const fs = require("node:fs");
+
+const [, , sourcePath, targetPath] = process.argv;
+const isRecord = (value) =>
+	value !== null && typeof value === "object" && !Array.isArray(value);
+const managed = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+
+if (!isRecord(managed.providers)) {
+	throw new Error("model-overrides.json must contain a providers object");
+}
+
+let current = {};
+try {
+	current = JSON.parse(fs.readFileSync(targetPath, "utf8"));
+} catch (error) {
+	if (error.code !== "ENOENT") throw error;
+}
+
+if (!isRecord(current)) {
+	throw new Error(`${targetPath} must contain a JSON object`);
+}
+if (current.providers !== undefined && !isRecord(current.providers)) {
+	throw new Error(`${targetPath}.providers must be an object`);
+}
+
+const providers = { ...(current.providers ?? {}) };
+for (const [providerName, managedProvider] of Object.entries(managed.providers)) {
+	if (!isRecord(managedProvider?.modelOverrides)) {
+		throw new Error(
+			`model-overrides.json providers.${providerName}.modelOverrides must be an object`,
+		);
+	}
+
+	const currentProvider = providers[providerName];
+	if (currentProvider !== undefined && !isRecord(currentProvider)) {
+		throw new Error(`${targetPath} provider ${providerName} must be an object`);
+	}
+	if (
+		currentProvider?.modelOverrides !== undefined &&
+		!isRecord(currentProvider.modelOverrides)
+	) {
+		throw new Error(
+			`${targetPath} provider ${providerName}.modelOverrides must be an object`,
+		);
+	}
+
+	providers[providerName] = {
+		...currentProvider,
+		modelOverrides: {
+			...(currentProvider?.modelOverrides ?? {}),
+			...managedProvider.modelOverrides,
+		},
+	};
+}
+
+const temporaryPath = `${targetPath}.${process.pid}.tmp`;
+fs.writeFileSync(
+	temporaryPath,
+	`${JSON.stringify({ ...current, providers }, null, 2)}\n`,
+	"utf8",
+);
 fs.renameSync(temporaryPath, targetPath);
 NODE
 cp "$ROOT_DIR/presets.json" "$AGENT_DIR/presets.json"

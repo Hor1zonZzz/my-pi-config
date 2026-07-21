@@ -385,15 +385,20 @@ export default function presetExtension(pi: ExtensionAPI) {
 	}
 
 	/**
-	 * Update status indicator.
+	 * Show the active preset immediately above the input editor.
 	 */
 	function updateStatus(ctx: ExtensionContext) {
 		const mode = activePresetName ?? "default";
 		const suffix = customTools ? " (custom tools)" : "";
 		const color = activePresetName ? "accent" : "dim";
-		ctx.ui.setStatus(
+
+		// Clear the legacy footer entry so reloads do not leave a stale status behind.
+		ctx.ui.setStatus("preset", undefined);
+		ctx.ui.setWidget(
 			"preset",
-			ctx.ui.theme.fg(color, `preset: ${mode}${suffix}`),
+			(_tui, theme) =>
+				new Text(theme.fg(color, `preset: ${mode}${suffix}`), 0, 0),
+			{ placement: "aboveEditor" },
 		);
 	}
 

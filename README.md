@@ -8,6 +8,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
 - `codex-fast.json` — global state for the local Codex priority toggle
 - `skill-settings.json` — global default state for the skills manager
+- `model-overrides.json` — managed, credential-free overrides for built-in models
 - `extensions/` — local extensions
 - `agents/` — agents used by Pi's official subagent example
 - `prompts/` — subagent workflow prompts
@@ -15,7 +16,8 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 
 ## Local extensions
 
-- `preset.ts` — switch model, thinking level, tools, and instructions with `/preset`
+- `preset.ts` — switch model, thinking level, tools, and instructions with
+  `/preset`; shows the active preset above the input editor
 - `tools.ts` — interactive `/tools` selector
 - `skills-manager/` — `/skills` controls model-visible skills globally, per session,
   and through presets
@@ -35,7 +37,10 @@ cd my-pi-config
 ./install.sh
 ```
 
-The installer creates a timestamped backup under `~/.pi/agent/backups/` before replacing managed files. Restart Pi or run:
+The installer creates a timestamped backup under `~/.pi/agent/backups/` before
+replacing managed files. It merges `model-overrides.json` into the target
+`models.json`, preserving all unrelated local providers, credentials, and model
+settings. Restart Pi or run:
 
 ```text
 /reload
@@ -58,7 +63,13 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 
 ## Security
 
-This repository intentionally excludes credentials, sessions, MCP configuration, trust decisions, caches, history, `node_modules`, and Herdr-managed integration files. Never commit `~/.pi/agent/auth.json`.
+This repository intentionally excludes credentials, sessions, MCP configuration,
+trust decisions, caches, history, `node_modules`, and Herdr-managed integration
+files. Never commit `~/.pi/agent/auth.json` or the raw local `models.json`.
+
+`model-overrides.json` is managed configuration, not a copy of `models.json`; it
+contains only credential-free model overrides that the installer merges into the
+local file.
 
 `skill-settings.json` is managed configuration, not a secret. The skills manager hides
 disabled skills from the model and blocks `/skill:<name>` expansion; it intentionally

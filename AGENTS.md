@@ -11,9 +11,10 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `settings.json` — global Pi defaults and Pi package dependencies.
 - `presets.json` — named model, thinking-level, tool, and instruction presets.
 - `codex-fast.json` — initial persisted state for the Codex priority-service toggle.
+- `model-overrides.json` — credential-free overrides merged into the local `models.json`.
 - `install.sh` — backs up the current user configuration and copies this repository's managed files into the Pi agent directory.
 - `extensions/` — user-level TypeScript extensions loaded by Pi.
-  - `preset.ts` — implements `/preset`, preset cycling, status display, and preset instruction injection.
+  - `preset.ts` — implements `/preset`, preset cycling, input-widget display, and preset instruction injection.
   - `tools.ts` — implements the interactive `/tools` selector.
   - `plan-mode/` — implements read-only planning, plan extraction, and execution progress tracking.
   - `questionnaire.ts` — registers the TUI-only `questionnaire` tool for one or more interactive questions.
@@ -28,9 +29,9 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 
 Some files must be maintained together:
 
-- `extensions/preset.ts`, `extensions/tools.ts`, and `presets.json` are coupled. The two extensions exchange `preset:tools-changed` and `tools:changed` events so that preset state, the active tool set, session persistence, and footer status remain synchronized.
+- `extensions/preset.ts`, `extensions/tools.ts`, and `presets.json` are coupled. The two extensions exchange `preset:tools-changed` and `tools:changed` events so that preset state, the active tool set, session persistence, and input-widget display remain synchronized.
 - `extensions/subagent/index.ts`, `extensions/subagent/agents.ts`, `agents/*.md`, and `prompts/*.md` form one workflow. Agent names referenced by a prompt must exist in `agents/`.
-- Model identifiers appear in `settings.json`, `presets.json`, and `agents/*.md`. When models are renamed or removed, inspect all three locations.
+- Model identifiers appear in `settings.json`, `presets.json`, `agents/*.md`, and `model-overrides.json`. When models are renamed or removed, inspect all four locations.
 - `extensions/plan-mode/index.ts` and `extensions/plan-mode/utils.ts` must agree on state, plan markers, and the bash safety policy. If a question tool is renamed, update `PLAN_MODE_TOOLS` and the injected instructions.
 - `extensions/codex-fast-toggle/index.ts`, `extensions/codex-fast-toggle/README.md`, and `codex-fast.json` define the Fast-mode behavior and state contract together.
 
@@ -100,6 +101,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - The target directory is `PI_CODING_AGENT_DIR`, then legacy `PI_AGENT_DIR`, then `~/.pi/agent`.
 - Existing managed paths are backed up under `backups/my-pi-config-<timestamp>/` before copying.
 - The installer preserves Pi-managed `settings.json.lastChangelogVersion` instead of tracking it in this repository.
+- It merges credential-free `model-overrides.json` entries into the target `models.json`, preserving unrelated local providers and settings.
 - It removes the obsolete `extensions/question.ts`, then copies the current settings, presets, Fast state, extensions, agents, and prompts.
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
 
@@ -115,7 +117,7 @@ Basic repository checks:
 
 ```bash
 bash -n install.sh
-node -e 'for (const f of ["settings.json", "presets.json", "codex-fast.json"]) JSON.parse(require("node:fs").readFileSync(f, "utf8"))'
+node -e 'for (const f of ["settings.json", "presets.json", "skill-settings.json", "model-overrides.json", "codex-fast.json"]) JSON.parse(require("node:fs").readFileSync(f, "utf8"))'
 git diff --check
 ```
 

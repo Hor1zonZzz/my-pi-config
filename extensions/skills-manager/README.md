@@ -20,7 +20,8 @@ The TUI selectors default to the `All` tab and provide `Enabled` and `Disabled`
 tabs. Search always matches against every loaded skill before the current tab
 filters the results. Press `↓` or `Tab` to move from search to the tabs, then
 use `←`/`→` or `Tab` to switch tabs. Press `↓` to enter the list; `↑` reverses
-those transitions.
+those transitions. The selector keeps terminal and text cursors hidden in every
+focus region; typing still filters skills while search is focused.
 Changing a skill updates its state immediately. The selected skill's canonical Pi
 source scope and `SKILL.md` path appear below the list. `/skills list` includes
 the same provenance for non-TUI use.

@@ -20,7 +20,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
-	type Focusable,
 	fuzzyFilter,
 	Input,
 	type KeybindingsManager,
@@ -84,12 +83,11 @@ interface TabbedSkillsListTheme extends SettingsListTheme {
 	inactiveTab: (text: string) => string;
 }
 
-class TabbedSkillsList implements Component, Focusable {
+class TabbedSkillsList implements Component {
 	private readonly searchInput = new Input();
 	private selectedId: string | undefined;
 	private activeTab: SkillTab = "all";
 	private focus: SelectorFocus = "search";
-	private tuiFocused = false;
 
 	constructor(
 		private readonly title: string,
@@ -100,15 +98,6 @@ class TabbedSkillsList implements Component, Focusable {
 		private readonly onChange: (id: string, value: SkillSetting) => void,
 		private readonly onCancel: () => void,
 	) {}
-
-	get focused(): boolean {
-		return this.tuiFocused;
-	}
-
-	set focused(value: boolean) {
-		this.tuiFocused = value;
-		this.syncSearchFocus();
-	}
 
 	invalidate(): void {
 		this.searchInput.invalidate();
@@ -222,9 +211,6 @@ class TabbedSkillsList implements Component, Focusable {
 	}
 
 	private renderSearchInput(width: number): string[] {
-		if (this.focus === "search") {
-			return this.searchInput.render(width);
-		}
 		return [truncateToWidth(`> ${this.searchInput.getValue()}`, width, "")];
 	}
 
@@ -342,11 +328,6 @@ class TabbedSkillsList implements Component, Focusable {
 
 	private setFocus(focus: SelectorFocus): void {
 		this.focus = focus;
-		this.syncSearchFocus();
-	}
-
-	private syncSearchFocus(): void {
-		this.searchInput.focused = this.tuiFocused && this.focus === "search";
 	}
 
 	private changeTab(offset: number): void {
@@ -706,12 +687,6 @@ export default function skillsManagerExtension(pi: ExtensionAPI) {
 			);
 
 			return {
-				get focused() {
-					return selector.focused;
-				},
-				set focused(value: boolean) {
-					selector.focused = value;
-				},
 				render(width: number) {
 					return selector.render(width);
 				},

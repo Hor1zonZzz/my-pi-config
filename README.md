@@ -27,9 +27,6 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `notify.ts` — terminal notification when an agent turn ends
 - `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models
 - `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier while keeping the provider identity as `openai-codex`
-- `openai-response-compaction/` — `/compact-openai [instructions]` uses OpenAI
-  Codex Responses native compaction for manual, threshold, and overflow
-  compaction while preserving Pi's recent context window
 
 ## Install
 
@@ -62,7 +59,6 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 /skills
 /plan
 /fast
-/compact-openai [instructions]
 /implement <task>
 /scout-and-plan <task>
 /implement-and-review <task>

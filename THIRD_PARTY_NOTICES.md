@@ -26,17 +26,6 @@ Upstream project: <https://github.com/2h2d-co/pi-openai-codex-fast>
 
 License and upstream README are retained in `extensions/codex-fast-toggle/`.
 
-## howaboua pi-codex-conversion
-
-`extensions/openai-response-compaction/` substantially adapts the native OpenAI
-Responses compaction architecture from `@howaboua/pi-codex-conversion`, reviewed
-at upstream commit `3d55dffaf22a47854f568d3d2d742b979cfbc55f`.
-
-Upstream project: <https://github.com/IgorWarzocha/howaboua-pi-stuff>
-
-The upstream MIT license is retained in
-`extensions/openai-response-compaction/LICENSE`.
-
 ## Herdr skill
 
 `install.sh` downloads the Herdr `SKILL.md` from the upstream repository at

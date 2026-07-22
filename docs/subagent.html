@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Subagent 插件说明</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f8fc;
+        --surface: #ffffff;
+        --text: #1d2939;
+        --muted: #5b697c;
+        --line: #dce3ec;
+        --brand: #3659d9;
+        --brand-soft: #e9edff;
+        --green: #087443;
+        --amber: #9a5b00;
+        --red: #b42318;
+        --code: #111827;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #101827;
+          --surface: #182235;
+          --text: #edf2f9;
+          --muted: #aab8ca;
+          --line: #31415a;
+          --brand: #aebdff;
+          --brand-soft: #252f58;
+          --green: #72d6a4;
+          --amber: #f6c36d;
+          --red: #fda29b;
+          --code: #0c1220;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          16px/1.7 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          "PingFang SC",
+          "Hiragino Sans GB",
+          "Microsoft YaHei",
+          sans-serif;
+      }
+      main {
+        width: min(1080px, calc(100% - 32px));
+        margin: 0 auto 64px;
+      }
+      header {
+        padding: 64px 0 28px;
+      }
+      h1,
+      h2,
+      h3 {
+        line-height: 1.25;
+        margin: 0 0 0.65em;
+      }
+      h1 {
+        font-size: clamp(2rem, 5vw, 3.3rem);
+        letter-spacing: -0.04em;
+      }
+      h2 {
+        font-size: 1.5rem;
+        margin-top: 0;
+      }
+      h3 {
+        font-size: 1.05rem;
+        margin-top: 1.3em;
+      }
+      p {
+        margin: 0.65em 0;
+      }
+      a {
+        color: var(--brand);
+      }
+      .lede {
+        color: var(--muted);
+        font-size: 1.12rem;
+        max-width: 760px;
+      }
+      .meta,
+      .chips {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 18px;
+      }
+      .chip {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 3px 10px;
+        color: var(--muted);
+        font-size: 0.85rem;
+        background: var(--surface);
+      }
+      .chip.good {
+        border-color: color-mix(in srgb, var(--green) 40%, var(--line));
+        color: var(--green);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 16px;
+      }
+      .card,
+      section {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 26px;
+        margin-top: 18px;
+        box-shadow: 0 5px 18px rgb(16 24 40 / 0.035);
+      }
+      .grid .card {
+        margin: 0;
+      }
+      .span-4 {
+        grid-column: span 4;
+      }
+      .span-6 {
+        grid-column: span 6;
+      }
+      .span-12 {
+        grid-column: span 12;
+      }
+      .number {
+        display: inline-grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--brand-soft);
+        color: var(--brand);
+        font-weight: 700;
+        margin-bottom: 10px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 12px 0;
+        font-size: 0.94rem;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        color: var(--muted);
+        font-weight: 650;
+        background: color-mix(in srgb, var(--surface) 85%, var(--brand-soft));
+      }
+      code {
+        font:
+          0.9em ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+        color: var(--brand);
+      }
+      pre {
+        margin: 14px 0;
+        padding: 16px;
+        overflow-x: auto;
+        border-radius: 10px;
+        background: var(--code);
+        color: #e5ecff;
+        font:
+          0.84rem/1.55 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Consolas,
+          monospace;
+      }
+      pre code {
+        color: inherit;
+      }
+      .flow {
+        display: flex;
+        align-items: stretch;
+        gap: 8px;
+        overflow-x: auto;
+        padding: 4px 0 12px;
+      }
+      .flow > div {
+        min-width: 150px;
+        padding: 13px;
+        border-radius: 10px;
+        background: var(--brand-soft);
+        color: var(--text);
+      }
+      .flow .arrow {
+        min-width: auto;
+        align-self: center;
+        background: transparent;
+        color: var(--muted);
+        font-size: 1.35rem;
+        padding: 0;
+      }
+      .note {
+        border-left: 4px solid var(--brand);
+        padding: 12px 14px;
+        background: var(--brand-soft);
+        border-radius: 0 9px 9px 0;
+      }
+      .warning {
+        border-left-color: var(--amber);
+      }
+      .danger {
+        border-left-color: var(--red);
+      }
+      .yesno {
+        font-weight: 750;
+        color: var(--green);
+      }
+      ul,
+      ol {
+        padding-left: 1.35em;
+      }
+      li + li {
+        margin-top: 0.35em;
+      }
+      .small {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      footer {
+        color: var(--muted);
+        font-size: 0.86rem;
+        padding: 10px 2px;
+      }
+      @media (max-width: 720px) {
+        main {
+          width: min(100% - 22px, 1080px);
+        }
+        header {
+          padding-top: 36px;
+        }
+        .card,
+        section {
+          padding: 19px;
+        }
+        .span-4,
+        .span-6,
+        .span-12 {
+          grid-column: span 12;
+        }
+        table {
+          min-width: 660px;
+        }
+        .table-wrap {
+          overflow-x: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Subagent 插件说明</h1>
+        <p class="lede">
+          本插件把一个委派任务交给独立启动的
+          <code>pi</code>
+          子进程执行。它隔离对话上下文，但不会隔离文件系统或项目目录；主代理随后得到子代理的最终输出。
+        </p>
+        <div class="meta">
+          <span class="chip">插件：<code>extensions/subagent/</code></span>
+          <span class="chip">已检查 Pi：0.81.1</span>
+          <span class="chip">入口：<code>index.ts</code></span>
+          <span class="chip">定义读取：<code>agents.ts</code></span>
+        </div>
+      </header>
+
+      <section>
+        <h2>先说结论</h2>
+        <div class="grid">
+          <article class="card span-4">
+            <div class="number">1</div>
+            <h3>有四个内置角色</h3>
+            <p>
+              <code>scout</code
+              >、<code>planner</code>、<code>reviewer</code>、<code>worker</code>。它们是
+              Markdown 文件中的角色提示词与配置，不是四个不同的插件。
+            </p>
+          </article>
+          <article class="card span-4">
+            <div class="number">2</div>
+            <h3>有三种调用模式</h3>
+            <p>
+              单个执行（single）、并行执行（parallel）、串行交接（chain）。每次调用必须且只能选择其中一种。
+            </p>
+          </article>
+          <article class="card span-4">
+            <div class="number">3</div>
+            <h3>可以选模型</h3>
+            <p>
+              <span class="yesno">可以。</span>模型由“角色定义”的 YAML
+              <code>model</code>
+              字段选择；当前工具调用参数中<strong>没有</strong>临时覆盖模型的
+              <code>model</code> 字段。
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>当前仓库中的角色</h2>
+        <p>
+          仓库的 <code>agents/*.md</code> 是安装源；执行
+          <code>./install.sh</code> 后会复制到
+          <code>~/.pi/agent/agents/</code>（或
+          <code>PI_CODING_AGENT_DIR/agents/</code
+          >），插件运行时从那里重新发现角色。
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>角色</th>
+                <th>职责</th>
+                <th>当前模型</th>
+                <th>显式工具限制</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>scout</code></td>
+                <td>
+                  快速勘察代码库，产出可交接的压缩上下文、关键代码与入口。
+                </td>
+                <td><code>openai-codex/gpt-5.6-luna</code></td>
+                <td><code>read, grep, find, ls, bash</code></td>
+              </tr>
+              <tr>
+                <td><code>planner</code></td>
+                <td>
+                  基于需求和勘察结果输出实施计划；提示词要求只读、不修改。
+                </td>
+                <td><code>openai-codex/gpt-5.6-sol</code></td>
+                <td><code>read, grep, find, ls</code></td>
+              </tr>
+              <tr>
+                <td><code>reviewer</code></td>
+                <td>
+                  审查质量、安全性和可维护性；提示词要求 Bash 仅用于只读 Git
+                  命令。
+                </td>
+                <td><code>openai-codex/gpt-5.6-sol</code></td>
+                <td><code>read, grep, find, ls, bash</code></td>
+              </tr>
+              <tr>
+                <td><code>worker</code></td>
+                <td>通用执行者，完成委派工作并报告变更文件和注意事项。</td>
+                <td><code>openai-codex/gpt-5.6-sol</code></td>
+                <td>未指定；子进程使用其 Pi 默认可用工具集。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small">
+          “只读”是角色提示词和工具配置约束，不是操作系统沙箱。尤其不要把不可信项目中的项目级角色当作安全边界。
+        </p>
+      </section>
+
+      <section>
+        <h2>三种调用模式</h2>
+        <div class="grid">
+          <article class="card span-4">
+            <h3>Single：一个角色，一个任务</h3>
+            <pre><code>{
+  "agent": "scout",
+  "task": "找出认证相关代码"
+}</code></pre>
+            <p>适合一次性检索、审查或独立实现。</p>
+          </article>
+          <article class="card span-4">
+            <h3>Parallel：多个任务并行</h3>
+            <pre><code>{
+  "tasks": [
+    { "agent": "scout", "task": "查模型层" },
+    { "agent": "scout", "task": "查鉴权层" }
+  ]
+}</code></pre>
+            <p>最多 8 个任务，同时最多运行 4 个子进程；结果按任务汇总。</p>
+          </article>
+          <article class="card span-4">
+            <h3>Chain：逐步交接</h3>
+            <pre><code>{
+  "chain": [
+    { "agent": "scout", "task": "研究 X" },
+    { "agent": "planner", "task": "基于以下结果制订计划：\n{previous}" }
+  ]
+}</code></pre>
+            <p>
+              每一步的最终文本替换下一步任务中的所有
+              <code>{previous}</code>；任一步失败即停止。
+            </p>
+          </article>
+        </div>
+        <div class="note warning">
+          <strong>并行写入警告：</strong
+          >并行任务可以使用相同的工作目录。若它们都会改同一文件，插件不会替你做跨子进程的冲突协调；并行模式更适合只读勘察或互不重叠的任务。
+        </div>
+      </section>
+
+      <section>
+        <h2>端到端执行逻辑</h2>
+        <div class="flow" aria-label="执行流程">
+          <div>主代理调用<br /><code>subagent</code> 工具</div>
+          <div class="arrow">→</div>
+          <div>按作用域发现<br />角色 Markdown</div>
+          <div class="arrow">→</div>
+          <div>校验模式、确认<br />项目级角色</div>
+          <div class="arrow">→</div>
+          <div>启动独立的<br /><code>pi</code> 子进程</div>
+          <div class="arrow">→</div>
+          <div>解析 JSON 事件<br />并流式更新 TUI</div>
+          <div class="arrow">→</div>
+          <div>把最终结果<br />返回给主代理</div>
+        </div>
+        <ol>
+          <li>
+            <strong>发现角色。</strong
+            ><code>discoverAgents()</code> 读取用户级和/或最近父目录中的项目级
+            <code>.pi/agents/*.md</code>；缺少 <code>name</code> 或
+            <code>description</code> 的文件会被忽略。
+          </li>
+          <li>
+            <strong>选择唯一模式。</strong>提供 single、parallel、chain
+            中的一个。角色名不存在时，返回可用角色列表。
+          </li>
+          <li>
+            <strong>处理项目级信任。</strong>若请求
+            <code>agentScope: "project"</code> 或
+            <code>"both"</code
+            >，且实际选择到项目级角色，交互界面默认弹出确认框。
+          </li>
+          <li>
+            <strong>构造子进程。</strong>基础参数为
+            <code>--mode json -p --no-session</code>；有模型时附加
+            <code>--model</code>，有工具列表时附加
+            <code>--tools</code>。角色系统提示词先写入权限为
+            <code>0600</code> 的临时文件，再经
+            <code>--append-system-prompt</code> 加载。
+          </li>
+          <li>
+            <strong>运行与收集。</strong>子进程在
+            <code>cwd</code>
+            参数指定的目录运行，否则使用父代理的当前目录。插件逐行解析 stdout 的
+            JSON
+            事件，收集助手消息、工具结果、轮次、token、缓存用量、费用和实际模型。
+          </li>
+          <li>
+            <strong>返回与展示。</strong>返回最后一条助手文本；chain
+            将该文本传给下一步，parallel
+            为每个任务生成小结。并行时给主代理看的每个任务输出上限为 50
+            KiB，完整结果仍保存在工具详情中。
+          </li>
+        </ol>
+        <p>
+          按 Ctrl+O 可展开 TUI 中的子代理结果：查看完整任务、工具调用、Markdown
+          最终输出及各任务的
+          token/费用/模型统计。折叠状态会只显示最近项目（single 最多 10
+          条，chain/parallel 每项最多 5 条）。
+        </p>
+      </section>
+
+      <section>
+        <h2>上下文、文件与取消</h2>
+        <div class="grid">
+          <article class="card span-6">
+            <h3>真正隔离的内容</h3>
+            <ul>
+              <li>
+                子代理是另一个 <code>pi</code> 进程，并以
+                <code>--no-session</code> 启动。
+              </li>
+              <li>
+                它不会继承主对话的完整上下文；只有任务文本、角色提示词和该子进程自己的
+                Pi 配置进入上下文。
+              </li>
+              <li>
+                chain 是显式交接：仅上一步“最后一条助手文本”会替换
+                <code>{previous}</code>。
+              </li>
+            </ul>
+          </article>
+          <article class="card span-6">
+            <h3>没有隔离的内容</h3>
+            <ul>
+              <li>
+                工作目录、文件系统、Git 工作区、环境权限仍然由本机 Pi
+                子进程共享。
+              </li>
+              <li>角色的 <code>cwd</code> 可逐任务覆盖默认目录。</li>
+              <li>用户级 Pi 配置、认证和已安装扩展会影响子进程的可用能力。</li>
+            </ul>
+          </article>
+        </div>
+        <p>
+          主代理取消时，AbortSignal 会发送 <code>SIGTERM</code> 给子进程；5
+          秒后如仍未结束则发送 <code>SIGKILL</code>。非零退出码、<code
+            >stopReason: error</code
+          >
+          或 <code>aborted</code> 都会被视为失败；chain 在失败步骤处终止。
+        </p>
+      </section>
+
+      <section>
+        <h2>角色来源与安全边界</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>作用域</th>
+                <th>读取位置</th>
+                <th>启用方式</th>
+                <th>覆盖规则</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>user</code>（默认）</td>
+                <td><code>~/.pi/agent/agents/*.md</code></td>
+                <td>无需额外参数</td>
+                <td>只读取用户级角色</td>
+              </tr>
+              <tr>
+                <td><code>project</code></td>
+                <td>从当前目录向上找最近的 <code>.pi/agents/*.md</code></td>
+                <td><code>agentScope: "project"</code></td>
+                <td>只读取项目级角色</td>
+              </tr>
+              <tr>
+                <td><code>both</code></td>
+                <td>两处都读取</td>
+                <td><code>agentScope: "both"</code></td>
+                <td>同名项目级角色覆盖用户级角色</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note danger">
+          <strong>重要：</strong
+          >项目级角色是仓库控制的提示词。交互模式下默认会确认；但 JSON/print
+          等无 UI 模式不会弹出确认框。因此只应对可信仓库使用
+          <code>project</code>/<code>both</code>，不要把
+          <code>confirmProjectAgents</code> 当成无 UI 运行时的安全防线。
+        </div>
+      </section>
+
+      <section>
+        <h2>模型：能否选择，以及怎样选择</h2>
+        <p>
+          <span class="yesno">能选择。</span
+          >当前实现的选择粒度是<strong>角色级</strong>，不是某一次工具调用级。插件读取角色
+          Markdown 的 YAML frontmatter：
+        </p>
+        <pre><code>---
+name: scout
+description: Fast codebase recon
+tools: read, grep, find, ls, bash
+model: openai-codex/gpt-5.6-luna
+---
+
+这里是该角色附加给子 Pi 的系统提示词。</code></pre>
+        <ul>
+          <li>
+            存在 <code>model</code> 时：子进程会接收
+            <code>--model &lt;该值&gt;</code>。例如当前 scout 使用
+            Luna，其余三个内置角色使用 Sol。
+          </li>
+          <li>
+            没有 <code>model</code> 时：插件不传
+            <code>--model</code>，子进程按自己的 Pi
+            默认模型配置运行；当前仓库的默认值是
+            <code>openai-codex/gpt-5.6-sol</code>。
+          </li>
+          <li>
+            当前 <code>subagent</code> 参数 schema 没有
+            <code>model</code> 字段。因此不能在一次调用中写
+            <code>{ agent: "scout", model: "..." }</code> 来覆盖 scout 的模型。
+          </li>
+          <li>
+            模型名必须是当前 Pi 可识别且已具备认证的模型。仓库的
+            <code>model-overrides.json</code> 目前包含
+            <code>gpt-5.6-luna</code>、<code>gpt-5.6-sol</code>、<code
+              >gpt-5.6-terra</code
+            >
+            的覆盖配置。
+          </li>
+        </ul>
+        <h3>修改现有角色的模型</h3>
+        <pre><code># 编辑仓库源文件
+# agents/scout.md
+model: openai-codex/gpt-5.6-terra
+
+# 安装到实际 Pi 配置目录
+./install.sh</code></pre>
+        <p>
+          角色会在每次 subagent
+          调用时重新发现；安装后的角色文件修改会在下一次调用中生效。若修改的是仓库源文件，先执行安装脚本复制到实际
+          Pi 配置目录。模型或凭据不可用时，子进程会失败，错误会返回给主代理。
+        </p>
+        <h3>新增一个固定模型的角色</h3>
+        <pre><code>---
+name: deep-reviewer
+description: Uses Terra for a deeper code review
+tools: read, grep, find, ls, bash
+model: openai-codex/gpt-5.6-terra
+---
+
+只读检查变更；按严重性报告问题和路径、行号。</code></pre>
+        <p>
+          将其放到用户级 <code>agents/deep-reviewer.md</code> 并安装，之后以
+          <code>agent: "deep-reviewer"</code> 调用即可。也可放到可信项目的
+          <code>.pi/agents/</code> 中，并显式使用
+          <code>agentScope: "project"</code> 或 <code>"both"</code>。
+        </p>
+        <div class="note">
+          <strong>如果需要“每次调用临时指定模型”：</strong
+          >当前插件尚未提供这一能力。需要扩展工具 schema（增加可选
+          <code>model</code>）并在 <code>runSingleAgent()</code> 中让该值优先于
+          <code>agent.model</code>；这会改变插件接口，不能仅通过调用参数实现。
+        </div>
+      </section>
+
+      <section>
+        <h2>预置工作流模板</h2>
+        <p>
+          <code>prompts/</code> 中的模板不是新的子代理类型；它们只是指导主代理用
+          chain 模式调用前述角色。
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>命令</th>
+                <th>链路</th>
+                <th>用途</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>/scout-and-plan &lt;任务&gt;</code></td>
+                <td>scout → planner</td>
+                <td>只调研和规划，不实施。</td>
+              </tr>
+              <tr>
+                <td><code>/implement &lt;任务&gt;</code></td>
+                <td>scout → planner → worker</td>
+                <td>先建立上下文和计划，再实现。</td>
+              </tr>
+              <tr>
+                <td><code>/implement-and-review &lt;任务&gt;</code></td>
+                <td>worker → reviewer → worker</td>
+                <td>实现、审查、根据反馈修正。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>常见问题</h2>
+        <h3>为什么提示 Unknown agent？</h3>
+        <p>
+          检查角色文件是否已安装到实际 agent 目录、YAML 是否有非空
+          <code>name</code> 与
+          <code>description</code>、调用名是否一致，以及项目角色是否设置了正确的
+          <code>agentScope</code>。
+        </p>
+        <h3>为什么子代理没有使用当前主代理的模型？</h3>
+        <p>
+          它是新的 Pi 进程。模型优先来自角色的
+          <code>model</code> 字段；没有该字段才读取子进程自己的默认 Pi
+          配置。主会话当前临时选中的模型不会作为参数自动传递。
+        </p>
+        <h3>为什么 planner/reviewer 仍可能改文件？</h3>
+        <p>
+          它们的角色提示词要求只读，且 planner 不暴露 Bash、reviewer 的 Bash
+          被提示为只读；但这不是沙箱。应搭配可信模型、最小工具集和必要的外部权限控制。
+        </p>
+        <h3>为什么 chain 的下一步信息不完整？</h3>
+        <p>
+          只有前一步最后一条助手文本会传递。让前一步按结构化、压缩格式输出关键路径、代码片段和结论；需要保留原任务时，也应在后一步任务文本中显式写入。
+        </p>
+      </section>
+
+      <footer>
+        依据本仓库的
+        <code>extensions/subagent/index.ts</code
+        >、<code>extensions/subagent/agents.ts</code>、<code>agents/*.md</code>、<code>prompts/*.md</code>、<code
+          >install.sh</code
+        >
+        与 Pi 0.81.1 扩展文档整理。本文描述当前实现，不替代 Pi
+        的权限、认证或项目可信任机制。
+      </footer>
+    </main>
+  </body>
+</html>

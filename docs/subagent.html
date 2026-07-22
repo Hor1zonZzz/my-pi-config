@@ -317,7 +317,7 @@
       <section>
         <h2>当前仓库中的角色</h2>
         <p>
-          仓库的 <code>agents/*.md</code> 是安装源；执行
+          仓库的 <code>extensions/subagent/agents/*.md</code> 是安装源；执行
           <code>./install.sh</code> 后会复制到
           <code>~/.pi/agent/agents/</code>（或
           <code>PI_CODING_AGENT_DIR/agents/</code
@@ -363,7 +363,7 @@
                 <td><code>worker</code></td>
                 <td>通用执行者，完成委派工作并报告变更文件和注意事项。</td>
                 <td><code>openai-codex/gpt-5.6-sol</code></td>
-                <td>未指定；子进程使用其 Pi 默认可用工具集。</td>
+                <td><code>read, bash, edit, write, lsp_diagnostics</code></td>
               </tr>
             </tbody>
           </table>
@@ -448,7 +448,9 @@
           </li>
           <li>
             <strong>构造子进程。</strong>基础参数为
-            <code>--mode json -p --no-session</code>；有模型时附加
+            <code>--mode json -p --no-session</code>；受控扩展角色会附加
+            <code>--no-extensions</code>，并为白名单逐项附加
+            <code>--extension</code>；有模型时附加
             <code>--model</code>，有工具列表时附加
             <code>--tools</code>。角色系统提示词先写入权限为
             <code>0600</code> 的临时文件，再经
@@ -514,6 +516,54 @@
             >stopReason: error</code
           >
           或 <code>aborted</code> 都会被视为失败；chain 在失败步骤处终止。
+        </p>
+      </section>
+
+      <section>
+        <h2>扩展加载策略</h2>
+        <p>
+          <code>tools</code>
+          只决定模型能调用哪些工具；它不会阻止已加载扩展的命令、事件处理器或系统提示词注入。角色可用
+          YAML <code>extensions</code> 控制子 Pi 实际加载的扩展：
+        </p>
+        <pre><code>---
+# 未配置：保持现有自动扩展发现
+
+# 不自动加载任何扩展
+extensions: none
+
+# 禁用自动发现后，只加载白名单
+extensions:
+  - npm:pi-lens
+  - ../extensions/my-extension.ts
+---</code></pre>
+        <ul>
+          <li>缺少 <code>extensions</code> 字段时，完全保持原有行为。</li>
+          <li><code>none</code> 传入 <code>--no-extensions</code>。</li>
+          <li>
+            YAML 字符串数组同样传入 <code>--no-extensions</code>，并为每个
+            source 传入 <code>--extension</code>；<code>./</code>、<code
+              >../</code
+            >
+            与绝对本地路径相对于角色 Markdown 文件解析，<code>npm:</code>/<code
+              >git:</code
+            >
+            source 原样交给 Pi。
+          </li>
+          <li>
+            配置格式无效会使本次角色调用失败，绝不会静默退回为加载全部扩展。
+          </li>
+        </ul>
+        <div class="note danger">
+          <strong>信任边界：</strong>显式扩展会在子 Pi
+          启动时执行代码。项目级角色及其 extension source 只能来自可信仓库；无
+          UI 模式下仍不会出现项目角色确认框。
+        </div>
+        <p>
+          此项仅控制扩展；skills、prompt templates 和
+          <code>AGENTS.md</code>
+          等资源不受影响。折叠结果显示扩展策略，展开结果显示完整白名单
+          source，便于审计。
         </p>
       </section>
 
@@ -603,7 +653,7 @@ model: openai-codex/gpt-5.6-luna
         </ul>
         <h3>修改现有角色的模型</h3>
         <pre><code># 编辑仓库源文件
-# agents/scout.md
+# extensions/subagent/agents/scout.md
 model: openai-codex/gpt-5.6-terra
 
 # 安装到实际 Pi 配置目录
@@ -623,7 +673,9 @@ model: openai-codex/gpt-5.6-terra
 
 只读检查变更；按严重性报告问题和路径、行号。</code></pre>
         <p>
-          将其放到用户级 <code>agents/deep-reviewer.md</code> 并安装，之后以
+          将其放到仓库的
+          <code>extensions/subagent/agents/deep-reviewer.md</code>
+          并安装，之后以
           <code>agent: "deep-reviewer"</code> 调用即可。也可放到可信项目的
           <code>.pi/agents/</code> 中，并显式使用
           <code>agentScope: "project"</code> 或 <code>"both"</code>。
@@ -639,8 +691,9 @@ model: openai-codex/gpt-5.6-terra
       <section>
         <h2>预置工作流模板</h2>
         <p>
-          <code>prompts/</code> 中的模板不是新的子代理类型；它们只是指导主代理用
-          chain 模式调用前述角色。
+          <code>extensions/subagent/prompts/</code>
+          中的模板不是新的子代理类型；它们只是指导主代理用 chain
+          模式调用前述角色。
         </p>
         <div class="table-wrap">
           <table>
@@ -701,7 +754,7 @@ model: openai-codex/gpt-5.6-terra
       <footer>
         依据本仓库的
         <code>extensions/subagent/index.ts</code
-        >、<code>extensions/subagent/agents.ts</code>、<code>agents/*.md</code>、<code>prompts/*.md</code>、<code
+        >、<code>extensions/subagent/agents.ts</code>、<code>extensions/subagent/agents/*.md</code>、<code>extensions/subagent/prompts/*.md</code>、<code
           >install.sh</code
         >
         与 Pi 0.81.1 扩展文档整理。本文描述当前实现，不替代 Pi

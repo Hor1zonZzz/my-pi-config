@@ -9,9 +9,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `codex-fast.json` — global state for the local Codex priority toggle
 - `skill-settings.json` — global default state for the skills manager
 - `model-overrides.json` — managed, credential-free overrides for built-in models
-- `extensions/` — local extensions
-- `agents/` — agents used by Pi's official subagent example
-- `prompts/` — subagent workflow prompts
+- `extensions/` — local extensions; `extensions/subagent/` also owns its agent definitions and workflow prompts
 - `install.sh` — backup and install into `~/.pi/agent`
 
 ## Local extensions

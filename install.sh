@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SUBAGENT_DIR="$ROOT_DIR/extensions/subagent"
 AGENT_DIR="${PI_CODING_AGENT_DIR:-${PI_AGENT_DIR:-$HOME/.pi/agent}}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$AGENT_DIR/backups/my-pi-config-$TIMESTAMP"
@@ -110,8 +111,8 @@ cp "$ROOT_DIR/presets.json" "$AGENT_DIR/presets.json"
 cp "$ROOT_DIR/skill-settings.json" "$AGENT_DIR/skill-settings.json"
 cp "$ROOT_DIR/codex-fast.json" "$AGENT_DIR/codex-fast.json"
 cp -R "$ROOT_DIR/extensions/." "$AGENT_DIR/extensions/"
-cp -R "$ROOT_DIR/agents/." "$AGENT_DIR/agents/"
-cp -R "$ROOT_DIR/prompts/." "$AGENT_DIR/prompts/"
+cp -R "$SUBAGENT_DIR/agents/." "$AGENT_DIR/agents/"
+cp -R "$SUBAGENT_DIR/prompts/." "$AGENT_DIR/prompts/"
 
 printf 'Installed Pi configuration into %s\n' "$AGENT_DIR"
 printf 'Backup created at %s\n' "$BACKUP_DIR"

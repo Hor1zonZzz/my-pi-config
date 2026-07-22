@@ -10,6 +10,8 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `skill-settings.json` — global default state for the skills manager
 - `model-overrides.json` — managed, credential-free overrides for built-in models
 - `extensions/` — local extensions; `extensions/subagent/` also owns its agent definitions and workflow prompts
+- `skills/` — remote-managed skill caches; Herdr is refreshed from its upstream
+  Git repository during installation
 - `install.sh` — backup and install into `~/.pi/agent`
 
 ## Local extensions
@@ -39,7 +41,9 @@ cd my-pi-config
 The installer creates a timestamped backup under `~/.pi/agent/backups/` before
 replacing managed files. It merges `model-overrides.json` into the target
 `models.json`, preserving all unrelated local providers, credentials, and model
-settings. Restart Pi or run:
+settings. It also refreshes the Herdr skill from upstream `master` and installs
+it to `~/.pi/agent/skills/herdr/`; an existing local cache is used when the
+remote is temporarily unavailable. Restart Pi or run:
 
 ```text
 /reload

@@ -12,7 +12,10 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `presets.json` — named model, thinking-level, tool, and instruction presets.
 - `codex-fast.json` — initial persisted state for the Codex priority-service toggle.
 - `model-overrides.json` — credential-free overrides merged into the local `models.json`.
-- `install.sh` — backs up the current user configuration and copies this repository's managed files into the Pi agent directory.
+- `install.sh` — backs up the current user configuration, refreshes the Herdr
+  skill cache, and copies managed files into the Pi agent directory.
+- `skills/` — remote-managed skill caches; `install.sh` refreshes Herdr from
+  its upstream Git repository and installs it to the target Pi skills directory.
 - `extensions/` — user-level TypeScript extensions loaded by Pi.
   - `preset.ts` — implements `/preset`, preset cycling, input-border labels, and preset instruction injection.
   - `tools.ts` — implements the interactive `/tools` selector.
@@ -102,7 +105,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - Existing managed paths are backed up under `backups/my-pi-config-<timestamp>/` before copying.
 - The installer preserves Pi-managed `settings.json.lastChangelogVersion` instead of tracking it in this repository.
 - It merges credential-free `model-overrides.json` entries into the target `models.json`, preserving unrelated local providers and settings.
-- It removes the obsolete `extensions/question.ts`, then copies the current settings, presets, Fast state, extensions, and the subagent-owned agents and prompts.
+- It removes the obsolete `extensions/question.ts`, then copies the current settings, presets, Fast state, extensions, the subagent-owned agents and prompts, and the refreshed Herdr skill.
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
 
 `codex-fast.json` is both a repository default and mutable runtime state. Installing the repository seeds/replaces the target value; the extension later updates the target file atomically.

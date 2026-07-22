@@ -11,8 +11,8 @@ Files adapted or copied from Pi's official extension examples include:
 - `extensions/subagent/`
 - `extensions/tools.ts`
 - `extensions/skills-manager/`
-- `agents/`
-- `prompts/`
+- `extensions/subagent/agents/`
+- `extensions/subagent/prompts/`
 
 Upstream project: <https://github.com/earendil-works/pi>
 
@@ -25,3 +25,15 @@ License: see `licenses/pi-LICENSE`.
 Upstream project: <https://github.com/2h2d-co/pi-openai-codex-fast>
 
 License and upstream README are retained in `extensions/codex-fast-toggle/`.
+
+## Herdr skill
+
+`install.sh` downloads the Herdr `SKILL.md` from the upstream repository at
+installation time; this repository does not vendor the downloaded skill.
+
+Upstream project: <https://github.com/ogulcancelik/herdr>
+
+The upstream repository states that Herdr is dual-licensed, including
+AGPL-3.0-or-later for its open-source distribution. Consult its current
+[`LICENSE`](https://github.com/ogulcancelik/herdr/blob/master/LICENSE) before
+installing or redistributing the downloaded skill.

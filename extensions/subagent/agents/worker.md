@@ -1,7 +1,6 @@
 ---
 name: worker
 description: General-purpose subagent with controlled implementation tools, isolated context
-tools: read, bash, edit, write, lsp_diagnostics
 extensions:
   - npm:pi-lens
 model: openai-codex/gpt-5.6-sol

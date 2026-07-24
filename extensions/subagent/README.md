@@ -5,8 +5,10 @@ Delegate tasks to specialized subagents with isolated context windows.
 ## Features
 
 - **Isolated context**: Each subagent runs in a separate `pi` process
-- **Streaming output**: See tool calls and progress as they happen
-- **Parallel streaming**: All parallel tasks stream updates simultaneously
+- **Blocking or background execution**: `action: "block"` waits; `action: "background"` returns a task ID immediately
+- **Session task management**: `list`, `status`, and `cancel` actions manage tasks created by the current Pi session
+- **Streaming output**: Blocking calls show tool calls and progress as they happen
+- **Parallel streaming**: All blocking parallel tasks stream updates simultaneously
 - **Markdown rendering**: Final output rendered with proper formatting (expanded view)
 - **Usage tracking**: Shows turns, tokens, cost, and context usage per agent
 - **Abort support**: Ctrl+C propagates to kill subagent processes
@@ -61,22 +63,49 @@ When running interactively, the tool prompts for confirmation before running pro
 
 ## Usage
 
-### Single agent
+### Blocking single agent
 
-```
-Use scout to find all authentication code
-```
-
-### Parallel execution
-
-```
-Run 2 scouts in parallel: one to find models, one to find providers
+```json
+{
+  "action": "block",
+  "agent": "scout",
+  "task": "Find all authentication code"
+}
 ```
 
-### Chained workflow
+### Background parallel execution
 
+```json
+{
+  "action": "background",
+  "tasks": [
+    { "agent": "scout", "task": "Find models" },
+    { "agent": "scout", "task": "Find providers" }
+  ]
+}
 ```
-Use a chain: first have scout find the read tool, then have planner suggest improvements
+
+### Blocking chained workflow
+
+```json
+{
+  "action": "block",
+  "chain": [
+    { "agent": "scout", "task": "Find the read tool" },
+    { "agent": "planner", "task": "Suggest improvements from:\n{previous}" }
+  ]
+}
+```
+
+Chain steps receive the previous step's complete final text without truncation.
+Only the final chain step is returned to the parent, capped at 50 KB.
+
+### Task management
+
+```json
+{ "action": "list" }
+{ "action": "status", "taskId": "task_..." }
+{ "action": "cancel", "taskId": "task_..." }
 ```
 
 ### Workflow prompts
@@ -89,11 +118,18 @@ Use a chain: first have scout find the read tool, then have planner suggest impr
 
 ## Tool Modes
 
-| Mode | Parameter | Description |
-|------|-----------|-------------|
-| Single | `{ agent, task }` | One agent, one task |
-| Parallel | `{ tasks: [...] }` | Multiple agents run concurrently (max 8, 4 concurrent) |
-| Chain | `{ chain: [...] }` | Sequential with `{previous}` placeholder |
+`action` is required; the legacy action-less shape is intentionally unsupported.
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `block` | Exactly one of `{ agent, task }`, `{ tasks }`, or `{ chain }` | Persist the task and wait for completion |
+| `background` | Exactly one execution mode | Persist the task, start/queue it, and return its ID immediately |
+| `list` | none | List tasks for the current Pi session |
+| `status` | `taskId` | Show persisted status JSON |
+| `cancel` | `taskId` | Cancel a queued or running task |
+
+Parallel mode accepts at most 8 subagents. A global FIFO scheduler shared by
+blocking and background calls limits actual child Pi processes.
 
 ## Output Display
 
@@ -116,8 +152,45 @@ Use a chain: first have scout find the read tool, then have planner suggest impr
 - Shows all tasks with live status (⏳ running, ✓ done, ✗ failed)
 - Updates as each task makes progress
 - Shows "2/3 done, 1 running" status
-- Returns each completed task's final output to the parent model, capped at 50 KB per task
+- Returns each completed subagent's final output to the parent model, capped at 50 KB per subagent
 - Returns failure diagnostics from stderr/error messages when a child exits before producing output
+
+**Background completion:**
+
+- Completed tasks are injected with `followUp` and automatically trigger the parent agent.
+- A completion arriving while the parent is busy waits for `agent_settled`; all completions accumulated during that run are combined into one follow-up.
+- Single returns at most 50 KB/2,000 lines; parallel applies that limit per subagent; chain returns only its final step with the same limit.
+
+## Task Files
+
+Every blocking and background invocation writes complete output under:
+
+```text
+<cwd>/.pi/subagent-tasks/<sessionId>/<taskId>/
+├── status.json
+├── result.md
+└── details.json
+```
+
+`result.md` contains complete final text for every subagent. `details.json`
+contains structured messages, stderr, usage, model, and exit information.
+Files are not automatically deleted.
+
+## Scheduler Settings
+
+Global settings live in `~/.pi/agent/subagent-settings.json`:
+
+```json
+{
+  "version": 1,
+  "maxConcurrentProcesses": 4,
+  "maxQueuedProcesses": 16
+}
+```
+
+Settings are read at session start. There is no task timeout. The queue is FIFO
+by child-process request; a large parallel task may occupy the queue before a
+later task.
 
 **Tool call formatting** (mimics built-in tools):
 
@@ -191,14 +264,18 @@ An explicit array first disables automatic extension discovery, then loads only 
 
 ## Error Handling
 
-- **Exit code != 0**: Tool returns error with stderr/output
-- **stopReason "error"**: LLM error propagated with error message
-- **stopReason "aborted"**: User abort (Ctrl+C) kills subprocess, throws error
-- **Chain mode**: Stops at first failing step, reports which step failed
+- **Exit code != 0**: Task fails with stderr/output recorded in its result files
+- **stopReason "error"**: LLM error is propagated and persisted
+- **stopReason "aborted"**: Cancellation sends `SIGTERM`, then `SIGKILL` after 5 seconds if needed
+- **Chain mode**: Stops at the first failing step
+- **Session shutdown**: Queued/running tasks are cancelled; stale running states are marked `interrupted` on the next session start
+- **Tree navigation**: `/tree` is blocked while the current session has queued or running subagent tasks
 
 ## Limitations
 
 - Output truncated to last 10 items in collapsed view (expand to see all)
-- Parallel model-visible output is capped at 50 KB per task; full results remain in tool details
-- Agents discovered fresh on each invocation (allows editing mid-session)
-- Parallel mode limited to 8 tasks, 4 concurrent
+- Model-visible output is capped at 50 KB or 2,000 lines per subagent, whichever comes first; complete results remain in task files
+- Chain `{previous}` transfer is intentionally unbounded and can exceed a later agent's context window
+- Agents are discovered fresh on each invocation (allows editing mid-session)
+- Parallel mode is limited to 8 subagents
+- Scheduler limits apply only within one parent Pi process; separate Pi processes do not coordinate slots

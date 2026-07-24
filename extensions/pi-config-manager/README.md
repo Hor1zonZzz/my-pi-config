@@ -52,6 +52,17 @@ Plan Mode contributes a runtime constraint layer instead of calling
 `setActiveTools()` itself. Pi Config Manager is the only local extension that
 writes the effective active tool set.
 
+## Bundled Skill
+
+`skills/preset-settings/SKILL.md` is installed as the global
+`preset-settings` skill. In default mode it guides the agent to choose the
+correct global, project, or source-controlled `presets.json`, preserve unrelated
+profiles, validate model/tool/skill fields, and avoid treating a named
+`default` preset as Pi's default mode.
+
+Pi discovers the installed skill normally from `~/.pi/agent/skills`; Config
+Manager does not implement a parallel skill scanner.
+
 ## State
 
 Global defaults live in `~/.pi/agent/resource-settings.json`; trusted projects

@@ -8,6 +8,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
 - `codex-fast.json` — global state for the local Codex priority toggle
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files
+- `subagent-settings.json` — global child-process concurrency and queue limits for blocking/background subagent tasks
 - `model-overrides.json` — managed, credential-free overrides for built-in models
 - `extensions/` — local extensions; `extensions/subagent/` also owns its agent definitions and workflow prompts
 - `skills/` — remote-managed skill caches; Herdr is refreshed from its upstream
@@ -19,11 +20,11 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `preset.ts` — switch model, thinking level, tools, and instructions with
   `/preset`; embeds the active preset at the right of the input editor's top
   border while preserving Pi's scroll indicator
-- `pi-config-manager/` — unified `/config-manager` UI and resource HUD; manages the enabled state of Pi-discovered tools, skills, context files, and extensions while preserving `/tools`, `/skills`, `/contexts`, `/extensions`, and `/sidebar` entry points
+- `pi-config-manager/` — unified `/config-manager` UI and resource HUD; manages the enabled state of Pi-discovered tools, skills, context files, and extensions while preserving `/tools`, `/skills`, `/contexts`, `/extensions`, and `/sidebar` entry points; bundles the `preset-settings` skill for safely editing preset profiles in default mode
 - `plan-mode/` — read-only planning mode integrated through the config manager's transient tool-policy layer
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
-- `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models
+- `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models with blocking/background execution, session task state, persisted results, and cancellation
 - `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier while keeping the provider identity as `openai-codex`
 
 ## Install
@@ -39,9 +40,11 @@ cd my-pi-config
 The installer creates a timestamped backup under `~/.pi/agent/backups/` before
 replacing managed files. It merges `model-overrides.json` into the target
 `models.json`, preserving all unrelated local providers, credentials, and model
-settings. It also refreshes the Herdr skill from upstream `master` and installs
-it to `~/.pi/agent/skills/herdr/`; an existing local cache is used when the
-remote is temporarily unavailable. Existing `resource-settings.json` state is
+settings. It also refreshes the Herdr skill from upstream `master`, installs it
+to `~/.pi/agent/skills/herdr/`, and installs the manager-owned
+`preset-settings` skill to `~/.pi/agent/skills/preset-settings/`; an existing
+Herdr cache is used when the remote is temporarily unavailable. Existing
+`subagent-settings.json` and `resource-settings.json` state is
 preserved; on first migration, the installer imports disabled Skills from the
 legacy `skill-settings.json`. Restart Pi or run:
 

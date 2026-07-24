@@ -6,6 +6,7 @@ SUBAGENT_DIR="$ROOT_DIR/extensions/subagent"
 HERDR_SKILL_REPO="https://github.com/ogulcancelik/herdr.git"
 HERDR_SKILL_REF="master"
 HERDR_SKILL_CACHE_DIR="$ROOT_DIR/skills/herdr"
+PRESET_SETTINGS_SKILL_DIR="$ROOT_DIR/extensions/pi-config-manager/skills/preset-settings"
 AGENT_DIR="${PI_CODING_AGENT_DIR:-${PI_AGENT_DIR:-$HOME/.pi/agent}}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$AGENT_DIR/backups/my-pi-config-$TIMESTAMP"
@@ -65,9 +66,18 @@ install_herdr_skill() {
 	mv "$staging_dir" "$destination_dir"
 }
 
+install_preset_settings_skill() {
+	local staging_dir destination_dir
+	destination_dir="$AGENT_DIR/skills/preset-settings"
+	staging_dir="$(mktemp -d "$AGENT_DIR/skills/.preset-settings.XXXXXX")"
+	cp "$PRESET_SETTINGS_SKILL_DIR/SKILL.md" "$staging_dir/SKILL.md"
+	rm -rf "$destination_dir"
+	mv "$staging_dir" "$destination_dir"
+}
+
 sync_herdr_skill
 
-for path in settings.json presets.json resource-settings.json skill-settings.json models.json codex-fast.json extensions agents prompts skills; do
+for path in settings.json presets.json resource-settings.json subagent-settings.json skill-settings.json models.json codex-fast.json extensions agents prompts skills; do
 	backup_path "$path"
 done
 
@@ -158,6 +168,9 @@ fs.writeFileSync(
 fs.renameSync(temporaryPath, targetPath);
 NODE
 cp "$ROOT_DIR/presets.json" "$AGENT_DIR/presets.json"
+if [[ ! -f "$AGENT_DIR/subagent-settings.json" ]]; then
+	cp "$ROOT_DIR/subagent-settings.json" "$AGENT_DIR/subagent-settings.json"
+fi
 node - "$ROOT_DIR/resource-settings.json" "$AGENT_DIR/resource-settings.json" "$AGENT_DIR/skill-settings.json" <<'NODE'
 const fs = require("node:fs");
 
@@ -184,6 +197,7 @@ cp -R "$ROOT_DIR/extensions/." "$AGENT_DIR/extensions/"
 cp -R "$SUBAGENT_DIR/agents/." "$AGENT_DIR/agents/"
 cp -R "$SUBAGENT_DIR/prompts/." "$AGENT_DIR/prompts/"
 install_herdr_skill
+install_preset_settings_skill
 
 printf 'Installed Pi configuration into %s\n' "$AGENT_DIR"
 printf 'Backup created at %s\n' "$BACKUP_DIR"

@@ -15,6 +15,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -36,11 +37,24 @@ import {
 	type AgentScope,
 	discoverAgents,
 } from "./agents.ts";
+import { truncateSubagentOutput } from "./output.ts";
+import { ProcessScheduler } from "./scheduler.ts";
+import type { ScheduleHooks, SchedulerReservation } from "./scheduler.ts";
+import { loadSubagentSettings } from "./settings.ts";
+import {
+	getTaskPaths,
+	initializeTaskDirectory,
+	markStaleTasksInterrupted,
+	readSessionTaskStatuses,
+	type StoredTaskStatus,
+	type SubagentTaskStatus,
+	type TaskPaths,
+	writeTaskResults,
+	writeTaskStatus,
+} from "./task-storage.ts";
 
 const MAX_PARALLEL_TASKS = 8;
-const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
-const PER_TASK_OUTPUT_CAP = 50 * 1024;
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -199,16 +213,19 @@ interface SubagentDetails {
 	agentScope: AgentScope;
 	projectAgentsDir: string | null;
 	results: SingleResult[];
+	taskId?: string;
+	taskStatus?: SubagentTaskStatus;
+	resultPath?: string;
 }
 
 function getFinalOutput(messages: Message[]): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (msg.role === "assistant") {
-			for (const part of msg.content) {
-				if (part.type === "text") return part.text;
-			}
-		}
+		if (msg.role !== "assistant") continue;
+		return msg.content
+			.filter((part) => part.type === "text")
+			.map((part) => part.text)
+			.join("\n");
 	}
 	return "";
 }
@@ -233,15 +250,41 @@ function getResultOutput(result: SingleResult): string {
 	return getFinalOutput(result.messages) || "(no output)";
 }
 
-function truncateParallelOutput(output: string): string {
-	const byteLength = Buffer.byteLength(output, "utf8");
-	if (byteLength <= PER_TASK_OUTPUT_CAP) return output;
-
-	let truncated = output.slice(0, PER_TASK_OUTPUT_CAP);
-	while (Buffer.byteLength(truncated, "utf8") > PER_TASK_OUTPUT_CAP) {
-		truncated = truncated.slice(0, -1);
-	}
-	return `${truncated}\n\n[Output truncated: ${byteLength - Buffer.byteLength(truncated, "utf8")} bytes omitted. Full output preserved in tool details.]`;
+function createRejectedResult(
+	agents: AgentConfig[],
+	agentName: string,
+	task: string,
+	error: unknown,
+	step?: number,
+): SingleResult {
+	const agent = agents.find((candidate) => candidate.name === agentName);
+	const message = error instanceof Error ? error.message : String(error);
+	return {
+		agent: agentName,
+		agentSource: agent?.source ?? "unknown",
+		task,
+		exitCode: 1,
+		messages: [],
+		stderr: message,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			cost: 0,
+			contextTokens: 0,
+			turns: 0,
+		},
+		extensionMode: agent?.extensionMode ?? "default",
+		extensionSources: agent?.extensionSources ?? [],
+		model: agent?.model,
+		stopReason:
+			error instanceof Error && error.name === "AbortError"
+				? "aborted"
+				: "error",
+		errorMessage: message,
+		step,
+	};
 }
 
 type DisplayItem =
@@ -264,26 +307,6 @@ function getDisplayItems(messages: Message[]): DisplayItem[] {
 		}
 	}
 	return items;
-}
-
-async function mapWithConcurrencyLimit<TIn, TOut>(
-	items: TIn[],
-	concurrency: number,
-	fn: (item: TIn, index: number) => Promise<TOut>,
-): Promise<TOut[]> {
-	if (items.length === 0) return [];
-	const limit = Math.max(1, Math.min(concurrency, items.length));
-	const results: TOut[] = new Array(items.length);
-	let nextIndex = 0;
-	const workers = new Array(limit).fill(null).map(async () => {
-		while (true) {
-			const current = nextIndex++;
-			if (current >= items.length) return;
-			results[current] = await fn(items[current], current);
-		}
-	});
-	await Promise.all(workers);
-	return results;
 }
 
 async function writePromptToTempFile(
@@ -321,6 +344,7 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 }
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
+type RunProcess = <T>(runner: () => Promise<T>) => Promise<T>;
 
 async function runSingleAgent(
 	defaultCwd: string,
@@ -330,6 +354,7 @@ async function runSingleAgent(
 	cwd: string | undefined,
 	step: number | undefined,
 	signal: AbortSignal | undefined,
+	runProcess: RunProcess,
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 ): Promise<SingleResult> {
@@ -442,88 +467,119 @@ async function runSingleAgent(
 		args.push(`Task: ${task}`);
 		let wasAborted = false;
 
-		const exitCode = await new Promise<number>((resolve) => {
-			const invocation = getPiInvocation(args);
-			const proc = spawn(invocation.command, invocation.args, {
-				cwd: cwd ?? defaultCwd,
-				shell: false,
-				stdio: ["ignore", "pipe", "pipe"],
-			});
-			let buffer = "";
+		const exitCode = await runProcess(
+			() =>
+				new Promise<number>((resolve) => {
+					const invocation = getPiInvocation(args);
+					const useProcessGroup = process.platform !== "win32";
+					const proc = spawn(invocation.command, invocation.args, {
+						cwd: cwd ?? defaultCwd,
+						shell: false,
+						detached: useProcessGroup,
+						stdio: ["ignore", "pipe", "pipe"],
+					});
+					let buffer = "";
+					let closed = false;
+					let killTimer: ReturnType<typeof setTimeout> | undefined;
 
-			const processLine = (line: string) => {
-				if (!line.trim()) return;
-				let event: any;
-				try {
-					event = JSON.parse(line);
-				} catch {
-					return;
-				}
-
-				if (event.type === "message_end" && event.message) {
-					const msg = event.message as Message;
-					currentResult.messages.push(msg);
-
-					if (msg.role === "assistant") {
-						currentResult.usage.turns++;
-						const usage = msg.usage;
-						if (usage) {
-							currentResult.usage.input += usage.input || 0;
-							currentResult.usage.output += usage.output || 0;
-							currentResult.usage.cacheRead += usage.cacheRead || 0;
-							currentResult.usage.cacheWrite += usage.cacheWrite || 0;
-							currentResult.usage.cost += usage.cost?.total || 0;
-							currentResult.usage.contextTokens = usage.totalTokens || 0;
+					const processLine = (line: string) => {
+						if (!line.trim()) return;
+						let event: any;
+						try {
+							event = JSON.parse(line);
+						} catch {
+							return;
 						}
-						if (!currentResult.model && msg.model)
-							currentResult.model = msg.model;
-						if (msg.stopReason) currentResult.stopReason = msg.stopReason;
-						if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
-					}
-					emitUpdate();
-				}
 
-				if (event.type === "tool_result_end" && event.message) {
-					currentResult.messages.push(event.message as Message);
-					emitUpdate();
-				}
-			};
+						if (event.type === "message_end" && event.message) {
+							const msg = event.message as Message;
+							currentResult.messages.push(msg);
 
-			proc.stdout.on("data", (data) => {
-				buffer += data.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
-				for (const line of lines) processLine(line);
-			});
+							if (msg.role === "assistant") {
+								currentResult.usage.turns++;
+								const usage = msg.usage;
+								if (usage) {
+									currentResult.usage.input += usage.input || 0;
+									currentResult.usage.output += usage.output || 0;
+									currentResult.usage.cacheRead += usage.cacheRead || 0;
+									currentResult.usage.cacheWrite += usage.cacheWrite || 0;
+									currentResult.usage.cost += usage.cost?.total || 0;
+									currentResult.usage.contextTokens = usage.totalTokens || 0;
+								}
+								if (!currentResult.model && msg.model)
+									currentResult.model = msg.model;
+								if (msg.stopReason) currentResult.stopReason = msg.stopReason;
+								if (msg.errorMessage)
+									currentResult.errorMessage = msg.errorMessage;
+							}
+							emitUpdate();
+						}
+					};
 
-			proc.stderr.on("data", (data) => {
-				currentResult.stderr += data.toString();
-			});
+					proc.stdout.on("data", (data) => {
+						buffer += data.toString();
+						const lines = buffer.split("\n");
+						buffer = lines.pop() || "";
+						for (const line of lines) processLine(line);
+					});
 
-			proc.on("close", (code) => {
-				if (buffer.trim()) processLine(buffer);
-				resolve(code ?? 0);
-			});
+					proc.stderr.on("data", (data) => {
+						currentResult.stderr += data.toString();
+					});
 
-			proc.on("error", () => {
-				resolve(1);
-			});
+					const signalProcess = (signalName: NodeJS.Signals) => {
+						if (process.platform === "win32" && proc.pid) {
+							spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], {
+								stdio: "ignore",
+							});
+							return;
+						}
+						if (useProcessGroup && proc.pid) {
+							try {
+								process.kill(-proc.pid, signalName);
+								return;
+							} catch {
+								// Fall back to the direct child if the process group already exited.
+							}
+						}
+						proc.kill(signalName);
+					};
+					const killProc = () => {
+						wasAborted = true;
+						if (closed) return;
+						signalProcess("SIGTERM");
+						killTimer = setTimeout(() => {
+							if (!closed) signalProcess("SIGKILL");
+						}, 5000);
+					};
 
-			if (signal) {
-				const killProc = () => {
-					wasAborted = true;
-					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
-					}, 5000);
-				};
-				if (signal.aborted) killProc();
-				else signal.addEventListener("abort", killProc, { once: true });
-			}
-		});
+					proc.on("close", (code) => {
+						closed = true;
+						if (killTimer) clearTimeout(killTimer);
+						signal?.removeEventListener("abort", killProc);
+						if (buffer.trim()) processLine(buffer);
+						resolve(code ?? 0);
+					});
 
-		currentResult.exitCode = exitCode;
-		if (wasAborted) throw new Error("Subagent was aborted");
+					proc.on("error", (error) => {
+						closed = true;
+						if (killTimer) clearTimeout(killTimer);
+						signal?.removeEventListener("abort", killProc);
+						currentResult.errorMessage = error.message;
+						currentResult.stderr += `${error.message}\n`;
+						resolve(1);
+					});
+
+					if (signal?.aborted) killProc();
+					else signal?.addEventListener("abort", killProc, { once: true });
+				}),
+		);
+
+		currentResult.exitCode = wasAborted && exitCode === 0 ? 1 : exitCode;
+		if (wasAborted) {
+			currentResult.stopReason = "aborted";
+			currentResult.errorMessage = "Subagent was aborted";
+		}
 		return currentResult;
 	} finally {
 		if (tmpPromptPath)
@@ -538,6 +594,284 @@ async function runSingleAgent(
 			} catch {
 				/* ignore */
 			}
+	}
+}
+
+interface ExecutionRequest {
+	agent?: string;
+	task?: string;
+	tasks?: Array<{ agent: string; task: string; cwd?: string }>;
+	chain?: Array<{ agent: string; task: string; cwd?: string }>;
+	cwd?: string;
+}
+
+interface PlanExecution {
+	mode: "single" | "parallel" | "chain";
+	results: SingleResult[];
+	content: string;
+	failed: boolean;
+}
+
+interface PlanProgressHooks {
+	createScheduleHooks?: () => ScheduleHooks;
+	onResult?: (result: SingleResult) => void;
+}
+
+function getExecutionMode(
+	params: ExecutionRequest,
+): "single" | "parallel" | "chain" | undefined {
+	const hasChain = (params.chain?.length ?? 0) > 0;
+	const hasTasks = (params.tasks?.length ?? 0) > 0;
+	const hasSingle = Boolean(params.agent && params.task);
+	return Number(hasChain) + Number(hasTasks) + Number(hasSingle) === 1
+		? hasChain
+			? "chain"
+			: hasTasks
+				? "parallel"
+				: "single"
+		: undefined;
+}
+
+function makeSubagentDetails(
+	mode: "single" | "parallel" | "chain",
+	agentScope: AgentScope,
+	projectAgentsDir: string | null,
+	results: SingleResult[],
+): SubagentDetails {
+	return { mode, agentScope, projectAgentsDir, results };
+}
+
+function formatPlanContent(
+	mode: "single" | "parallel" | "chain",
+	results: SingleResult[],
+	resultPath: string,
+): { content: string; failed: boolean } {
+	if (mode === "chain") {
+		const failedIndex = results.findIndex(isFailedResult);
+		if (failedIndex >= 0) {
+			const result = results[failedIndex];
+			return {
+				content: `Chain stopped at step ${failedIndex + 1} (${result.agent}): ${truncateSubagentOutput(getResultOutput(result), resultPath)}`,
+				failed: true,
+			};
+		}
+		const finalResult = results[results.length - 1];
+		return {
+			content: truncateSubagentOutput(
+				finalResult ? getResultOutput(finalResult) : "(no output)",
+				resultPath,
+			),
+			failed: false,
+		};
+	}
+
+	if (mode === "parallel") {
+		const successCount = results.filter(
+			(result) => !isFailedResult(result),
+		).length;
+		const summaries = results.map((result) => {
+			const status = isFailedResult(result)
+				? `failed${result.stopReason && result.stopReason !== "end" ? ` (${result.stopReason})` : ""}`
+				: "completed";
+			return `### [${result.agent}] ${status}\n\n${truncateSubagentOutput(getResultOutput(result), resultPath)}`;
+		});
+		return {
+			content: `Parallel: ${successCount}/${results.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`,
+			failed: successCount !== results.length,
+		};
+	}
+
+	const result = results[0];
+	return {
+		content: result
+			? truncateSubagentOutput(
+					isFailedResult(result)
+						? `Agent ${result.stopReason || "failed"}: ${getResultOutput(result)}`
+						: getResultOutput(result),
+					resultPath,
+				)
+			: "(no output)",
+		failed: !result || isFailedResult(result),
+	};
+}
+
+async function executePlan(options: {
+	defaultCwd: string;
+	agents: AgentConfig[];
+	request: ExecutionRequest;
+	mode: "single" | "parallel" | "chain";
+	agentScope: AgentScope;
+	projectAgentsDir: string | null;
+	signal: AbortSignal | undefined;
+	onUpdate: OnUpdateCallback | undefined;
+	scheduler: ProcessScheduler;
+	initialReservation: SchedulerReservation;
+	resultPath: string;
+	progress?: PlanProgressHooks;
+}): Promise<PlanExecution> {
+	const {
+		defaultCwd,
+		agents,
+		request,
+		mode,
+		agentScope,
+		projectAgentsDir,
+		signal,
+		onUpdate,
+		scheduler,
+		initialReservation,
+		resultPath,
+		progress,
+	} = options;
+	const details = (results: SingleResult[]) =>
+		makeSubagentDetails(mode, agentScope, projectAgentsDir, results);
+	const runWithReservation =
+		(reservation: SchedulerReservation): RunProcess =>
+		(runner) =>
+			reservation.run(signal, runner, progress?.createScheduleHooks?.());
+
+	if (mode === "chain") {
+		const results: SingleResult[] = [];
+		let previousOutput = "";
+		for (let index = 0; index < (request.chain?.length ?? 0); index += 1) {
+			const step = request.chain![index];
+			const reservation =
+				index === 0 ? initialReservation : scheduler.reserve(1);
+			try {
+				const result = await runSingleAgent(
+					defaultCwd,
+					agents,
+					step.agent,
+					step.task.replace(/\{previous\}/g, previousOutput),
+					step.cwd,
+					index + 1,
+					signal,
+					runWithReservation(reservation),
+					onUpdate
+						? (partial) => {
+								const current = partial.details?.results[0];
+								if (current) {
+									onUpdate({
+										content: partial.content,
+										details: details([...results, current]),
+									});
+								}
+							}
+						: undefined,
+					details,
+				);
+				results.push(result);
+				progress?.onResult?.(result);
+				if (isFailedResult(result)) break;
+				previousOutput = getFinalOutput(result.messages);
+			} finally {
+				reservation.release();
+			}
+		}
+		const formatted = formatPlanContent(mode, results, resultPath);
+		return { mode, results, ...formatted };
+	}
+
+	if (mode === "parallel") {
+		const tasks = request.tasks ?? [];
+		if (tasks.length > MAX_PARALLEL_TASKS) {
+			throw new Error(
+				`Too many parallel tasks (${tasks.length}). Max is ${MAX_PARALLEL_TASKS}.`,
+			);
+		}
+		const reservation = initialReservation;
+		const allResults: SingleResult[] = tasks.map((task) => ({
+			agent: task.agent,
+			agentSource: "unknown",
+			task: task.task,
+			exitCode: -1,
+			messages: [],
+			stderr: "",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: 0,
+				contextTokens: 0,
+				turns: 0,
+			},
+			extensionMode: "default",
+			extensionSources: [],
+		}));
+		const emitUpdate = () => {
+			if (!onUpdate) return;
+			const running = allResults.filter(
+				(result) => result.exitCode === -1,
+			).length;
+			onUpdate({
+				content: [
+					{
+						type: "text",
+						text: `Parallel: ${allResults.length - running}/${allResults.length} done, ${running} queued/running...`,
+					},
+				],
+				details: details([...allResults]),
+			});
+		};
+		try {
+			const results = await Promise.all(
+				tasks.map(async (task, index) => {
+					let result: SingleResult;
+					try {
+						result = await runSingleAgent(
+							defaultCwd,
+							agents,
+							task.agent,
+							task.task,
+							task.cwd,
+							undefined,
+							signal,
+							runWithReservation(reservation),
+							(partial) => {
+								if (partial.details?.results[0]) {
+									allResults[index] = partial.details.results[0];
+									emitUpdate();
+								}
+							},
+							details,
+						);
+					} catch (error) {
+						result = createRejectedResult(agents, task.agent, task.task, error);
+					}
+					allResults[index] = result;
+					progress?.onResult?.(result);
+					emitUpdate();
+					return result;
+				}),
+			);
+			const formatted = formatPlanContent(mode, results, resultPath);
+			return { mode, results, ...formatted };
+		} finally {
+			reservation.release();
+		}
+	}
+
+	const reservation = initialReservation;
+	try {
+		const result = await runSingleAgent(
+			defaultCwd,
+			agents,
+			request.agent!,
+			request.task!,
+			request.cwd,
+			undefined,
+			signal,
+			runWithReservation(reservation),
+			onUpdate,
+			details,
+		);
+		progress?.onResult?.(result);
+		const results = [result];
+		const formatted = formatPlanContent(mode, results, resultPath);
+		return { mode, results, ...formatted };
+	} finally {
+		reservation.release();
 	}
 }
 
@@ -566,6 +900,16 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 });
 
 const SubagentParams = Type.Object({
+	action: StringEnum(
+		["block", "background", "list", "status", "cancel"] as const,
+		{
+			description:
+				"Required operation: block waits for execution, background returns a task ID, list/status inspect tasks, cancel stops a task.",
+		},
+	),
+	taskId: Type.Optional(
+		Type.String({ description: "Task ID for status or cancel actions" }),
+	),
 	agent: Type.Optional(
 		Type.String({
 			description: "Name of the agent to invoke (for single mode)",
@@ -577,11 +921,14 @@ const SubagentParams = Type.Object({
 	tasks: Type.Optional(
 		Type.Array(TaskItem, {
 			description: "Array of {agent, task} for parallel execution",
+			minItems: 1,
+			maxItems: MAX_PARALLEL_TASKS,
 		}),
 	),
 	chain: Type.Optional(
 		Type.Array(ChainItem, {
 			description: "Array of {agent, task} for sequential execution",
+			minItems: 1,
 		}),
 	),
 	agentScope: Type.Optional(AgentScopeSchema),
@@ -598,76 +945,552 @@ const SubagentParams = Type.Object({
 	),
 });
 
+interface ManagedSubagentTask {
+	status: StoredTaskStatus;
+	paths: TaskPaths;
+	controller?: AbortController;
+	results: SingleResult[];
+	promise?: Promise<PlanExecution | undefined>;
+}
+
 export default function (pi: ExtensionAPI) {
+	let scheduler: ProcessScheduler | undefined;
+	let sessionId = "";
+	let activeContext: any;
+	let shuttingDown = false;
+	let tasks = new Map<string, ManagedSubagentTask>();
+	let pendingCompletions: ManagedSubagentTask[] = [];
+
+	const getScheduler = (): ProcessScheduler => {
+		if (!scheduler) scheduler = new ProcessScheduler(loadSubagentSettings());
+		return scheduler;
+	};
+
+	const activeTasks = (): ManagedSubagentTask[] =>
+		Array.from(tasks.values()).filter(
+			(task) =>
+				task.status.status === "queued" || task.status.status === "running",
+		);
+
+	const updateTaskStatusWidget = (): void => {
+		if (!activeContext) return;
+		const active = activeTasks();
+		if (active.length === 0) {
+			activeContext.ui.setStatus("subagent-tasks", undefined);
+			return;
+		}
+		const running = active.reduce(
+			(total, task) => total + task.status.processes.running,
+			0,
+		);
+		const queued = active.reduce(
+			(total, task) => total + task.status.processes.queued,
+			0,
+		);
+		activeContext.ui.setStatus(
+			"subagent-tasks",
+			activeContext.ui.theme.fg(
+				"warning",
+				`subagents ${running} running · ${queued} queued`,
+			),
+		);
+	};
+
+	const persistTask = (
+		task: ManagedSubagentTask,
+		appendSessionEntry = false,
+	): void => {
+		writeTaskStatus(task.paths, task.status);
+		if (appendSessionEntry && !shuttingDown) {
+			pi.appendEntry("subagent-task-state", {
+				taskId: task.status.taskId,
+				status: task.status.status,
+				mode: task.status.mode,
+				execution: task.status.execution,
+				resultPath: task.status.resultPath,
+				detailsPath: task.status.detailsPath,
+				createdAt: task.status.createdAt,
+				completedAt: task.status.completedAt,
+				error: task.status.error,
+			});
+		}
+		updateTaskStatusWidget();
+	};
+
+	const makeCompletionMessage = (
+		completedTasks: ManagedSubagentTask[],
+	): string => {
+		const sections = completedTasks.map((task) => {
+			const formatted = formatPlanContent(
+				task.status.mode,
+				task.results,
+				task.status.resultPath,
+			);
+			return [
+				`## Subagent Task ${task.status.taskId}`,
+				"",
+				`Status: ${task.status.status}`,
+				...(task.status.error ? [`Error: ${task.status.error}`] : []),
+				`Complete result: ${task.status.resultPath}`,
+				`Structured details: ${task.status.detailsPath}`,
+				"",
+				formatted.content,
+			].join("\n");
+		});
+		return sections.join("\n\n---\n\n");
+	};
+
+	const deliverCompletions = (completedTasks: ManagedSubagentTask[]): void => {
+		if (shuttingDown || completedTasks.length === 0) return;
+		pi.sendMessage(
+			{
+				customType: "subagent-task-completion",
+				content: makeCompletionMessage(completedTasks),
+				display: true,
+				details: {
+					taskIds: completedTasks.map((task) => task.status.taskId),
+				},
+			},
+			{ deliverAs: "followUp", triggerTurn: true },
+		);
+	};
+
+	const queueCompletion = (task: ManagedSubagentTask): void => {
+		if (shuttingDown) return;
+		if (activeContext?.isIdle()) {
+			deliverCompletions([task]);
+			return;
+		}
+		pendingCompletions.push(task);
+	};
+
+	const createTask = (
+		execution: "block" | "background",
+		mode: "single" | "parallel" | "chain",
+		request: any,
+		cwd: string,
+	): ManagedSubagentTask => {
+		const taskId = `task_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+		const paths = getTaskPaths(cwd, sessionId, taskId);
+		initializeTaskDirectory(paths);
+		const total =
+			mode === "parallel"
+				? request.tasks.length
+				: mode === "chain"
+					? request.chain.length
+					: 1;
+		const status: StoredTaskStatus = {
+			version: 1,
+			taskId,
+			sessionId,
+			execution,
+			mode,
+			status: "queued",
+			createdAt: Date.now(),
+			cwd,
+			resultPath: path.join(paths.relativeDirectory, "result.md"),
+			detailsPath: path.join(paths.relativeDirectory, "details.json"),
+			request,
+			processes: {
+				total,
+				queued: 0,
+				running: 0,
+				completed: 0,
+				failed: 0,
+			},
+		};
+		const task: ManagedSubagentTask = {
+			status,
+			paths,
+			controller: new AbortController(),
+			results: [],
+		};
+		tasks.set(taskId, task);
+		persistTask(task, true);
+		return task;
+	};
+
+	const runManagedTask = (
+		task: ManagedSubagentTask,
+		request: any,
+		agents: AgentConfig[],
+		agentScope: AgentScope,
+		projectAgentsDir: string | null,
+		initialReservation: SchedulerReservation,
+		onUpdate?: OnUpdateCallback,
+	): Promise<PlanExecution | undefined> => {
+		const promise = (async () => {
+			const createScheduleHooks = (): ScheduleHooks => ({
+				onQueued: () => {
+					task.status.processes.queued += 1;
+					persistTask(task);
+				},
+				onDequeued: () => {
+					task.status.processes.queued = Math.max(
+						0,
+						task.status.processes.queued - 1,
+					);
+					persistTask(task);
+				},
+				onStart: () => {
+					task.status.processes.queued = Math.max(
+						0,
+						task.status.processes.queued - 1,
+					);
+					task.status.processes.running += 1;
+					task.status.status = "running";
+					task.status.startedAt ??= Date.now();
+					persistTask(task);
+				},
+				onFinish: () => {
+					task.status.processes.running = Math.max(
+						0,
+						task.status.processes.running - 1,
+					);
+					persistTask(task);
+				},
+			});
+
+			try {
+				const plan = await executePlan({
+					defaultCwd: task.status.cwd,
+					agents,
+					request,
+					mode: task.status.mode,
+					agentScope,
+					projectAgentsDir,
+					signal: task.controller?.signal,
+					onUpdate,
+					scheduler: getScheduler(),
+					initialReservation,
+					resultPath: task.status.resultPath,
+					progress: {
+						createScheduleHooks,
+						onResult: (result) => {
+							task.results.push(result);
+							task.status.processes.completed += 1;
+							if (isFailedResult(result)) {
+								task.status.processes.failed += 1;
+							}
+							persistTask(task);
+						},
+					},
+				});
+				task.results = plan.results;
+				task.status.status = task.controller?.signal.aborted
+					? "cancelled"
+					: plan.failed
+						? "failed"
+						: "completed";
+				task.status.processes.queued = 0;
+				task.status.processes.running = 0;
+				task.status.completedAt = Date.now();
+				writeTaskResults(task.paths, task.status, task.results);
+				persistTask(task, true);
+				if (task.status.execution === "background") queueCompletion(task);
+				return plan;
+			} catch (error) {
+				initialReservation.release();
+				const cancelled =
+					task.controller?.signal.aborted ||
+					(error instanceof Error && error.name === "AbortError");
+				task.status.status = cancelled ? "cancelled" : "failed";
+				task.status.processes.queued = 0;
+				task.status.processes.running = 0;
+				task.status.completedAt = Date.now();
+				task.status.error =
+					error instanceof Error ? error.message : String(error);
+				writeTaskResults(task.paths, task.status, task.results);
+				persistTask(task, true);
+				if (task.status.execution === "background") queueCompletion(task);
+				return undefined;
+			}
+		})();
+		const guardedPromise = promise.catch((error) => {
+			task.status.status = task.controller?.signal.aborted
+				? "cancelled"
+				: "failed";
+			task.status.processes.queued = 0;
+			task.status.processes.running = 0;
+			task.status.completedAt = Date.now();
+			task.status.error =
+				error instanceof Error ? error.message : String(error);
+			try {
+				writeTaskStatus(task.paths, task.status);
+			} catch {
+				// Nothing else can be persisted if the task directory is unavailable.
+			}
+			return undefined;
+		});
+		task.promise = guardedPromise;
+		return guardedPromise;
+	};
+
+	pi.registerMessageRenderer(
+		"subagent-task-completion",
+		(message, _options, _theme) =>
+			new Markdown(message.content, 0, 0, getMarkdownTheme()),
+	);
+
+	pi.on("session_start", (_event, ctx) => {
+		shuttingDown = false;
+		activeContext = ctx;
+		sessionId = ctx.sessionManager.getSessionId();
+		scheduler = new ProcessScheduler(loadSubagentSettings());
+		pendingCompletions = [];
+		tasks = new Map(
+			markStaleTasksInterrupted(ctx.cwd, sessionId).map((status) => [
+				status.taskId,
+				{
+					status,
+					paths: getTaskPaths(ctx.cwd, sessionId, status.taskId),
+					results: [],
+				},
+			]),
+		);
+		updateTaskStatusWidget();
+	});
+
+	pi.on("agent_settled", () => {
+		if (pendingCompletions.length === 0 || shuttingDown) return;
+		const completed = pendingCompletions;
+		pendingCompletions = [];
+		deliverCompletions(completed);
+	});
+
+	pi.on("session_before_tree", (_event, ctx) => {
+		const active = activeTasks();
+		if (active.length === 0) return;
+		ctx.ui.notify(
+			`Cannot navigate the session tree while ${active.length} subagent task(s) are active. Use subagent action=list or action=cancel first.`,
+			"warning",
+		);
+		return { cancel: true };
+	});
+
+	pi.on("session_shutdown", async () => {
+		shuttingDown = true;
+		pendingCompletions = [];
+		scheduler?.shutdown();
+		for (const task of activeTasks()) task.controller?.abort();
+		const promises = activeTasks()
+			.map((task) => task.promise)
+			.filter((promise): promise is Promise<PlanExecution | undefined> =>
+				Boolean(promise),
+			);
+		await Promise.allSettled(promises);
+		activeContext?.ui.setStatus("subagent-tasks", undefined);
+		activeContext = undefined;
+	});
+
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
 		description: [
-			"Delegate tasks to specialized subagents with isolated context.",
-			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
+			"Run and manage isolated subagent tasks.",
+			"Required actions: block waits, background returns a task ID, list/status inspect current-session tasks, cancel stops one.",
+			"Execution modes: single (agent + task), parallel (tasks array), chain (sequential with full {previous} output).",
+			"Every subagent contributes at most 50KB to the parent; complete results are written under .pi/subagent-tasks/<sessionId>/<taskId>/.",
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
 		].join(" "),
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const agentScope: AgentScope = params.agentScope ?? "user";
-			const discovery = discoverAgents(ctx.cwd, agentScope);
-			const agents = discovery.agents;
-			const confirmProjectAgents = params.confirmProjectAgents ?? true;
+			const hasExecutionFields =
+				params.agent !== undefined ||
+				params.task !== undefined ||
+				params.tasks !== undefined ||
+				params.chain !== undefined ||
+				params.cwd !== undefined ||
+				params.agentScope !== undefined ||
+				params.confirmProjectAgents !== undefined;
+			const managementAction =
+				params.action === "list" ||
+				params.action === "status" ||
+				params.action === "cancel";
+			if (managementAction && hasExecutionFields) {
+				throw new Error(
+					`action=${params.action} does not accept agent, task, tasks, chain, cwd, agentScope, or confirmProjectAgents.`,
+				);
+			}
+			if (
+				(params.action === "block" || params.action === "background") &&
+				params.taskId !== undefined
+			) {
+				throw new Error(`action=${params.action} does not accept taskId.`);
+			}
+			if (params.action === "list" && params.taskId !== undefined) {
+				throw new Error("action=list does not accept taskId.");
+			}
 
-			const hasChain = (params.chain?.length ?? 0) > 0;
-			const hasTasks = (params.tasks?.length ?? 0) > 0;
-			const hasSingle = Boolean(params.agent && params.task);
-			const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle);
+			if (params.action === "list") {
+				for (const status of readSessionTaskStatuses(ctx.cwd, sessionId)) {
+					if (!tasks.has(status.taskId)) {
+						tasks.set(status.taskId, {
+							status,
+							paths: getTaskPaths(ctx.cwd, sessionId, status.taskId),
+							results: [],
+						});
+					}
+				}
+				const statuses = Array.from(tasks.values())
+					.map((task) => task.status)
+					.sort((left, right) => left.createdAt - right.createdAt);
+				const text =
+					statuses.length === 0
+						? "No subagent tasks in the current session."
+						: statuses
+								.map(
+									(status) =>
+										`${status.taskId}  ${status.status}  ${status.mode}/${status.execution}  ${status.processes.completed}/${status.processes.total} complete\n  ${status.resultPath}`,
+								)
+								.join("\n");
+				return {
+					content: [{ type: "text", text: truncateSubagentOutput(text) }],
+					details: makeSubagentDetails("single", "user", null, []),
+				};
+			}
 
-			const makeDetails =
-				(mode: "single" | "parallel" | "chain") =>
-				(results: SingleResult[]): SubagentDetails => ({
-					mode,
-					agentScope,
-					projectAgentsDir: discovery.projectAgentsDir,
-					results,
-				});
+			if (params.action === "status" || params.action === "cancel") {
+				if (!params.taskId) {
+					throw new Error(`action=${params.action} requires taskId.`);
+				}
+				let task = tasks.get(params.taskId);
+				if (!task) {
+					const stored = readSessionTaskStatuses(ctx.cwd, sessionId).find(
+						(status) => status.taskId === params.taskId,
+					);
+					if (stored) {
+						task = {
+							status: stored,
+							paths: getTaskPaths(ctx.cwd, sessionId, stored.taskId),
+							results: [],
+						};
+						tasks.set(stored.taskId, task);
+					}
+				}
+				if (!task) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Unknown subagent task: ${params.taskId}`,
+							},
+						],
+						details: makeSubagentDetails("single", "user", null, []),
+					};
+				}
 
-			if (modeCount !== 1) {
-				const available =
-					agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
+				if (params.action === "cancel") {
+					if (
+						task.status.status !== "queued" &&
+						task.status.status !== "running"
+					) {
+						return {
+							content: [
+								{
+									type: "text",
+									text: `Task ${task.status.taskId} is already ${task.status.status}.`,
+								},
+							],
+							details: makeSubagentDetails(task.status.mode, "user", null, []),
+						};
+					}
+					task.controller?.abort();
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Cancellation requested for subagent task ${task.status.taskId}.`,
+							},
+						],
+						details: makeSubagentDetails(task.status.mode, "user", null, []),
+					};
+				}
+
+				const { request: _request, ...statusSummary } = task.status;
 				return {
 					content: [
 						{
 							type: "text",
-							text: `Invalid parameters. Provide exactly one mode.\nAvailable agents: ${available}`,
+							text: truncateSubagentOutput(
+								JSON.stringify(
+									{
+										...statusSummary,
+										statusPath: path.join(
+											task.paths.relativeDirectory,
+											"status.json",
+										),
+									},
+									null,
+									2,
+								),
+							),
 						},
 					],
-					details: makeDetails("single")([]),
+					details: makeSubagentDetails(task.status.mode, "user", null, []),
 				};
 			}
 
+			const mode = getExecutionMode(params);
+			if (!mode) {
+				throw new Error(
+					"action=block/background requires exactly one execution mode: agent+task, tasks, or chain.",
+				);
+			}
+			const invalidModeFields =
+				(mode === "single" &&
+					(params.tasks !== undefined || params.chain !== undefined)) ||
+				(mode === "parallel" &&
+					(params.agent !== undefined ||
+						params.task !== undefined ||
+						params.chain !== undefined ||
+						params.cwd !== undefined)) ||
+				(mode === "chain" &&
+					(params.agent !== undefined ||
+						params.task !== undefined ||
+						params.tasks !== undefined ||
+						params.cwd !== undefined));
+			if (invalidModeFields) {
+				throw new Error(
+					`Invalid fields for ${mode} mode. Single accepts agent/task/cwd; parallel accepts only tasks; chain accepts only chain.`,
+				);
+			}
+			if (mode === "parallel" && params.tasks.length > MAX_PARALLEL_TASKS) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Too many parallel tasks (${params.tasks.length}). Max is ${MAX_PARALLEL_TASKS}.`,
+						},
+					],
+					details: makeSubagentDetails(mode, "user", null, []),
+				};
+			}
+
+			const agentScope: AgentScope = params.agentScope ?? "user";
+			const discovery = discoverAgents(ctx.cwd, agentScope);
+			const agents = discovery.agents;
+			const confirmProjectAgents = params.confirmProjectAgents ?? true;
 			if (
 				(agentScope === "project" || agentScope === "both") &&
 				confirmProjectAgents &&
 				ctx.hasUI
 			) {
-				const requestedAgentNames = new Set<string>();
-				if (params.chain)
-					for (const step of params.chain) requestedAgentNames.add(step.agent);
-				if (params.tasks)
-					for (const t of params.tasks) requestedAgentNames.add(t.agent);
-				if (params.agent) requestedAgentNames.add(params.agent);
-
-				const projectAgentsRequested = Array.from(requestedAgentNames)
-					.map((name) => agents.find((a) => a.name === name))
-					.filter((a): a is AgentConfig => a?.source === "project");
-
-				if (projectAgentsRequested.length > 0) {
-					const names = projectAgentsRequested.map((a) => a.name).join(", ");
-					const dir = discovery.projectAgentsDir ?? "(unknown)";
-					const ok = await ctx.ui.confirm(
+				const requestedNames = new Set<string>();
+				if (params.agent) requestedNames.add(params.agent);
+				for (const item of params.tasks ?? []) requestedNames.add(item.agent);
+				for (const item of params.chain ?? []) requestedNames.add(item.agent);
+				const projectAgents = Array.from(requestedNames)
+					.map((name) => agents.find((agent) => agent.name === name))
+					.filter((agent): agent is AgentConfig => agent?.source === "project");
+				if (projectAgents.length > 0) {
+					const approved = await ctx.ui.confirm(
 						"Run project-local agents?",
-						`Agents: ${names}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
+						`Agents: ${projectAgents.map((agent) => agent.name).join(", ")}\nSource: ${discovery.projectAgentsDir ?? "(unknown)"}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
 					);
-					if (!ok)
+					if (!approved) {
 						return {
 							content: [
 								{
@@ -675,237 +1498,140 @@ export default function (pi: ExtensionAPI) {
 									text: "Canceled: project-local agents not approved.",
 								},
 							],
-							details: makeDetails(
-								hasChain ? "chain" : hasTasks ? "parallel" : "single",
-							)([]),
-						};
-				}
-			}
-
-			if (params.chain && params.chain.length > 0) {
-				const results: SingleResult[] = [];
-				let previousOutput = "";
-
-				for (let i = 0; i < params.chain.length; i++) {
-					const step = params.chain[i];
-					const taskWithContext = step.task.replace(
-						/\{previous\}/g,
-						previousOutput,
-					);
-
-					// Create update callback that includes all previous results
-					const chainUpdate: OnUpdateCallback | undefined = onUpdate
-						? (partial) => {
-								// Combine completed results with current streaming result
-								const currentResult = partial.details?.results[0];
-								if (currentResult) {
-									const allResults = [...results, currentResult];
-									onUpdate({
-										content: partial.content,
-										details: makeDetails("chain")(allResults),
-									});
-								}
-							}
-						: undefined;
-
-					const result = await runSingleAgent(
-						ctx.cwd,
-						agents,
-						step.agent,
-						taskWithContext,
-						step.cwd,
-						i + 1,
-						signal,
-						chainUpdate,
-						makeDetails("chain"),
-					);
-					results.push(result);
-
-					const isError = isFailedResult(result);
-					if (isError) {
-						const errorMsg = getResultOutput(result);
-						return {
-							content: [
-								{
-									type: "text",
-									text: `Chain stopped at step ${i + 1} (${step.agent}): ${errorMsg}`,
-								},
-							],
-							details: makeDetails("chain")(results),
-							isError: true,
+							details: makeSubagentDetails(
+								mode,
+								agentScope,
+								discovery.projectAgentsDir,
+								[],
+							),
 						};
 					}
-					previousOutput = getFinalOutput(result.messages);
 				}
+			}
+
+			const demand = mode === "parallel" ? params.tasks.length : 1;
+			let reservation: SchedulerReservation;
+			try {
+				reservation = getScheduler().reserve(demand);
+			} catch (error) {
 				return {
 					content: [
 						{
 							type: "text",
-							text:
-								getFinalOutput(results[results.length - 1].messages) ||
-								"(no output)",
+							text: error instanceof Error ? error.message : String(error),
 						},
 					],
-					details: makeDetails("chain")(results),
+					details: makeSubagentDetails(
+						mode,
+						agentScope,
+						discovery.projectAgentsDir,
+						[],
+					),
 				};
 			}
 
-			if (params.tasks && params.tasks.length > 0) {
-				if (params.tasks.length > MAX_PARALLEL_TASKS)
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Too many parallel tasks (${params.tasks.length}). Max is ${MAX_PARALLEL_TASKS}.`,
-							},
-						],
-						details: makeDetails("parallel")([]),
-					};
+			let task: ManagedSubagentTask;
+			try {
+				task = createTask(params.action, mode, params, ctx.cwd);
+			} catch (error) {
+				reservation.release();
+				throw error;
+			}
 
-				// Track all results for streaming updates
-				const allResults: SingleResult[] = new Array(params.tasks.length);
-
-				// Initialize placeholder results
-				for (let i = 0; i < params.tasks.length; i++) {
-					allResults[i] = {
-						agent: params.tasks[i].agent,
-						agentSource: "unknown",
-						task: params.tasks[i].task,
-						exitCode: -1, // -1 = still running
-						messages: [],
-						stderr: "",
-						usage: {
-							input: 0,
-							output: 0,
-							cacheRead: 0,
-							cacheWrite: 0,
-							cost: 0,
-							contextTokens: 0,
-							turns: 0,
-						},
-						extensionMode: "default",
-						extensionSources: [],
-					};
+			let unlinkParentAbort: (() => void) | undefined;
+			if (params.action === "block" && signal) {
+				const abort = () => task.controller?.abort();
+				if (signal.aborted) abort();
+				else {
+					signal.addEventListener("abort", abort, { once: true });
+					unlinkParentAbort = () => signal.removeEventListener("abort", abort);
 				}
+			}
 
-				const emitParallelUpdate = () => {
-					if (onUpdate) {
-						const running = allResults.filter((r) => r.exitCode === -1).length;
-						const done = allResults.filter((r) => r.exitCode !== -1).length;
-						onUpdate({
-							content: [
-								{
-									type: "text",
-									text: `Parallel: ${done}/${allResults.length} done, ${running} running...`,
-								},
-							],
-							details: makeDetails("parallel")([...allResults]),
-						});
-					}
-				};
+			const execution = runManagedTask(
+				task,
+				params,
+				agents,
+				agentScope,
+				discovery.projectAgentsDir,
+				reservation,
+				params.action === "block" ? onUpdate : undefined,
+			);
 
-				const results = await mapWithConcurrencyLimit(
-					params.tasks,
-					MAX_CONCURRENCY,
-					async (t, index) => {
-						const result = await runSingleAgent(
-							ctx.cwd,
-							agents,
-							t.agent,
-							t.task,
-							t.cwd,
-							undefined,
-							signal,
-							// Per-task update callback
-							(partial) => {
-								if (partial.details?.results[0]) {
-									allResults[index] = partial.details.results[0];
-									emitParallelUpdate();
-								}
-							},
-							makeDetails("parallel"),
-						);
-						allResults[index] = result;
-						emitParallelUpdate();
-						return result;
+			if (params.action === "background") {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Background subagent task started.\n\nTask ID: ${task.status.taskId}\nStatus: ${task.status.status}\nDirectory: ${task.paths.relativeDirectory}`,
+						},
+					],
+					details: {
+						...makeSubagentDetails(
+							mode,
+							agentScope,
+							discovery.projectAgentsDir,
+							[],
+						),
+						taskId: task.status.taskId,
+						taskStatus: task.status.status,
+						resultPath: task.status.resultPath,
 					},
-				);
-
-				const successCount = results.filter((r) => !isFailedResult(r)).length;
-				const summaries = results.map((r) => {
-					const output = truncateParallelOutput(getResultOutput(r));
-					const status = isFailedResult(r)
-						? `failed${r.stopReason && r.stopReason !== "end" ? ` (${r.stopReason})` : ""}`
-						: "completed";
-					return `### [${r.agent}] ${status}\n\n${output}`;
-				});
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Parallel: ${successCount}/${results.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`,
-						},
-					],
-					details: makeDetails("parallel")(results),
 				};
 			}
 
-			if (params.agent && params.task) {
-				const result = await runSingleAgent(
-					ctx.cwd,
-					agents,
-					params.agent,
-					params.task,
-					params.cwd,
-					undefined,
-					signal,
-					onUpdate,
-					makeDetails("single"),
-				);
-				const isError = isFailedResult(result);
-				if (isError) {
-					const errorMsg = getResultOutput(result);
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Agent ${result.stopReason || "failed"}: ${errorMsg}`,
-							},
-						],
-						details: makeDetails("single")([result]),
-						isError: true,
-					};
+			try {
+				const plan = await execution;
+				if (!plan) {
+					throw new Error(
+						`Subagent task ${task.status.taskId} ${task.status.status}: ${task.status.error ?? "no result"}\nComplete result: ${task.status.resultPath}\nStructured details: ${task.status.detailsPath}`,
+					);
+				}
+				if (plan.failed || task.status.status !== "completed") {
+					throw new Error(
+						`Subagent task ${task.status.taskId} ${task.status.status}. ${task.status.error ?? plan.content}\nComplete result: ${task.status.resultPath}\nStructured details: ${task.status.detailsPath}`,
+					);
 				}
 				return {
-					content: [
-						{
-							type: "text",
-							text: getFinalOutput(result.messages) || "(no output)",
-						},
-					],
-					details: makeDetails("single")([result]),
-				};
-			}
-
-			const available =
-				agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
-			return {
-				content: [
-					{
-						type: "text",
-						text: `Invalid parameters. Available agents: ${available}`,
+					content: [{ type: "text", text: plan.content }],
+					details: {
+						...makeSubagentDetails(
+							mode,
+							agentScope,
+							discovery.projectAgentsDir,
+							[],
+						),
+						taskId: task.status.taskId,
+						taskStatus: task.status.status,
+						resultPath: task.status.resultPath,
 					},
-				],
-				details: makeDetails("single")([]),
-			};
+				};
+			} finally {
+				unlinkParentAbort?.();
+			}
 		},
 
 		renderCall(args, theme, _context) {
 			const scope: AgentScope = args.agentScope ?? "user";
+			if (
+				args.action === "list" ||
+				args.action === "status" ||
+				args.action === "cancel"
+			) {
+				return new Text(
+					theme.fg("toolTitle", theme.bold("subagent ")) +
+						theme.fg("accent", args.action) +
+						(args.taskId ? theme.fg("dim", ` ${args.taskId}`) : ""),
+					0,
+					0,
+				);
+			}
+			const executionLabel = theme.fg("warning", ` ${args.action}`);
 			if (args.chain && args.chain.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +
 					theme.fg("accent", `chain (${args.chain.length} steps)`) +
+					executionLabel +
 					theme.fg("muted", ` [${scope}]`);
 				for (let i = 0; i < Math.min(args.chain.length, 3); i++) {
 					const step = args.chain[i];
@@ -928,6 +1654,7 @@ export default function (pi: ExtensionAPI) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +
 					theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
+					executionLabel +
 					theme.fg("muted", ` [${scope}]`);
 				for (const t of args.tasks.slice(0, 3)) {
 					const preview =
@@ -947,6 +1674,7 @@ export default function (pi: ExtensionAPI) {
 			let text =
 				theme.fg("toolTitle", theme.bold("subagent ")) +
 				theme.fg("accent", agentName) +
+				executionLabel +
 				theme.fg("muted", ` [${scope}]`);
 			text += `\n  ${theme.fg("dim", preview)}`;
 			return new Text(text, 0, 0);

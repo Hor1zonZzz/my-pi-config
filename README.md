@@ -7,7 +7,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `settings.json` — model defaults and installable Pi packages
 - `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
 - `codex-fast.json` — global state for the local Codex priority toggle
-- `skill-settings.json` — global default state for the skills manager
+- `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files
 - `model-overrides.json` — managed, credential-free overrides for built-in models
 - `extensions/` — local extensions; `extensions/subagent/` also owns its agent definitions and workflow prompts
 - `skills/` — remote-managed skill caches; Herdr is refreshed from its upstream
@@ -19,12 +19,8 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `preset.ts` — switch model, thinking level, tools, and instructions with
   `/preset`; embeds the active preset at the right of the input editor's top
   border while preserving Pi's scroll indicator
-- `tools.ts` — interactive `/tools` selector
-- `skills-manager/` — `/skills` controls model-visible skills globally, per session,
-  and through presets
-- `sidebar-tui/` — persistent resource HUD above the editor for tools, skills,
-  extensions, subagents, and context files; `/sidebar` opens details
-- `plan-mode/` — read-only planning mode
+- `pi-config-manager/` — unified `/config-manager` UI and resource HUD; manages the enabled state of Pi-discovered tools, skills, context files, and extensions while preserving `/tools`, `/skills`, `/contexts`, `/extensions`, and `/sidebar` entry points
+- `plan-mode/` — read-only planning mode integrated through the config manager's transient tool-policy layer
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
 - `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models
@@ -45,7 +41,9 @@ replacing managed files. It merges `model-overrides.json` into the target
 `models.json`, preserving all unrelated local providers, credentials, and model
 settings. It also refreshes the Herdr skill from upstream `master` and installs
 it to `~/.pi/agent/skills/herdr/`; an existing local cache is used when the
-remote is temporarily unavailable. Restart Pi or run:
+remote is temporarily unavailable. Existing `resource-settings.json` state is
+preserved; on first migration, the installer imports disabled Skills from the
+legacy `skill-settings.json`. Restart Pi or run:
 
 ```text
 /reload
@@ -56,9 +54,12 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 ## Useful commands
 
 ```text
+/config-manager
 /preset
 /tools
 /skills
+/contexts
+/extensions
 /sidebar
 /plan
 /fast
@@ -77,9 +78,10 @@ files. Never commit `~/.pi/agent/auth.json` or the raw local `models.json`.
 contains only credential-free model overrides that the installer merges into the
 local file.
 
-`skill-settings.json` is managed configuration, not a secret. The skills manager hides
-disabled skills from the model and blocks `/skill:<name>` expansion; it intentionally
-does not block direct `read` access to known skill paths.
+`resource-settings.json` is managed configuration, not a secret. Pi Config
+Manager hides disabled Skills and Context Files from the model prompt and blocks
+disabled `/skill:<name>` expansion; it intentionally does not block direct
+`read` access to known paths.
 
 ## Attribution and licenses
 

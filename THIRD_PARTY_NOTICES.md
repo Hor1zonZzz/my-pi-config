@@ -9,8 +9,6 @@ Files adapted or copied from Pi's official extension examples include:
 - `extensions/preset.ts`
 - `extensions/questionnaire.ts`
 - `extensions/subagent/`
-- `extensions/tools.ts`
-- `extensions/skills-manager/`
 - `extensions/subagent/agents/`
 - `extensions/subagent/prompts/`
 

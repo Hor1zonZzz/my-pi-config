@@ -4,7 +4,7 @@ Read-only exploration mode for safe code analysis.
 
 ## Features
 
-- **Built-in write tools disabled**: Disables edit/write while preserving other active tools
+- **Built-in write tools disabled**: Uses Pi Config Manager's transient policy layer to disable edit/write while preserving other active tools
 - **Bash allowlist**: Only read-only bash commands are allowed
 - **Plan extraction**: Extracts numbered steps from `Plan:` sections
 - **Progress tracking**: Widget shows completion status during execution
@@ -30,20 +30,22 @@ Plan:
 3. Third step description
 ```
 
-4. Choose "Execute the plan" when prompted
-5. During execution, the agent marks steps complete with `[DONE:n]` tags
-6. Progress widget shows completion status
+1. Choose "Execute the plan" when prompted
+2. During execution, the agent marks steps complete with `[DONE:n]` tags
+3. Progress widget shows completion status
 
 ## How It Works
 
 ### Plan Mode (Read-Only)
+
 - Built-in edit/write tools disabled
 - Other active tools remain available
 - Bash commands filtered through allowlist
 - Agent creates a plan without making changes
 
 ### Execution Mode
-- Full tool access restored
+
+- The transient Plan Mode layer is removed, restoring the manager's effective tool policy
 - Agent executes steps in order
 - `[DONE:n]` markers track completion
 - Widget shows progress
@@ -51,6 +53,7 @@ Plan:
 ### Command Allowlist
 
 Safe commands (allowed):
+
 - File inspection: `cat`, `head`, `tail`, `less`, `more`
 - Search: `grep`, `find`, `rg`, `fd`
 - Directory: `ls`, `pwd`, `tree`
@@ -59,6 +62,7 @@ Safe commands (allowed):
 - System info: `uname`, `whoami`, `date`, `uptime`
 
 Blocked commands:
+
 - File modification: `rm`, `mv`, `cp`, `mkdir`, `touch`
 - Git write: `git add`, `git commit`, `git push`
 - Package install: `npm install`, `yarn add`, `pip install`

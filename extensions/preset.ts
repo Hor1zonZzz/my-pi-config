@@ -1,3 +1,5 @@
+// @ts-nocheck -- Pi's jiti runtime provides these dependencies; this config repository has no local type graph.
+
 /**
  * Preset Extension
  *
@@ -97,7 +99,7 @@ interface PresetsConfig {
  * Load presets from config files.
  * Project-local presets override global presets with the same name.
  */
-function loadPresets(cwd: string): PresetsConfig {
+function loadPresets(cwd: string, trusted: boolean): PresetsConfig {
 	const globalPath = join(getAgentDir(), "presets.json");
 	const projectPath = join(cwd, CONFIG_DIR_NAME, "presets.json");
 
@@ -115,7 +117,7 @@ function loadPresets(cwd: string): PresetsConfig {
 	}
 
 	// Load project presets
-	if (existsSync(projectPath)) {
+	if (trusted && existsSync(projectPath)) {
 		try {
 			const content = readFileSync(projectPath, "utf-8");
 			projectPresets = JSON.parse(content);
@@ -318,6 +320,7 @@ export default function presetExtension(pi: ExtensionAPI) {
 	let activeContext: ExtensionContext | undefined;
 	let activePresetEditor: PresetBorderEditor | undefined;
 	let customTools = false;
+	let managerBaseTools: string[] | undefined;
 
 	// Register --preset CLI flag
 	pi.registerFlag("preset", {
@@ -325,15 +328,20 @@ export default function presetExtension(pi: ExtensionAPI) {
 		type: "string",
 	});
 
-	function setPresetTools(tools: string[]) {
-		const normalizedTools = Array.from(new Set(tools));
-		pi.setActiveTools(normalizedTools);
-		pi.events.emit("preset:tools-changed", { tools: normalizedTools });
+	function notifyPresetTools(
+		tools: string[] | undefined,
+		resetSessionOverride: boolean,
+	) {
+		pi.events.emit("preset:tools-changed", {
+			tools: tools ? Array.from(new Set(tools)) : undefined,
+			resetSessionOverride,
+		});
 	}
 
-	function notifyPresetTools(tools: string[]) {
+	function notifyClearedPresetTools(tools: string[]): void {
 		pi.events.emit("preset:tools-changed", {
 			tools: Array.from(new Set(tools)),
+			clearPreset: true,
 		});
 	}
 
@@ -345,6 +353,20 @@ export default function presetExtension(pi: ExtensionAPI) {
 			skills: skills ? Array.from(new Set(skills)) : undefined,
 			resetSessionOverride,
 		});
+	}
+
+	function currentPolicyTools(): string[] {
+		return managerBaseTools ?? pi.getActiveTools();
+	}
+
+	function serializedOriginalState() {
+		if (!originalState) return undefined;
+		return {
+			provider: originalState.model?.provider,
+			model: originalState.model?.id,
+			thinkingLevel: originalState.thinkingLevel,
+			tools: originalState.tools,
+		};
 	}
 
 	/**
@@ -363,7 +385,7 @@ export default function presetExtension(pi: ExtensionAPI) {
 			originalState = {
 				model: ctx.model,
 				thinkingLevel: pi.getThinkingLevel(),
-				tools: pi.getActiveTools(),
+				tools: currentPolicyTools(),
 			};
 		}
 
@@ -392,7 +414,7 @@ export default function presetExtension(pi: ExtensionAPI) {
 		}
 
 		// Apply tools if specified
-		if (preset.tools && preset.tools.length > 0) {
+		if (preset.tools) {
 			const allToolNames = pi.getAllTools().map((t) => t.name);
 			const validTools = preset.tools.filter((t) => allToolNames.includes(t));
 			const invalidTools = preset.tools.filter(
@@ -406,19 +428,21 @@ export default function presetExtension(pi: ExtensionAPI) {
 				);
 			}
 
-			if (validTools.length > 0) {
-				setPresetTools(validTools);
-			} else {
-				notifyPresetTools(pi.getActiveTools());
-			}
+			notifyPresetTools(validTools, true);
 		} else {
-			notifyPresetTools(pi.getActiveTools());
+			notifyPresetTools(currentPolicyTools(), true);
 		}
 
 		// Store active preset for system prompt injection and skill filtering.
 		activePresetName = name;
 		activePreset = preset;
 		notifyPresetSkills(preset.skills, true);
+		pi.appendEntry("preset-state", {
+			name,
+			customTools: false,
+			tools: currentPolicyTools(),
+			originalState: serializedOriginalState(),
+		});
 
 		return true;
 	}
@@ -537,16 +561,17 @@ export default function presetExtension(pi: ExtensionAPI) {
 			activePresetName = undefined;
 			activePreset = undefined;
 			customTools = false;
-			notifyPresetSkills(undefined, true);
 			if (originalState) {
 				if (originalState.model) {
 					await pi.setModel(originalState.model);
 				}
 				pi.setThinkingLevel(originalState.thinkingLevel);
-				setPresetTools(originalState.tools);
+				notifyClearedPresetTools(originalState.tools);
 			} else {
-				setPresetTools(["read", "bash", "edit", "write"]);
+				notifyClearedPresetTools(["read", "bash", "edit", "write"]);
 			}
+			notifyPresetSkills(undefined, true);
+			pi.appendEntry("preset-state", { name: null, customTools: false });
 			ctx.ui.notify("Preset cleared, defaults restored", "info");
 			updateStatus(ctx);
 			return;
@@ -591,11 +616,77 @@ export default function presetExtension(pi: ExtensionAPI) {
 	 * Refresh the active preset label embedded in the input editor's top border.
 	 */
 	function updateStatus(ctx: ExtensionContext) {
+		pi.events.emit("config-manager:preset-state", { name: activePresetName });
 		// Clear displays owned by earlier versions of this extension after /reload.
 		ctx.ui.setStatus("preset", undefined);
 		ctx.ui.setWidget("preset", undefined);
 		activePresetEditor?.requestRender();
 	}
+
+	function restorePresetFromBranch(ctx: ExtensionContext): void {
+		const presetEntry = ctx.sessionManager
+			.getBranch()
+			.filter(
+				(entry: { type: string; customType?: string }) =>
+					entry.type === "custom" && entry.customType === "preset-state",
+			)
+			.pop() as
+			| {
+					data?: {
+						name?: string | null;
+						customTools?: boolean;
+						tools?: string[];
+						originalState?: {
+							provider?: string;
+							model?: string;
+							thinkingLevel?: OriginalState["thinkingLevel"];
+							tools?: string[];
+						};
+					};
+			  }
+			| undefined;
+		const restoredOriginal = presetEntry?.data?.originalState;
+		if (
+			restoredOriginal?.thinkingLevel &&
+			Array.isArray(restoredOriginal.tools)
+		) {
+			originalState = {
+				model:
+					restoredOriginal.provider && restoredOriginal.model
+						? ctx.modelRegistry.find(
+								restoredOriginal.provider,
+								restoredOriginal.model,
+							)
+						: undefined,
+				thinkingLevel: restoredOriginal.thinkingLevel,
+				tools: restoredOriginal.tools,
+			};
+		} else {
+			originalState = undefined;
+		}
+		const name = presetEntry?.data?.name;
+		const preset = typeof name === "string" ? presets[name] : undefined;
+		activePresetName = preset ? name : undefined;
+		activePreset = preset;
+		customTools = preset ? presetEntry?.data?.customTools === true : false;
+		const validTools = preset?.tools?.filter((tool) =>
+			pi.getAllTools().some((candidate) => candidate.name === tool),
+		);
+		notifyPresetTools(presetEntry?.data?.tools ?? validTools, false);
+		notifyPresetSkills(preset?.skills, false);
+		updateStatus(ctx);
+	}
+
+	pi.events.on("config-manager:state-changed", (event) => {
+		const baseTools = (event as { baseTools?: unknown }).baseTools;
+		if (
+			Array.isArray(baseTools) &&
+			baseTools.every((tool): tool is string => typeof tool === "string")
+		) {
+			managerBaseTools = baseTools;
+		}
+	});
+	pi.events.emit("config-manager:request-snapshot", {});
 
 	pi.events.on("tools:changed", (event) => {
 		const { tools } = event as { tools?: unknown };
@@ -611,6 +702,8 @@ export default function presetExtension(pi: ExtensionAPI) {
 		pi.appendEntry("preset-state", {
 			name: activePresetName,
 			customTools,
+			tools: currentPolicyTools(),
+			originalState: serializedOriginalState(),
 		});
 		if (activeContext) updateStatus(activeContext);
 	});
@@ -640,16 +733,17 @@ export default function presetExtension(pi: ExtensionAPI) {
 			activePresetName = undefined;
 			activePreset = undefined;
 			customTools = false;
-			notifyPresetSkills(undefined, true);
 			if (originalState) {
 				if (originalState.model) {
 					await pi.setModel(originalState.model);
 				}
 				pi.setThinkingLevel(originalState.thinkingLevel);
-				setPresetTools(originalState.tools);
+				notifyClearedPresetTools(originalState.tools);
 			} else {
-				setPresetTools(["read", "bash", "edit", "write"]);
+				notifyClearedPresetTools(["read", "bash", "edit", "write"]);
 			}
+			notifyPresetSkills(undefined, true);
+			pi.appendEntry("preset-state", { name: null, customTools: false });
 			ctx.ui.notify("Preset cleared, defaults restored", "info");
 			updateStatus(ctx);
 			return;
@@ -715,7 +809,7 @@ export default function presetExtension(pi: ExtensionAPI) {
 		installPresetBorder(ctx);
 
 		// Load presets from config files
-		presets = loadPresets(ctx.cwd);
+		presets = loadPresets(ctx.cwd, ctx.isProjectTrusted());
 
 		// Check for --preset flag
 		const presetFlag = pi.getFlag("preset");
@@ -733,28 +827,14 @@ export default function presetExtension(pi: ExtensionAPI) {
 			}
 		}
 
-		// Restore preset from session state
-		const entries = ctx.sessionManager.getEntries();
-		const presetEntry = entries
-			.filter(
-				(e: { type: string; customType?: string }) =>
-					e.type === "custom" && e.customType === "preset-state",
-			)
-			.pop() as { data?: { name: string; customTools?: boolean } } | undefined;
+		if (!presetFlag) restorePresetFromBranch(ctx);
+		else updateStatus(ctx);
+	});
 
-		if (presetEntry?.data?.name && !presetFlag) {
-			const preset = presets[presetEntry.data.name];
-			if (preset) {
-				activePresetName = presetEntry.data.name;
-				activePreset = preset;
-				customTools = presetEntry.data.customTools === true;
-				// Don't re-apply model/tools on restore, just keep the name for instructions.
-			}
-		}
-
-		// Restoring a preset must preserve the branch's skill override.
-		notifyPresetSkills(activePreset?.skills, false);
-		updateStatus(ctx);
+	pi.on("session_tree", (_event, ctx) => {
+		activeContext = ctx;
+		presets = loadPresets(ctx.cwd, ctx.isProjectTrusted());
+		restorePresetFromBranch(ctx);
 	});
 
 	// Persist preset state
@@ -763,6 +843,8 @@ export default function presetExtension(pi: ExtensionAPI) {
 			pi.appendEntry("preset-state", {
 				name: activePresetName,
 				customTools,
+				tools: currentPolicyTools(),
+				originalState: serializedOriginalState(),
 			});
 		}
 	});

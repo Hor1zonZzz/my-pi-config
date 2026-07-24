@@ -67,12 +67,13 @@ install_herdr_skill() {
 
 sync_herdr_skill
 
-for path in settings.json presets.json skill-settings.json models.json codex-fast.json extensions agents prompts skills; do
+for path in settings.json presets.json resource-settings.json skill-settings.json models.json codex-fast.json extensions agents prompts skills; do
 	backup_path "$path"
 done
 
 mkdir -p "$AGENT_DIR/extensions" "$AGENT_DIR/agents" "$AGENT_DIR/prompts" "$AGENT_DIR/skills"
-rm -f "$AGENT_DIR/extensions/question.ts"
+rm -f "$AGENT_DIR/extensions/question.ts" "$AGENT_DIR/extensions/tools.ts"
+rm -rf "$AGENT_DIR/extensions/skills-manager" "$AGENT_DIR/extensions/sidebar-tui"
 node - "$ROOT_DIR/settings.json" "$AGENT_DIR/settings.json" <<'NODE'
 const fs = require("node:fs");
 
@@ -157,7 +158,27 @@ fs.writeFileSync(
 fs.renameSync(temporaryPath, targetPath);
 NODE
 cp "$ROOT_DIR/presets.json" "$AGENT_DIR/presets.json"
-cp "$ROOT_DIR/skill-settings.json" "$AGENT_DIR/skill-settings.json"
+node - "$ROOT_DIR/resource-settings.json" "$AGENT_DIR/resource-settings.json" "$AGENT_DIR/skill-settings.json" <<'NODE'
+const fs = require("node:fs");
+
+const [, , sourcePath, targetPath, legacyPath] = process.argv;
+if (!fs.existsSync(targetPath)) {
+	const defaults = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+	try {
+		const legacy = JSON.parse(fs.readFileSync(legacyPath, "utf8"));
+		if (Array.isArray(legacy.disabledSkills)) {
+			defaults.disabledSkills = [...new Set(
+				legacy.disabledSkills.filter((name) => typeof name === "string"),
+			)].sort();
+		}
+	} catch (error) {
+		if (error.code !== "ENOENT") throw error;
+	}
+	const temporaryPath = `${targetPath}.${process.pid}.tmp`;
+	fs.writeFileSync(temporaryPath, `${JSON.stringify(defaults, null, 2)}\n`, "utf8");
+	fs.renameSync(temporaryPath, targetPath);
+}
+NODE
 cp "$ROOT_DIR/codex-fast.json" "$AGENT_DIR/codex-fast.json"
 cp -R "$ROOT_DIR/extensions/." "$AGENT_DIR/extensions/"
 cp -R "$SUBAGENT_DIR/agents/." "$AGENT_DIR/agents/"

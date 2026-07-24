@@ -22,6 +22,8 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `tools.ts` — interactive `/tools` selector
 - `skills-manager/` — `/skills` controls model-visible skills globally, per session,
   and through presets
+- `sidebar-tui/` — persistent resource HUD above the editor for tools, skills,
+  extensions, subagents, and context files; `/sidebar` opens details
 - `plan-mode/` — read-only planning mode
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
@@ -57,6 +59,7 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 /preset
 /tools
 /skills
+/sidebar
 /plan
 /fast
 /implement <task>

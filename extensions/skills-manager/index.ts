@@ -1,3 +1,5 @@
+// @ts-nocheck -- Pi's jiti runtime provides these dependencies; this config repository has no local type graph.
+
 import {
 	existsSync,
 	mkdirSync,
@@ -541,6 +543,13 @@ export default function skillsManagerExtension(pi: ExtensionAPI) {
 			"skills-manager",
 			ctx.ui.theme.fg(color, `skills: ${getStateLabel()}`),
 		);
+		const knownSkills = getKnownSkills();
+		pi.events.emit("skills-manager:changed", {
+			enabledSkills: Array.from(
+				getEffectiveSkillNames(knownSkills.map((skill) => skill.name)),
+			).sort(),
+			loadedSkills: knownSkills.map((skill) => skill.name).sort(),
+		});
 	}
 
 	function listSkills(ctx: ExtensionContext): void {

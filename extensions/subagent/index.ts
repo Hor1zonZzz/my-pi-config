@@ -900,12 +900,11 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 });
 
 const SubagentParams = Type.Object({
-	action: StringEnum(
-		["block", "background", "list", "status", "cancel"] as const,
-		{
+	action: Type.Optional(
+		StringEnum(["block", "background", "list", "status", "cancel"] as const, {
 			description:
-				"Required operation: block waits for execution, background returns a task ID, list/status inspect tasks, cancel stops a task.",
-		},
+				"Operation. Omit it to run a valid single/parallel/chain request in blocking mode; an omitted action without exactly one execution mode returns the available agents.",
+		}),
 	),
 	taskId: Type.Optional(
 		Type.String({ description: "Task ID for status or cancel actions" }),
@@ -1288,7 +1287,8 @@ export default function (pi: ExtensionAPI) {
 		label: "Subagent",
 		description: [
 			"Run and manage isolated subagent tasks.",
-			"Required actions: block waits, background returns a task ID, list/status inspect current-session tasks, cancel stops one.",
+			"Actions: block waits, background returns a task ID, list/status inspect current-session tasks, cancel stops one.",
+			"Action is optional: a valid single/parallel/chain request defaults to block; otherwise the tool lists available agents.",
 			"Execution modes: single (agent + task), parallel (tasks array), chain (sequential with full {previous} output).",
 			"Every subagent contributes at most 50KB to the parent; complete results are written under .pi/subagent-tasks/<sessionId>/<taskId>/.",
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
@@ -1297,6 +1297,28 @@ export default function (pi: ExtensionAPI) {
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			if (params.action === undefined) {
+				const legacyMode = getExecutionMode(params);
+				if (!legacyMode) {
+					const scope: AgentScope = params.agentScope ?? "user";
+					const discovery = discoverAgents(ctx.cwd, scope);
+					const available =
+						discovery.agents
+							.map((agent) => `${agent.name} (${agent.source})`)
+							.join(", ") || "none";
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Invalid parameters. Provide exactly one mode.\nAvailable agents: ${available}`,
+							},
+						],
+						details: makeSubagentDetails("single", scope, null, []),
+					};
+				}
+				params.action = "block";
+			}
+
 			const hasExecutionFields =
 				params.agent !== undefined ||
 				params.task !== undefined ||

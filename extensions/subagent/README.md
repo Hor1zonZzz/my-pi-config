@@ -118,11 +118,14 @@ Only the final chain step is returned to the parent, capped at 50 KB.
 
 ## Tool Modes
 
-`action` is required; the legacy action-less shape is intentionally unsupported.
+`action` is optional. When omitted, a request containing exactly one valid
+single/parallel/chain mode defaults to blocking execution. If action is omitted
+without exactly one mode, the tool returns the currently discoverable Agents
+(the legacy empty-call behavior).
 
 | Action | Parameters | Description |
 |--------|------------|-------------|
-| `block` | Exactly one of `{ agent, task }`, `{ tasks }`, or `{ chain }` | Persist the task and wait for completion |
+| `block` (or omitted) | Exactly one of `{ agent, task }`, `{ tasks }`, or `{ chain }` | Persist the task and wait for completion |
 | `background` | Exactly one execution mode | Persist the task, start/queue it, and return its ID immediately |
 | `list` | none | List tasks for the current Pi session |
 | `status` | `taskId` | Show persisted status JSON |

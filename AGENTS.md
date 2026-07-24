@@ -156,7 +156,7 @@ Perform applicable interactive checks:
 - `/plan` blocks writes, preserves unrelated tools through a transient manager layer, extracts a plan, and removes the layer before execution.
 - `questionnaire` handles single, multiple, custom-text, cancellation, narrow-terminal, and non-TUI cases.
 - `/fast on|off` persists state, appears only for `openai-codex`, updates status, and changes only the intended outgoing request field.
-- `subagent` requires an explicit action; handles blocking/background single, parallel, and chained calls; enforces shared process/queue limits; writes complete task files; injects bounded background follow-ups; blocks tree navigation while active; and handles cancellation, failures, and project-agent confirmation.
+- `subagent` accepts explicit task-management actions while preserving action-less blocking calls and empty-call Agent discovery; handles blocking/background single, parallel, and chained calls; enforces shared process/queue limits; writes complete task files; injects bounded background follow-ups; blocks tree navigation while active; and handles cancellation, failures, and project-agent confirmation.
 - terminal notifications do not corrupt terminal output on supported terminals.
 
 After testing in isolation, install into the live agent directory only when the diff and generated backup location have been reviewed.

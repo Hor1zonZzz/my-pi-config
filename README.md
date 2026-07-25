@@ -8,7 +8,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
 - `codex-fast.json` — global state for the local Codex priority toggle
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files
-- `subagent-settings.json` — global child-process concurrency and queue limits for blocking/background subagent tasks
+- `subagent-settings.json` — global child-process concurrency and queue limits shared by blocking/background tasks and persistent RPC jobs
 - `model-overrides.json` — managed, credential-free overrides for built-in models
 - `extensions/` — local extensions; `extensions/subagent/` also owns its agent definitions and workflow prompts
 - `skills/` — remote-managed skill caches; Herdr is refreshed from its upstream
@@ -24,7 +24,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `plan-mode/` — read-only planning mode integrated through the config manager's transient tool-policy layer
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
-- `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models with blocking/background execution, session task state, persisted results, and cancellation
+- `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models with blocking/background execution and persisted task state, plus cancellable reusable RPC jobs (`persistent: true`) with ACK/activity handshakes for extension-handled prompts, strict event validation, `0600` temporary system-prompt files, bounded output and 100-item terminal history, atomic parallel startup, and `subagent_control` (`list/read/send/wait/stop`)
 - `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier while keeping the provider identity as `openai-codex`
 
 ## Install

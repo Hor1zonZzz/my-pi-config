@@ -37,7 +37,14 @@ import {
 	type AgentScope,
 	discoverAgents,
 } from "./agents.ts";
+import { clearPersistentHud, renderPersistentHud } from "./hud.ts";
 import { truncateSubagentOutput } from "./output.ts";
+import {
+	formatPersistentSnapshot,
+	PersistentJobManager,
+	type PersistentCompletion,
+	type PersistentJobSnapshot,
+} from "./persistent-jobs.ts";
 import { ProcessScheduler } from "./scheduler.ts";
 import type { ScheduleHooks, SchedulerReservation } from "./scheduler.ts";
 import { loadSubagentSettings } from "./settings.ts";
@@ -112,30 +119,33 @@ function formatToolCall(
 		const home = os.homedir();
 		return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
 	};
+	const previewCommand = (command: string): string =>
+		command.length > 60 ? `${command.slice(0, 60)}...` : command;
+	const formatReadCall = (): string => {
+		const rawPath = (args.file_path || args.path || "...") as string;
+		const filePath = shortenPath(rawPath);
+		const offset = args.offset as number | undefined;
+		const limit = args.limit as number | undefined;
+		let text = themeFg("accent", filePath);
+		if (offset !== undefined || limit !== undefined) {
+			const startLine = offset ?? 1;
+			const endLine = limit !== undefined ? startLine + limit - 1 : "";
+			text += themeFg(
+				"warning",
+				`:${startLine}${endLine ? `-${endLine}` : ""}`,
+			);
+		}
+		return themeFg("muted", "read ") + text;
+	};
 
 	switch (toolName) {
-		case "bash": {
-			const command = (args.command as string) || "...";
-			const preview =
-				command.length > 60 ? `${command.slice(0, 60)}...` : command;
-			return themeFg("muted", "$ ") + themeFg("toolOutput", preview);
-		}
-		case "read": {
-			const rawPath = (args.file_path || args.path || "...") as string;
-			const filePath = shortenPath(rawPath);
-			const offset = args.offset as number | undefined;
-			const limit = args.limit as number | undefined;
-			let text = themeFg("accent", filePath);
-			if (offset !== undefined || limit !== undefined) {
-				const startLine = offset ?? 1;
-				const endLine = limit !== undefined ? startLine + limit - 1 : "";
-				text += themeFg(
-					"warning",
-					`:${startLine}${endLine ? `-${endLine}` : ""}`,
-				);
-			}
-			return themeFg("muted", "read ") + text;
-		}
+		case "bash":
+			return (
+				themeFg("muted", "$ ") +
+				themeFg("toolOutput", previewCommand((args.command as string) || "..."))
+			);
+		case "read":
+			return formatReadCall();
 		case "write": {
 			const rawPath = (args.file_path || args.path || "...") as string;
 			const filePath = shortenPath(rawPath);
@@ -942,6 +952,36 @@ const SubagentParams = Type.Object({
 			description: "Working directory for the agent process (single mode)",
 		}),
 	),
+	persistent: Type.Optional(
+		Type.Boolean({
+			description:
+				"Start one persistent RPC child per single/parallel task. The child remains alive and retains context while idle until stopped or the session ends. Cannot be combined with action; chain is not supported.",
+		}),
+	),
+});
+
+const SubagentControlParams = Type.Object({
+	action: StringEnum(["list", "read", "send", "wait", "stop"] as const),
+	jobId: Type.Optional(
+		Type.String({ description: "Persistent job ID returned by subagent" }),
+	),
+	message: Type.Optional(
+		Type.String({ description: "Additional prompt for action=send" }),
+	),
+	delivery: Type.Optional(
+		StringEnum(["steer", "followUp"] as const, {
+			description:
+				"send delivery while a job is active. Default: steer. An idle job starts a new RPC prompt generation.",
+		}),
+	),
+	timeoutMs: Type.Optional(
+		Type.Integer({
+			minimum: 0,
+			maximum: 600_000,
+			description:
+				"wait timeout in milliseconds. 0 waits indefinitely; default 120000.",
+		}),
+	),
 });
 
 interface ManagedSubagentTask {
@@ -959,10 +999,59 @@ export default function (pi: ExtensionAPI) {
 	let shuttingDown = false;
 	let tasks = new Map<string, ManagedSubagentTask>();
 	let pendingCompletions: ManagedSubagentTask[] = [];
+	let persistentJobs: PersistentJobManager | undefined;
 
 	const getScheduler = (): ProcessScheduler => {
 		if (!scheduler) scheduler = new ProcessScheduler(loadSubagentSettings());
 		return scheduler;
+	};
+
+	const deliverPersistentCompletion = (
+		completion: PersistentCompletion,
+	): void => {
+		if (shuttingDown) return;
+		try {
+			const content = truncateSubagentOutput(
+				[
+					`## Persistent Subagent ${completion.jobId}`,
+					"",
+					`Generation: ${completion.generation}`,
+					`Status: ${completion.status}`,
+					`Agent: ${completion.agent}`,
+					`Task: ${completion.task}`,
+					"",
+					completion.output,
+				].join("\n"),
+			);
+			pi.sendMessage(
+				{
+					customType: "subagent-task-completion",
+					content,
+					display: true,
+					details: {
+						jobId: completion.jobId,
+						generation: completion.generation,
+					},
+				},
+				{ deliverAs: "followUp", triggerTurn: true },
+			);
+		} catch {
+			// A replacement session invalidates the old ExtensionAPI after shutdown.
+		}
+	};
+
+	const getPersistentJobs = (): PersistentJobManager => {
+		if (!persistentJobs) {
+			persistentJobs = new PersistentJobManager({
+				onChanged: () =>
+					renderPersistentHud(
+						activeContext,
+						() => persistentJobs?.list(false) ?? [],
+					),
+				onCompletion: deliverPersistentCompletion,
+			});
+		}
+		return persistentJobs;
 	};
 
 	const activeTasks = (): ManagedSubagentTask[] =>
@@ -1036,7 +1125,7 @@ export default function (pi: ExtensionAPI) {
 				formatted.content,
 			].join("\n");
 		});
-		return sections.join("\n\n---\n\n");
+		return truncateSubagentOutput(sections.join("\n\n---\n\n"));
 	};
 
 	const deliverCompletions = (completedTasks: ManagedSubagentTask[]): void => {
@@ -1236,6 +1325,7 @@ export default function (pi: ExtensionAPI) {
 		activeContext = ctx;
 		sessionId = ctx.sessionManager.getSessionId();
 		scheduler = new ProcessScheduler(loadSubagentSettings());
+		persistentJobs = undefined;
 		pendingCompletions = [];
 		tasks = new Map(
 			markStaleTasksInterrupted(ctx.cwd, sessionId).map((status) => [
@@ -1258,10 +1348,12 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_before_tree", (_event, ctx) => {
-		const active = activeTasks();
-		if (active.length === 0) return;
+		const managed = activeTasks();
+		const persistent = persistentJobs?.busyCount ?? 0;
+		const activeCount = managed.length + persistent;
+		if (activeCount === 0) return;
 		ctx.ui.notify(
-			`Cannot navigate the session tree while ${active.length} subagent task(s) are active. Use subagent action=list or action=cancel first.`,
+			`Cannot navigate the session tree while ${activeCount} subagent task(s) are busy (${persistent} persistent). Wait for settlement, or use subagent action=cancel / subagent_control action=stop.`,
 			"warning",
 		);
 		return { cancel: true };
@@ -1270,6 +1362,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
 		pendingCompletions = [];
+		const manager = persistentJobs;
 		scheduler?.shutdown();
 		for (const task of activeTasks()) task.controller?.abort();
 		const promises = activeTasks()
@@ -1277,8 +1370,13 @@ export default function (pi: ExtensionAPI) {
 			.filter((promise): promise is Promise<PlanExecution | undefined> =>
 				Boolean(promise),
 			);
-		await Promise.allSettled(promises);
+		await Promise.allSettled([
+			...promises,
+			...(manager ? [manager.shutdown()] : []),
+		]);
 		activeContext?.ui.setStatus("subagent-tasks", undefined);
+		clearPersistentHud(activeContext);
+		persistentJobs = undefined;
 		activeContext = undefined;
 	});
 
@@ -1289,14 +1387,28 @@ export default function (pi: ExtensionAPI) {
 			"Run and manage isolated subagent tasks.",
 			"Actions: block waits, background returns a task ID, list/status inspect current-session tasks, cancel stops one.",
 			"Action is optional: a valid single/parallel/chain request defaults to block; otherwise the tool lists available agents.",
+			"Set persistent=true without action for single/parallel RPC jobs that retain context while idle; control them with subagent_control. Persistent chain is unsupported.",
 			"Execution modes: single (agent + task), parallel (tasks array), chain (sequential with full {previous} output).",
-			"Every subagent contributes at most 50KB to the parent; complete results are written under .pi/subagent-tasks/<sessionId>/<taskId>/.",
+			"Every subagent contribution is capped at 50KB/2,000 lines; non-persistent complete results are written under .pi/subagent-tasks/<sessionId>/<taskId>/.",
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
 		].join(" "),
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const persistent = params.persistent === true;
+			if (persistent) {
+				const conflicts = [
+					params.action !== undefined ? "action" : undefined,
+					params.taskId !== undefined ? "taskId" : undefined,
+					params.chain !== undefined ? "chain" : undefined,
+				].filter(Boolean);
+				if (conflicts.length > 0) {
+					throw new Error(
+						`persistent=true conflicts with ${conflicts.join(", ")}. Omit task-management fields and use subagent_control for persistent RPC jobs.`,
+					);
+				}
+			}
 			if (params.action === undefined) {
 				const legacyMode = getExecutionMode(params);
 				if (!legacyMode) {
@@ -1316,7 +1428,12 @@ export default function (pi: ExtensionAPI) {
 						details: makeSubagentDetails("single", scope, null, []),
 					};
 				}
-				params.action = "block";
+				if (persistent && legacyMode === "chain") {
+					throw new Error(
+						"persistent=true does not support chain mode. Use action=block/background for chain workflows.",
+					);
+				}
+				if (!persistent) params.action = "block";
 			}
 
 			const hasExecutionFields =
@@ -1458,7 +1575,9 @@ export default function (pi: ExtensionAPI) {
 			const mode = getExecutionMode(params);
 			if (!mode) {
 				throw new Error(
-					"action=block/background requires exactly one execution mode: agent+task, tasks, or chain.",
+					persistent
+						? "persistent=true requires exactly one single or parallel mode."
+						: "action=block/background requires exactly one execution mode: agent+task, tasks, or chain.",
 				);
 			}
 			const invalidModeFields =
@@ -1532,6 +1651,94 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const demand = mode === "parallel" ? params.tasks.length : 1;
+			if (persistent) {
+				const requested =
+					mode === "parallel"
+						? params.tasks.map((item) => ({
+								config: agents.find((agent) => agent.name === item.agent),
+								task: item.task,
+								cwd: item.cwd,
+							}))
+						: [
+								{
+									config: agents.find((agent) => agent.name === params.agent),
+									task: params.task,
+									cwd: params.cwd,
+								},
+							];
+				for (const request of requested) {
+					if (!request.config) {
+						const available =
+							agents.map((agent) => agent.name).join(", ") || "none";
+						throw new Error(`Unknown agent. Available agents: ${available}.`);
+					}
+					if (request.config.extensionConfigError) {
+						throw new Error(
+							`Agent ${request.config.name}: ${request.config.extensionConfigError}`,
+						);
+					}
+				}
+
+				let reservation: SchedulerReservation;
+				try {
+					reservation = getScheduler().reserveImmediate(demand);
+				} catch (error) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: error instanceof Error ? error.message : String(error),
+							},
+						],
+						details: makeSubagentDetails(
+							mode,
+							agentScope,
+							discovery.projectAgentsDir,
+							[],
+						),
+					};
+				}
+				try {
+					const jobs = await getPersistentJobs().startMany(
+						requested.map((request) => ({
+							agent: request.config,
+							task: request.task,
+							cwd: request.cwd,
+							defaultCwd: ctx.cwd,
+						})),
+						reservation,
+						undefined,
+						signal,
+					);
+					const lines = jobs.map(
+						(job) => `${job.id}  ${job.agent}  ${job.status}`,
+					);
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									mode === "parallel"
+										? `Started ${jobs.length} persistent subagent jobs. Each job will report its settled generations independently.\n\n${lines.join("\n")}`
+										: `Started persistent subagent job ${jobs[0].id} (${jobs[0].agent}). Settled generations are delivered automatically.`,
+							},
+						],
+						details: {
+							...makeSubagentDetails(
+								mode,
+								agentScope,
+								discovery.projectAgentsDir,
+								[],
+							),
+							persistentJobs: jobs,
+						},
+					};
+				} catch (error) {
+					reservation.release();
+					throw error;
+				}
+			}
+
 			let reservation: SchedulerReservation;
 			try {
 				reservation = getScheduler().reserve(demand);
@@ -1648,7 +1855,14 @@ export default function (pi: ExtensionAPI) {
 					0,
 				);
 			}
-			const executionLabel = theme.fg("warning", ` ${args.action}`);
+			const executionLabel = theme.fg(
+				"warning",
+				args.persistent
+					? " persistent"
+					: args.action
+						? ` ${args.action}`
+						: " block",
+			);
 			if (args.chain && args.chain.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +
@@ -2111,6 +2325,162 @@ export default function (pi: ExtensionAPI) {
 
 			const text = result.content[0];
 			return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+		},
+	});
+
+	pi.registerTool({
+		name: "subagent_control",
+		label: "Subagent Control",
+		description:
+			"Inspect and control persistent RPC subagent jobs from the current session. Actions: list, read, send (steer/followUp), wait (join one generation), and stop. Non-persistent subagent action=background tasks remain managed through subagent list/status/cancel.",
+		parameters: SubagentControlParams,
+
+		async execute(_toolCallId, params, signal) {
+			if (params.action === "list") {
+				if (
+					params.jobId !== undefined ||
+					params.message !== undefined ||
+					params.delivery !== undefined ||
+					params.timeoutMs !== undefined
+				) {
+					throw new Error(
+						"subagent_control action=list accepts no other fields",
+					);
+				}
+				const jobs = persistentJobs?.list(false) ?? [];
+				const text =
+					jobs.length === 0
+						? "No persistent subagent jobs in this session."
+						: jobs
+								.map(
+									(job) =>
+										`${job.id}  ${job.agent}  ${job.status}  generation ${job.generation}/${job.settledGeneration}\n  ${job.task}`,
+								)
+								.join("\n");
+				return {
+					content: [{ type: "text", text: truncateSubagentOutput(text) }],
+					details: { jobs },
+				};
+			}
+
+			if (!params.jobId) {
+				throw new Error(
+					`subagent_control action=${params.action} requires jobId`,
+				);
+			}
+			if (!persistentJobs) {
+				throw new Error(`Unknown persistent subagent job: ${params.jobId}`);
+			}
+			if (params.action !== "send" && params.message !== undefined) {
+				throw new Error(
+					`subagent_control action=${params.action} does not accept message`,
+				);
+			}
+			if (params.action !== "send" && params.delivery !== undefined) {
+				throw new Error(
+					`subagent_control action=${params.action} does not accept delivery`,
+				);
+			}
+			if (params.action !== "wait" && params.timeoutMs !== undefined) {
+				throw new Error(
+					`subagent_control action=${params.action} does not accept timeoutMs`,
+				);
+			}
+
+			if (params.action === "send") {
+				if (!params.message) {
+					throw new Error("subagent_control action=send requires message");
+				}
+				const job = await persistentJobs.send(
+					params.jobId,
+					params.message,
+					params.delivery ?? "steer",
+					signal,
+				);
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Accepted ${params.delivery ?? "steer"} for persistent subagent ${job.id}.`,
+						},
+					],
+					details: { job },
+				};
+			}
+
+			if (params.action === "wait") {
+				const job = await persistentJobs.wait(
+					params.jobId,
+					params.timeoutMs ?? 120_000,
+					signal,
+				);
+				return {
+					content: [{ type: "text", text: formatPersistentSnapshot(job) }],
+					details: { job },
+				};
+			}
+
+			if (params.action === "stop") {
+				const job = await persistentJobs.stop(params.jobId);
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Stopped persistent subagent ${job.id}.`,
+						},
+					],
+					details: { job },
+				};
+			}
+
+			const job = persistentJobs.get(params.jobId, true);
+			return {
+				content: [{ type: "text", text: formatPersistentSnapshot(job) }],
+				details: { job },
+			};
+		},
+
+		renderCall(args, theme) {
+			let text =
+				theme.fg("toolTitle", theme.bold("subagent_control ")) +
+				theme.fg("accent", args.action ?? "...");
+			if (args.jobId) text += theme.fg("muted", ` ${args.jobId}`);
+			if (args.message) {
+				const preview =
+					args.message.length > 60
+						? `${args.message.slice(0, 60)}...`
+						: args.message;
+				text += `\n  ${theme.fg("dim", preview)}`;
+			}
+			return new Text(text, 0, 0);
+		},
+
+		renderResult(result, _options, theme) {
+			const job = (
+				result.details as { job?: PersistentJobSnapshot } | undefined
+			)?.job;
+			if (!job) {
+				const content = result.content[0];
+				return new Text(
+					content?.type === "text" ? content.text : "(no output)",
+					0,
+					0,
+				);
+			}
+			const icon =
+				job.status === "idle"
+					? theme.fg("success", "✓")
+					: job.status === "failed"
+						? theme.fg("error", "✗")
+						: job.status === "stopped"
+							? theme.fg("muted", "■")
+							: theme.fg("warning", "⏳");
+			const content = result.content[0];
+			return new Text(
+				`${icon} ${theme.fg("accent", job.id)} ${theme.fg("muted", `${job.agent} · ${job.status}`)}${content?.type === "text" ? `\n${theme.fg("toolOutput", content.text)}` : ""}`,
+				0,
+				0,
+			);
 		},
 	});
 }

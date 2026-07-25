@@ -11,7 +11,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `settings.json` — global Pi defaults and Pi package dependencies.
 - `presets.json` — named model, thinking-level, resource, and instruction presets.
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files.
-- `subagent-settings.json` — global child-process concurrency and queue limits for blocking/background subagent tasks.
+- `subagent-settings.json` — global child-process concurrency and queue limits shared by blocking/background subagent tasks and live persistent RPC jobs.
 - `codex-fast.json` — initial persisted state for the Codex priority-service toggle.
 - `model-overrides.json` — credential-free overrides merged into the local `models.json`.
 - `install.sh` — backs up the current user configuration, refreshes the Herdr
@@ -25,7 +25,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
   - `plan-mode/` — implements read-only planning, plan extraction, and execution progress tracking; tool restrictions are submitted as a transient Pi Config Manager layer.
   - `questionnaire.ts` — registers the TUI-only `questionnaire` tool for one or more interactive questions.
   - `notify.ts` — emits a terminal notification after an agent run ends.
-  - `subagent/` — registers the `subagent` tool, launches isolated Pi subprocesses, schedules blocking/background work, persists task results under the parent cwd, and injects background completions.
+  - `subagent/` — registers `subagent` and `subagent_control`, launches isolated Pi subprocesses, schedules blocking/background work, persists ordinary task results, and manages reusable session-scoped RPC jobs with proactive completions and a TUI HUD.
     - `agents/` — user-level subagent definitions. The local versions select OpenAI Codex models.
     - `prompts/` — slash-command workflow templates that compose the subagents.
   - `codex-fast-toggle/` — implements `/fast on|off` and modifies Codex request payloads to select the priority service tier.
@@ -36,7 +36,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 Some files must be maintained together:
 
 - `extensions/pi-config-manager/`, `extensions/pi-config-manager/skills/preset-settings/`, `extensions/preset.ts`, `extensions/plan-mode/`, `presets.json`, and `resource-settings.json` are coupled. Pi Config Manager is the only local extension that calls `setActiveTools`; presets submit profile policy, plan mode submits a transient restriction layer, and the bundled skill documents the supported profile-editing contract.
-- `extensions/subagent/index.ts`, `extensions/subagent/scheduler.ts`, `extensions/subagent/task-storage.ts`, `extensions/subagent/output.ts`, `extensions/subagent/settings.ts`, `extensions/subagent/agents.ts`, `extensions/subagent/agents/*.md`, `extensions/subagent/prompts/*.md`, and `subagent-settings.json` form one workflow. Agent names referenced by a prompt must exist in `extensions/subagent/agents/`.
+- `extensions/subagent/index.ts`, `extensions/subagent/rpc-client.ts`, `extensions/subagent/persistent-jobs.ts`, `extensions/subagent/hud.ts`, `extensions/subagent/scheduler.ts`, `extensions/subagent/task-storage.ts`, `extensions/subagent/output.ts`, `extensions/subagent/settings.ts`, `extensions/subagent/tests/`, `extensions/subagent/agents.ts`, `extensions/subagent/agents/*.md`, `extensions/subagent/prompts/*.md`, and `subagent-settings.json` form one workflow. Agent names referenced by a prompt must exist in `extensions/subagent/agents/`; workflow prompts intentionally keep `action: "block"` unless their contract is explicitly changed.
 - Model identifiers appear in `settings.json`, `presets.json`, `extensions/subagent/agents/*.md`, and `model-overrides.json`. When models are renamed or removed, inspect all four locations.
 - `extensions/plan-mode/index.ts` and `extensions/plan-mode/utils.ts` must agree on state, plan markers, and the bash safety policy. If a question tool is renamed, update `PLAN_MODE_TOOLS` and the injected instructions.
 - `extensions/codex-fast-toggle/index.ts`, `extensions/codex-fast-toggle/README.md`, and `codex-fast.json` define the Fast-mode behavior and state contract together.
@@ -83,7 +83,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 ### High-Risk Compatibility Areas
 
 - `codex-fast-toggle` depends on the `before_provider_request` lifecycle and the provider-specific outgoing payload accepting `service_tier`. Verify the real request shape after provider/runtime changes.
-- `subagent` depends on Pi CLI flags, LF-delimited JSON-mode events, message shapes, executable discovery, subprocess cancellation behavior, session IDs, `agent_settled` follow-up injection, and `session_before_tree`. Blocking and background calls share one FIFO child-process scheduler per parent Pi process.
+- `subagent` depends on Pi CLI flags, strict LF-delimited JSON/RPC events and shape validation, the Pi 0.82 Extension UI request/response protocol, ACK/activity/settlement ordering (including extension-handled prompts with no agent run), secure temporary system-prompt files, executable discovery, process-tree cancellation, session IDs, follow-up injection, terminal-history retention, and `session_before_tree`. Blocking/background calls and persistent RPC children share one process scheduler; persistent idle children retain immediate-only process slots until stopped, failed, or shutdown, but only busy generations block tree navigation. Keep the deterministic fake-RPC smoke harness current when changing this area.
 - `questionnaire`, `preset`, and `pi-config-manager` depend on TUI component, key handling, autocomplete, theming, and invalidation contracts.
 - `pi-config-manager` depends on Pi's public `SettingsManager`, `DefaultPackageManager`, resolved resource metadata, dynamic tool APIs, and system-prompt resource snapshots. Pi owns discovery; the manager owns only enablement policy.
 - `plan-mode` depends on tool names, lifecycle event ordering, session entries, the config-manager transient-layer contract, and its bash allowlist. Treat the allowlist as a convenience guard, not a security boundary.
@@ -128,7 +128,13 @@ Basic repository checks:
 bash -n install.sh
 node -e 'for (const f of ["settings.json", "presets.json", "resource-settings.json", "subagent-settings.json", "model-overrides.json", "codex-fast.json"]) JSON.parse(require("node:fs").readFileSync(f, "utf8"))'
 git diff --check
+node --experimental-strip-types extensions/subagent/tests/persistent-smoke.ts
+printf '{"id":"smoke","type":"get_state"}\n' | pi --no-extensions -e ./extensions/subagent/index.ts --mode rpc --no-session
 ```
+
+For subagent TypeScript changes, also run primary LSP diagnostics over every
+touched extension/test file before the loader smoke. The deterministic harness
+must cover the full fake-RPC suite, not a filtered subset.
 
 For upstream-derived extension changes, diff against the same installed Pi version's example before and after editing. Distinguish upstream changes from intentional local changes instead of replacing an entire file.
 
@@ -156,7 +162,7 @@ Perform applicable interactive checks:
 - `/plan` blocks writes, preserves unrelated tools through a transient manager layer, extracts a plan, and removes the layer before execution.
 - `questionnaire` handles single, multiple, custom-text, cancellation, narrow-terminal, and non-TUI cases.
 - `/fast on|off` persists state, appears only for `openai-codex`, updates status, and changes only the intended outgoing request field.
-- `subagent` accepts explicit task-management actions while preserving action-less blocking calls and empty-call Agent discovery; handles blocking/background single, parallel, and chained calls; enforces shared process/queue limits; writes complete task files; injects bounded background follow-ups; blocks tree navigation while active; and handles cancellation, failures, and project-agent confirmation.
+- `subagent` accepts explicit task-management actions while preserving action-less blocking calls and empty-call Agent discovery; handles blocking/background single, parallel, and chained calls; starts explicit persistent single/parallel RPC jobs without queue deadlocks; supports `subagent_control` `list`/`read`/`send`/`wait`/`stop`; enforces shared process limits; writes ordinary task files; injects bounded deduplicated follow-ups; blocks tree navigation only while work is busy; and handles barrier-proven pre-client cancellation, extension-handled/no-agent prompts, strict event-shape and callback failures, secure prompt-file cleanup, bounded terminal history, Extension UI requests, malformed JSONL, idle exits, process-tree cleanup, partial startup failures, and project-agent confirmation.
 - terminal notifications do not corrupt terminal output on supported terminals.
 
 After testing in isolation, install into the live agent directory only when the diff and generated backup location have been reviewed.

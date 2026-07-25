@@ -34,9 +34,10 @@
     "thinkingLevel": "max",
     "tools": [
       "subagent",
+      "subagent_control",
       "questionnaire"
     ],
-    "instructions": "Act as the orchestrator for complex tasks. Do not inspect, modify, or validate project files directly. Use questionnaire to clarify requirements, priorities, constraints, and approval points when needed. Delegate all project work through subagent: use scout for focused discovery, planner for concrete implementation plans, worker for changes and validation, and reviewer for independent review. Each subagent starts with isolated context, so provide complete requirements and expected outputs in every task; use chains and the {previous} placeholder when later work depends on earlier results, and use parallel mode only for independent tasks. Keep a single writing path at a time, assess every handoff, and route review findings back to a worker when fixes are required. Finish by synthesizing completed work, validation results, remaining risks, and unresolved decisions for the user."
+    "instructions": "Act as the orchestrator for complex tasks. Do not inspect, modify, or validate project files directly. Use questionnaire to clarify requirements, priorities, constraints, and approval points when needed. Delegate all project work through subagent: use scout for focused discovery, planner for concrete implementation plans, worker for changes and validation, and reviewer for independent review. Each subagent starts with isolated context, so provide complete requirements and expected outputs in every task; use action:block chains and the {previous} placeholder when later work depends on earlier results, and use parallel mode only for independent tasks. Use persistent:true only for single/parallel work that benefits from a reusable context; let settled results arrive automatically and use subagent_control for explicit read, steer/followUp, join, or stop operations rather than waiting immediately after launch. Keep a single writing path at a time, assess every handoff, and route review findings back to a worker when fixes are required. Finish by synthesizing completed work, validation results, remaining risks, and unresolved decisions for the user."
   },
   "deep-code": {
     "provider": "openai-codex",
@@ -49,6 +50,7 @@
       "write",
       "mcp",
       "subagent",
+      "subagent_control",
       "lens_diagnostics",
       "lsp_diagnostics",
       "symbol_search",
@@ -58,6 +60,6 @@
       "pi_lens_activate_tools",
       "questionnaire"
     ],
-    "instructions": "适用于复杂或高影响的代码任务。先理解相关实现、调用关系、测试和项目约束；非平凡改动先形成简短计划。按需使用 Lens、MCP 和子代理进行导航、研究、并行只读分析或审查，但避免无目的委派。实施时保持单一写入路径和最小必要改动；完成后先运行 LSP/诊断，再运行聚焦测试，并清楚报告修改、验证结果与剩余风险。"
+    "instructions": "适用于复杂或高影响的代码任务。先理解相关实现、调用关系、测试和项目约束；非平凡改动先形成简短计划。按需使用 Lens、MCP 和子代理进行导航、研究、并行只读分析或审查，但避免无目的委派；仅在单任务或并行任务确实需要复用上下文时使用 persistent:true，并让完成结果主动回传，只有检查、追加 steer/followUp、join 或停止时才调用 subagent_control。实施时保持单一写入路径和最小必要改动；完成后先运行 LSP/诊断，再运行聚焦测试，并清楚报告修改、验证结果与剩余风险。"
   }
 }

@@ -16,11 +16,22 @@ Delegate tasks to specialized subagents with isolated context windows.
 
 ## Structure
 
-```
+```text
 subagent/
 ├── README.md            # This file
-├── index.ts             # The extension (entry point)
-├── agents.ts            # Agent discovery logic
+├── index.ts             # Small extension entry point and lifecycle wiring
+├── tool.ts              # Tool execution, management actions, and registration
+├── task-manager.ts      # Session task state, persistence, and completions
+├── agents.ts            # User/project agent discovery and override logic
+├── schema.ts            # Tool parameter schema and execution limits
+├── types.ts             # Shared execution/result types
+├── runner.ts            # One isolated child Pi process
+├── execution.ts         # Single, parallel, and chained orchestration
+├── render.ts            # Tool-call and result TUI rendering
+├── scheduler.ts         # Shared child-process FIFO scheduler
+├── task-storage.ts      # Persisted task status and result files
+├── settings.ts          # Scheduler settings loader
+├── output.ts            # Model-visible output truncation
 ├── agents/              # Sample agent definitions
 │   ├── scout.md         # Fast recon, returns compressed context
 │   ├── planner.md       # Creates implementation plans

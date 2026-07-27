@@ -419,9 +419,9 @@
         <div class="flow" aria-label="执行流程">
           <div>主代理调用<br /><code>subagent</code> 工具</div>
           <div class="arrow">→</div>
-          <div>按作用域发现<br />角色 Markdown</div>
+          <div>合并用户级与<br />项目级角色</div>
           <div class="arrow">→</div>
-          <div>校验模式、确认<br />项目级角色</div>
+          <div>校验执行模式<br />与角色名称</div>
           <div class="arrow">→</div>
           <div>启动独立的<br /><code>pi</code> 子进程</div>
           <div class="arrow">→</div>
@@ -431,8 +431,8 @@
         </div>
         <ol>
           <li>
-            <strong>发现角色。</strong
-            ><code>discoverAgents()</code> 读取用户级和/或最近父目录中的项目级
+            <strong>发现角色。</strong><code>discoverAgents()</code>
+            始终读取用户级角色和从当前目录向上找到的最近项目级
             <code>.pi/agents/*.md</code>；缺少 <code>name</code> 或
             <code>description</code> 的文件会被忽略。
           </li>
@@ -441,10 +441,8 @@
             中的一个。角色名不存在时，返回可用角色列表。
           </li>
           <li>
-            <strong>处理项目级信任。</strong>若请求
-            <code>agentScope: "project"</code> 或
-            <code>"both"</code
-            >，且实际选择到项目级角色，交互界面默认弹出确认框。
+            <strong>应用覆盖规则。</strong
+            >用户级和项目级角色自动合并；同名时项目级定义覆盖用户级定义，不需要作用域参数或额外确认。
           </li>
           <li>
             <strong>构造子进程。</strong>基础参数为
@@ -568,45 +566,38 @@ extensions:
       </section>
 
       <section>
-        <h2>角色来源与安全边界</h2>
+        <h2>角色来源与覆盖规则</h2>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>作用域</th>
+                <th>级别</th>
                 <th>读取位置</th>
-                <th>启用方式</th>
+                <th>发现方式</th>
                 <th>覆盖规则</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td><code>user</code>（默认）</td>
+                <td><code>user</code></td>
                 <td><code>~/.pi/agent/agents/*.md</code></td>
-                <td>无需额外参数</td>
-                <td>只读取用户级角色</td>
+                <td>每次调用自动读取</td>
+                <td>作为基础角色集合</td>
               </tr>
               <tr>
                 <td><code>project</code></td>
                 <td>从当前目录向上找最近的 <code>.pi/agents/*.md</code></td>
-                <td><code>agentScope: "project"</code></td>
-                <td>只读取项目级角色</td>
-              </tr>
-              <tr>
-                <td><code>both</code></td>
-                <td>两处都读取</td>
-                <td><code>agentScope: "both"</code></td>
-                <td>同名项目级角色覆盖用户级角色</td>
+                <td>每次调用自动读取</td>
+                <td>同名时覆盖用户级角色</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <div class="note danger">
-          <strong>重要：</strong
-          >项目级角色是仓库控制的提示词。交互模式下默认会确认；但 JSON/print
-          等无 UI 模式不会弹出确认框。因此只应对可信仓库使用
-          <code>project</code>/<code>both</code>，不要把
-          <code>confirmProjectAgents</code> 当成无 UI 运行时的安全防线。
+        <div class="note">
+          <strong>固定规则：</strong
+          >两级角色始终自动合并。工具不再暴露作用域选择或项目级确认参数。合并后的角色名称会直接注入
+          <code>subagent</code>
+          工具描述，不附带较长的角色说明；扩展会在会话启动及每次主代理运行前检测名称集合并按需刷新。
         </div>
       </section>
 
@@ -676,9 +667,9 @@ model: openai-codex/gpt-5.6-terra
           将其放到仓库的
           <code>extensions/subagent/agents/deep-reviewer.md</code>
           并安装，之后以
-          <code>agent: "deep-reviewer"</code> 调用即可。也可放到可信项目的
-          <code>.pi/agents/</code> 中，并显式使用
-          <code>agentScope: "project"</code> 或 <code>"both"</code>。
+          <code>agent: "deep-reviewer"</code> 调用即可。也可直接放到项目的
+          <code>.pi/agents/</code>
+          中；插件会自动发现，若与用户级角色同名则使用项目级定义。
         </p>
         <div class="note">
           <strong>如果需要“每次调用临时指定模型”：</strong
@@ -729,10 +720,9 @@ model: openai-codex/gpt-5.6-terra
         <h2>常见问题</h2>
         <h3>为什么提示 Unknown agent？</h3>
         <p>
-          检查角色文件是否已安装到实际 agent 目录、YAML 是否有非空
-          <code>name</code> 与
-          <code>description</code>、调用名是否一致，以及项目角色是否设置了正确的
-          <code>agentScope</code>。
+          检查角色文件是否已安装到用户级 agent 目录或最近的项目级
+          <code>.pi/agents/</code>、YAML 是否有非空 <code>name</code> 与
+          <code>description</code>，以及调用名是否一致。
         </p>
         <h3>为什么子代理没有使用当前主代理的模型？</h3>
         <p>

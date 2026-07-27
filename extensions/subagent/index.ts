@@ -23,9 +23,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
-	CONFIG_DIR_NAME,
 	type ExtensionAPI,
-	getAgentDir,
 	getMarkdownTheme,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
@@ -34,7 +32,6 @@ import { Type } from "typebox";
 import {
 	type AgentConfig,
 	type AgentExtensionMode,
-	type AgentScope,
 	discoverAgents,
 } from "./agents.ts";
 import { truncateSubagentOutput } from "./output.ts";
@@ -210,7 +207,6 @@ interface SingleResult {
 
 interface SubagentDetails {
 	mode: "single" | "parallel" | "chain";
-	agentScope: AgentScope;
 	projectAgentsDir: string | null;
 	results: SingleResult[];
 	taskId?: string;
@@ -634,11 +630,10 @@ function getExecutionMode(
 
 function makeSubagentDetails(
 	mode: "single" | "parallel" | "chain",
-	agentScope: AgentScope,
 	projectAgentsDir: string | null,
 	results: SingleResult[],
 ): SubagentDetails {
-	return { mode, agentScope, projectAgentsDir, results };
+	return { mode, projectAgentsDir, results };
 }
 
 function formatPlanContent(
@@ -700,7 +695,6 @@ async function executePlan(options: {
 	agents: AgentConfig[];
 	request: ExecutionRequest;
 	mode: "single" | "parallel" | "chain";
-	agentScope: AgentScope;
 	projectAgentsDir: string | null;
 	signal: AbortSignal | undefined;
 	onUpdate: OnUpdateCallback | undefined;
@@ -714,7 +708,6 @@ async function executePlan(options: {
 		agents,
 		request,
 		mode,
-		agentScope,
 		projectAgentsDir,
 		signal,
 		onUpdate,
@@ -724,7 +717,7 @@ async function executePlan(options: {
 		progress,
 	} = options;
 	const details = (results: SingleResult[]) =>
-		makeSubagentDetails(mode, agentScope, projectAgentsDir, results);
+		makeSubagentDetails(mode, projectAgentsDir, results);
 	const runWithReservation =
 		(reservation: SchedulerReservation): RunProcess =>
 		(runner) =>
@@ -893,12 +886,6 @@ const ChainItem = Type.Object({
 	),
 });
 
-const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
-	description:
-		'Which agent directories to use. Default: "user". Use "both" to include project-local agents.',
-	default: "user",
-});
-
 const SubagentParams = Type.Object({
 	action: Type.Optional(
 		StringEnum(["block", "background", "list", "status", "cancel"] as const, {
@@ -930,13 +917,6 @@ const SubagentParams = Type.Object({
 			minItems: 1,
 		}),
 	),
-	agentScope: Type.Optional(AgentScopeSchema),
-	confirmProjectAgents: Type.Optional(
-		Type.Boolean({
-			description: "Prompt before running project-local agents. Default: true.",
-			default: true,
-		}),
-	),
 	cwd: Type.Optional(
 		Type.String({
 			description: "Working directory for the agent process (single mode)",
@@ -959,6 +939,7 @@ export default function (pi: ExtensionAPI) {
 	let shuttingDown = false;
 	let tasks = new Map<string, ManagedSubagentTask>();
 	let pendingCompletions: ManagedSubagentTask[] = [];
+	let registeredAgentNamesKey: string | undefined;
 
 	const getScheduler = (): ProcessScheduler => {
 		if (!scheduler) scheduler = new ProcessScheduler(loadSubagentSettings());
@@ -1113,7 +1094,6 @@ export default function (pi: ExtensionAPI) {
 		task: ManagedSubagentTask,
 		request: any,
 		agents: AgentConfig[],
-		agentScope: AgentScope,
 		projectAgentsDir: string | null,
 		initialReservation: SchedulerReservation,
 		onUpdate?: OnUpdateCallback,
@@ -1156,7 +1136,6 @@ export default function (pi: ExtensionAPI) {
 					agents,
 					request,
 					mode: task.status.mode,
-					agentScope,
 					projectAgentsDir,
 					signal: task.controller?.signal,
 					onUpdate,
@@ -1248,6 +1227,11 @@ export default function (pi: ExtensionAPI) {
 			]),
 		);
 		updateTaskStatusWidget();
+		registerSubagentTool(ctx.cwd);
+	});
+
+	pi.on("before_agent_start", (_event, ctx) => {
+		registerSubagentTool(ctx.cwd);
 	});
 
 	pi.on("agent_settled", () => {
@@ -1282,26 +1266,17 @@ export default function (pi: ExtensionAPI) {
 		activeContext = undefined;
 	});
 
-	pi.registerTool({
+	const subagentTool = {
 		name: "subagent",
 		label: "Subagent",
-		description: [
-			"Run and manage isolated subagent tasks.",
-			"Actions: block waits, background returns a task ID, list/status inspect current-session tasks, cancel stops one.",
-			"Action is optional: a valid single/parallel/chain request defaults to block; otherwise the tool lists available agents.",
-			"Execution modes: single (agent + task), parallel (tasks array), chain (sequential with full {previous} output).",
-			"Every subagent contributes at most 50KB to the parent; complete results are written under .pi/subagent-tasks/<sessionId>/<taskId>/.",
-			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
-			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
-		].join(" "),
+		description: "",
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (params.action === undefined) {
 				const legacyMode = getExecutionMode(params);
 				if (!legacyMode) {
-					const scope: AgentScope = params.agentScope ?? "user";
-					const discovery = discoverAgents(ctx.cwd, scope);
+					const discovery = discoverAgents(ctx.cwd);
 					const available =
 						discovery.agents
 							.map((agent) => `${agent.name} (${agent.source})`)
@@ -1313,7 +1288,11 @@ export default function (pi: ExtensionAPI) {
 								text: `Invalid parameters. Provide exactly one mode.\nAvailable agents: ${available}`,
 							},
 						],
-						details: makeSubagentDetails("single", scope, null, []),
+						details: makeSubagentDetails(
+							"single",
+							discovery.projectAgentsDir,
+							[],
+						),
 					};
 				}
 				params.action = "block";
@@ -1324,16 +1303,14 @@ export default function (pi: ExtensionAPI) {
 				params.task !== undefined ||
 				params.tasks !== undefined ||
 				params.chain !== undefined ||
-				params.cwd !== undefined ||
-				params.agentScope !== undefined ||
-				params.confirmProjectAgents !== undefined;
+				params.cwd !== undefined;
 			const managementAction =
 				params.action === "list" ||
 				params.action === "status" ||
 				params.action === "cancel";
 			if (managementAction && hasExecutionFields) {
 				throw new Error(
-					`action=${params.action} does not accept agent, task, tasks, chain, cwd, agentScope, or confirmProjectAgents.`,
+					`action=${params.action} does not accept agent, task, tasks, chain, or cwd.`,
 				);
 			}
 			if (
@@ -1370,7 +1347,7 @@ export default function (pi: ExtensionAPI) {
 								.join("\n");
 				return {
 					content: [{ type: "text", text: truncateSubagentOutput(text) }],
-					details: makeSubagentDetails("single", "user", null, []),
+					details: makeSubagentDetails("single", null, []),
 				};
 			}
 
@@ -1400,7 +1377,7 @@ export default function (pi: ExtensionAPI) {
 								text: `Unknown subagent task: ${params.taskId}`,
 							},
 						],
-						details: makeSubagentDetails("single", "user", null, []),
+						details: makeSubagentDetails("single", null, []),
 					};
 				}
 
@@ -1416,7 +1393,7 @@ export default function (pi: ExtensionAPI) {
 									text: `Task ${task.status.taskId} is already ${task.status.status}.`,
 								},
 							],
-							details: makeSubagentDetails(task.status.mode, "user", null, []),
+							details: makeSubagentDetails(task.status.mode, null, []),
 						};
 					}
 					task.controller?.abort();
@@ -1427,7 +1404,7 @@ export default function (pi: ExtensionAPI) {
 								text: `Cancellation requested for subagent task ${task.status.taskId}.`,
 							},
 						],
-						details: makeSubagentDetails(task.status.mode, "user", null, []),
+						details: makeSubagentDetails(task.status.mode, null, []),
 					};
 				}
 
@@ -1451,7 +1428,7 @@ export default function (pi: ExtensionAPI) {
 							),
 						},
 					],
-					details: makeSubagentDetails(task.status.mode, "user", null, []),
+					details: makeSubagentDetails(task.status.mode, null, []),
 				};
 			}
 
@@ -1487,49 +1464,12 @@ export default function (pi: ExtensionAPI) {
 							text: `Too many parallel tasks (${params.tasks.length}). Max is ${MAX_PARALLEL_TASKS}.`,
 						},
 					],
-					details: makeSubagentDetails(mode, "user", null, []),
+					details: makeSubagentDetails(mode, null, []),
 				};
 			}
 
-			const agentScope: AgentScope = params.agentScope ?? "user";
-			const discovery = discoverAgents(ctx.cwd, agentScope);
+			const discovery = discoverAgents(ctx.cwd);
 			const agents = discovery.agents;
-			const confirmProjectAgents = params.confirmProjectAgents ?? true;
-			if (
-				(agentScope === "project" || agentScope === "both") &&
-				confirmProjectAgents &&
-				ctx.hasUI
-			) {
-				const requestedNames = new Set<string>();
-				if (params.agent) requestedNames.add(params.agent);
-				for (const item of params.tasks ?? []) requestedNames.add(item.agent);
-				for (const item of params.chain ?? []) requestedNames.add(item.agent);
-				const projectAgents = Array.from(requestedNames)
-					.map((name) => agents.find((agent) => agent.name === name))
-					.filter((agent): agent is AgentConfig => agent?.source === "project");
-				if (projectAgents.length > 0) {
-					const approved = await ctx.ui.confirm(
-						"Run project-local agents?",
-						`Agents: ${projectAgents.map((agent) => agent.name).join(", ")}\nSource: ${discovery.projectAgentsDir ?? "(unknown)"}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
-					);
-					if (!approved) {
-						return {
-							content: [
-								{
-									type: "text",
-									text: "Canceled: project-local agents not approved.",
-								},
-							],
-							details: makeSubagentDetails(
-								mode,
-								agentScope,
-								discovery.projectAgentsDir,
-								[],
-							),
-						};
-					}
-				}
-			}
 
 			const demand = mode === "parallel" ? params.tasks.length : 1;
 			let reservation: SchedulerReservation;
@@ -1543,12 +1483,7 @@ export default function (pi: ExtensionAPI) {
 							text: error instanceof Error ? error.message : String(error),
 						},
 					],
-					details: makeSubagentDetails(
-						mode,
-						agentScope,
-						discovery.projectAgentsDir,
-						[],
-					),
+					details: makeSubagentDetails(mode, discovery.projectAgentsDir, []),
 				};
 			}
 
@@ -1574,7 +1509,6 @@ export default function (pi: ExtensionAPI) {
 				task,
 				params,
 				agents,
-				agentScope,
 				discovery.projectAgentsDir,
 				reservation,
 				params.action === "block" ? onUpdate : undefined,
@@ -1589,12 +1523,7 @@ export default function (pi: ExtensionAPI) {
 						},
 					],
 					details: {
-						...makeSubagentDetails(
-							mode,
-							agentScope,
-							discovery.projectAgentsDir,
-							[],
-						),
+						...makeSubagentDetails(mode, discovery.projectAgentsDir, []),
 						taskId: task.status.taskId,
 						taskStatus: task.status.status,
 						resultPath: task.status.resultPath,
@@ -1617,12 +1546,7 @@ export default function (pi: ExtensionAPI) {
 				return {
 					content: [{ type: "text", text: plan.content }],
 					details: {
-						...makeSubagentDetails(
-							mode,
-							agentScope,
-							discovery.projectAgentsDir,
-							[],
-						),
+						...makeSubagentDetails(mode, discovery.projectAgentsDir, []),
 						taskId: task.status.taskId,
 						taskStatus: task.status.status,
 						resultPath: task.status.resultPath,
@@ -1634,7 +1558,6 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, _context) {
-			const scope: AgentScope = args.agentScope ?? "user";
 			if (
 				args.action === "list" ||
 				args.action === "status" ||
@@ -1648,13 +1571,12 @@ export default function (pi: ExtensionAPI) {
 					0,
 				);
 			}
-			const executionLabel = theme.fg("warning", ` ${args.action}`);
+			const executionLabel = theme.fg("warning", ` ${args.action ?? "block"}`);
 			if (args.chain && args.chain.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +
 					theme.fg("accent", `chain (${args.chain.length} steps)`) +
-					executionLabel +
-					theme.fg("muted", ` [${scope}]`);
+					executionLabel;
 				for (let i = 0; i < Math.min(args.chain.length, 3); i++) {
 					const step = args.chain[i];
 					// Clean up {previous} placeholder for display
@@ -1676,8 +1598,7 @@ export default function (pi: ExtensionAPI) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +
 					theme.fg("accent", `parallel (${args.tasks.length} tasks)`) +
-					executionLabel +
-					theme.fg("muted", ` [${scope}]`);
+					executionLabel;
 				for (const t of args.tasks.slice(0, 3)) {
 					const preview =
 						t.task.length > 40 ? `${t.task.slice(0, 40)}...` : t.task;
@@ -1696,8 +1617,7 @@ export default function (pi: ExtensionAPI) {
 			let text =
 				theme.fg("toolTitle", theme.bold("subagent ")) +
 				theme.fg("accent", agentName) +
-				executionLabel +
-				theme.fg("muted", ` [${scope}]`);
+				executionLabel;
 			text += `\n  ${theme.fg("dim", preview)}`;
 			return new Text(text, 0, 0);
 		},
@@ -2112,5 +2032,26 @@ export default function (pi: ExtensionAPI) {
 			const text = result.content[0];
 			return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
 		},
-	});
+	};
+
+	function registerSubagentTool(cwd: string): void {
+		const agentNames = discoverAgents(cwd)
+			.agents.map((agent) => agent.name)
+			.sort((left, right) => left.localeCompare(right));
+		const agentNamesKey = agentNames.join("\0");
+		if (registeredAgentNamesKey === agentNamesKey) return;
+		registeredAgentNamesKey = agentNamesKey;
+		subagentTool.description = [
+			"Run and manage isolated subagent tasks.",
+			"Actions: block waits, background returns a task ID, list/status inspect current-session tasks, cancel stops one.",
+			"Action is optional: a valid single/parallel/chain request defaults to block; otherwise the tool lists available agents.",
+			"Execution modes: single (agent + task), parallel (tasks array), chain (sequential with full {previous} output).",
+			"User-level and nearest project-level agents are always merged; project agents override same-named user agents.",
+			`Available agents: ${agentNames.join(", ") || "none"}.`,
+			"Every subagent contributes at most 50KB to the parent; complete results are written under .pi/subagent-tasks/<sessionId>/<taskId>/.",
+		].join(" ");
+		pi.registerTool(subagentTool);
+	}
+
+	registerSubagentTool(process.cwd());
 }

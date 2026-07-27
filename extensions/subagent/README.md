@@ -49,17 +49,18 @@ then copies its nested resources to Pi's discovery locations:
 The source paths are relative to the repository root, so the resource layout has a
 single source of truth and no root-level `agents/` or `prompts/` mirror.
 
-## Security Model
+## Agent Discovery
 
 This tool executes a separate `pi` subprocess with a delegated system prompt and tool/model configuration.
 
-**Project-local agents** (`.pi/agents/*.md`) are repo-controlled prompts that can instruct the model to read files, run bash commands, etc.
+Agents are discovered from both locations on every invocation:
 
-**Default behavior:** Only loads **user-level agents** from `~/.pi/agent/agents`.
+- user-level agents under `~/.pi/agent/agents/*.md`;
+- project-level agents under the nearest `.pi/agents/*.md` found from the current working directory upward.
 
-To enable project-local agents, pass `agentScope: "both"` (or `"project"`). Only do this for repositories you trust.
+The two sets are merged automatically. A project-level agent overrides a user-level agent with the same name. The parent agent does not select a discovery scope, and project-level agents run without an additional confirmation prompt.
 
-When running interactively, the tool prompts for confirmation before running project-local agents. Set `confirmProjectAgents: false` to disable.
+The merged agent names are injected into the `subagent` tool description without their longer descriptions. The extension refreshes that tool metadata at session start and before each parent-agent run whenever the available name set changes.
 
 ## Usage
 
@@ -110,7 +111,7 @@ Only the final chain step is returned to the parent, capped at 50 KB.
 
 ### Workflow prompts
 
-```
+```text
 /implement add Redis caching to the session store
 /scout-and-plan refactor auth to support OAuth
 /implement-and-review add input validation to API endpoints
@@ -124,7 +125,7 @@ without exactly one mode, the tool returns the currently discoverable Agents
 (the legacy empty-call behavior).
 
 | Action | Parameters | Description |
-|--------|------------|-------------|
+| --- | --- | --- |
 | `block` (or omitted) | Exactly one of `{ agent, task }`, `{ tasks }`, or `{ chain }` | Persist the task and wait for completion |
 | `background` | Exactly one execution mode | Persist the task, start/queue it, and return its ID immediately |
 | `list` | none | List tasks for the current Pi session |
@@ -225,10 +226,10 @@ System prompt for the agent goes here.
 
 **Locations:**
 
-- `~/.pi/agent/agents/*.md` - User-level (always loaded)
-- `.pi/agents/*.md` - Project-level (only with `agentScope: "project"` or `"both"`)
+- `~/.pi/agent/agents/*.md` - User-level
+- `.pi/agents/*.md` - Nearest project-level directory found from the working directory upward
 
-Project agents override user agents with the same name when `agentScope: "both"`.
+Both levels are always loaded, and project agents override user agents with the same name.
 
 ### Extension isolation
 
@@ -251,7 +252,7 @@ An explicit array first disables automatic extension discovery, then loads only 
 ## Sample Agents
 
 | Agent | Purpose | Model | Tools | Extensions |
-|-------|---------|-------|-------|------------|
+| --- | --- | --- | --- | --- |
 | `scout` | Fast codebase recon | Luna | read, grep, find, ls, bash | automatic discovery |
 | `planner` | Implementation plans | Sol | read, grep, find, ls | automatic discovery |
 | `reviewer` | Code review | Sol | read, grep, find, ls, bash | automatic discovery |
@@ -260,7 +261,7 @@ An explicit array first disables automatic extension discovery, then loads only 
 ## Workflow Prompts
 
 | Prompt | Flow |
-|--------|------|
+| --- | --- |
 | `/implement <query>` | scout → planner → worker |
 | `/scout-and-plan <query>` | scout → planner |
 | `/implement-and-review <query>` | worker → reviewer → worker |

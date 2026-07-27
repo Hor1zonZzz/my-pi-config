@@ -12,7 +12,6 @@ import {
 	parseFrontmatter,
 } from "@earendil-works/pi-coding-agent";
 
-export type AgentScope = "user" | "project" | "both";
 export type AgentExtensionMode = "default" | "isolated";
 
 export interface AgentConfig {
@@ -153,30 +152,17 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
 	}
 }
 
-export function discoverAgents(
-	cwd: string,
-	scope: AgentScope,
-): AgentDiscoveryResult {
+export function discoverAgents(cwd: string): AgentDiscoveryResult {
 	const userDir = path.join(getAgentDir(), "agents");
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
-
-	const userAgents =
-		scope === "project" ? [] : loadAgentsFromDir(userDir, "user");
-	const projectAgents =
-		scope === "user" || !projectAgentsDir
-			? []
-			: loadAgentsFromDir(projectAgentsDir, "project");
-
+	const userAgents = loadAgentsFromDir(userDir, "user");
+	const projectAgents = projectAgentsDir
+		? loadAgentsFromDir(projectAgentsDir, "project")
+		: [];
 	const agentMap = new Map<string, AgentConfig>();
 
-	if (scope === "both") {
-		for (const agent of userAgents) agentMap.set(agent.name, agent);
-		for (const agent of projectAgents) agentMap.set(agent.name, agent);
-	} else if (scope === "user") {
-		for (const agent of userAgents) agentMap.set(agent.name, agent);
-	} else {
-		for (const agent of projectAgents) agentMap.set(agent.name, agent);
-	}
+	for (const agent of userAgents) agentMap.set(agent.name, agent);
+	for (const agent of projectAgents) agentMap.set(agent.name, agent);
 
 	return { agents: Array.from(agentMap.values()), projectAgentsDir };
 }

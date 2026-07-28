@@ -24,7 +24,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `plan-mode/` — read-only planning mode integrated through the config manager's transient tool-policy layer
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
-- `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models with blocking/background execution, session task state, persisted results, and cancellation
+- `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models with blocking/background execution, session task state, persisted results, cancellation, and a below-editor TUI task viewer
 - `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier while keeping the provider identity as `openai-codex`
 
 ## Install
@@ -66,6 +66,7 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 /sidebar
 /plan
 /fast
+/subagents
 /implement <task>
 /scout-and-plan <task>
 /implement-and-review <task>

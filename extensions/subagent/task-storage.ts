@@ -3,6 +3,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
+import type { SingleResult } from "./types.ts";
 
 export type SubagentTaskStatus =
 	| "queued"
@@ -42,6 +43,11 @@ export interface TaskPaths {
 	statusPath: string;
 	resultPath: string;
 	detailsPath: string;
+}
+
+export interface StoredTaskDetails {
+	status: StoredTaskStatus;
+	results: SingleResult[];
 }
 
 function safeSegment(value: string): string {
@@ -127,6 +133,20 @@ export function writeTaskResults(
 		paths.detailsPath,
 		`${JSON.stringify({ status, results }, null, 2)}\n`,
 	);
+}
+
+export function readTaskDetails(
+	paths: TaskPaths,
+): StoredTaskDetails | undefined {
+	try {
+		const value = JSON.parse(fs.readFileSync(paths.detailsPath, "utf8"));
+		if (!value || typeof value !== "object" || !Array.isArray(value.results)) {
+			return undefined;
+		}
+		return value as StoredTaskDetails;
+	} catch {
+		return undefined;
+	}
 }
 
 export function readSessionTaskStatuses(

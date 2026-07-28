@@ -255,8 +255,13 @@ export function renderSubagentResult(result, { expanded }, theme, _context) {
 
 	if (details.mode === "single" && details.results.length === 1) {
 		const current = details.results[0];
-		const isError = isFailedResult(current);
-		const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
+		const isRunning = current.exitCode === -1;
+		const isError = !isRunning && isFailedResult(current);
+		const icon = isRunning
+			? theme.fg("warning", "⏳")
+			: isError
+				? theme.fg("error", "✗")
+				: theme.fg("success", "✓");
 		const displayItems = getDisplayItems(current.messages);
 		const finalOutput = getFinalOutput(current.messages);
 
@@ -361,10 +366,15 @@ export function renderSubagentResult(result, { expanded }, theme, _context) {
 		const successCount = details.results.filter(
 			(current) => current.exitCode === 0,
 		).length;
+		const runningCount = details.results.filter(
+			(current) => current.exitCode === -1,
+		).length;
 		const icon =
-			successCount === details.results.length
-				? theme.fg("success", "✓")
-				: theme.fg("error", "✗");
+			runningCount > 0
+				? theme.fg("warning", "⏳")
+				: successCount === details.results.length
+					? theme.fg("success", "✓")
+					: theme.fg("error", "✗");
 
 		if (expanded) {
 			const container = new Container();
@@ -384,9 +394,11 @@ export function renderSubagentResult(result, { expanded }, theme, _context) {
 
 			for (const current of details.results) {
 				const resultIcon =
-					current.exitCode === 0
-						? theme.fg("success", "✓")
-						: theme.fg("error", "✗");
+					current.exitCode === -1
+						? theme.fg("warning", "⏳")
+						: current.exitCode === 0
+							? theme.fg("success", "✓")
+							: theme.fg("error", "✗");
 				const displayItems = getDisplayItems(current.messages);
 				const finalOutput = getFinalOutput(current.messages);
 
@@ -457,9 +469,11 @@ export function renderSubagentResult(result, { expanded }, theme, _context) {
 			theme.fg("accent", `${successCount}/${details.results.length} steps`);
 		for (const current of details.results) {
 			const resultIcon =
-				current.exitCode === 0
-					? theme.fg("success", "✓")
-					: theme.fg("error", "✗");
+				current.exitCode === -1
+					? theme.fg("warning", "⏳")
+					: current.exitCode === 0
+						? theme.fg("success", "✓")
+						: theme.fg("error", "✗");
 			const displayItems = getDisplayItems(current.messages);
 			text += `\n\n${theme.fg("muted", `─── Step ${current.step}: `)}${theme.fg("accent", current.agent)} ${resultIcon}${theme.fg("dim", ` [${formatExtensionPolicy(current.extensionMode, current.extensionSources)}]`)}`;
 			if (displayItems.length === 0)

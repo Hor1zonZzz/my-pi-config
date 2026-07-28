@@ -7,6 +7,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Isolated context**: Each subagent runs in a separate `pi` process
 - **Blocking or background execution**: `action: "block"` waits; `action: "background"` returns a task ID immediately
 - **Session task management**: `list`, `status`, and `cancel` actions manage tasks created by the current Pi session
+- **TUI task viewer**: A compact below-editor summary expands into a keyboard-driven task picker with live details
 - **Streaming output**: Blocking calls show tool calls and progress as they happen
 - **Parallel streaming**: All blocking parallel tasks stream updates simultaneously
 - **Markdown rendering**: Final output rendered with proper formatting (expanded view)
@@ -22,6 +23,7 @@ subagent/
 ├── index.ts             # Small extension entry point and lifecycle wiring
 ├── tool.ts              # Tool execution, management actions, and registration
 ├── task-manager.ts      # Session task state, persistence, and completions
+├── viewer.ts            # Below-editor task picker and detail overlay
 ├── agents.ts            # User/project agent discovery and override logic
 ├── schema.ts            # Tool parameter schema and execution limits
 ├── types.ts             # Shared execution/result types
@@ -175,6 +177,27 @@ blocking and background calls limits actual child Pi processes.
 - Completed tasks are injected with `followUp` and automatically trigger the parent agent.
 - A completion arriving while the parent is busy waits for `agent_settled`; all completions accumulated during that run are combined into one follow-up.
 - Single returns at most 50 KB/2,000 lines; parallel applies that limit per subagent; chain returns only its final step with the same limit.
+
+## TUI Task Viewer
+
+After the current session creates its first subagent task, Pi shows a compact
+summary below the input editor. Pi's normal history order is preserved: Down
+moves from older prompts to the newest prompt and then restores the current
+draft. When the cursor is already at the bottom of that draft and Down cannot
+move it any farther, another Down opens the task picker.
+
+- Each row represents one persisted task; parallel and chain children appear in
+  that task's detail view.
+- Tasks are ordered newest first and update while queued, running, or completing.
+- Up/Down moves the selection, Enter opens the detail overlay, and Escape returns
+  to the editor. Up on the first row also returns to the editor.
+- `/subagents` opens the picker directly and is the fallback for custom editors
+  that do not expose cursor and autocomplete state.
+- Details are read-only and limited to a 50 KB/2,000-line preview. The complete
+  output remains available at the displayed `result.md` and `details.json`
+  paths.
+- The viewer shows tasks from the current Pi session only. It does not implement
+  terminal mouse clicks; use Enter to open a task.
 
 ## Task Files
 

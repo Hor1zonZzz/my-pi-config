@@ -160,6 +160,9 @@ interface AppEditor extends EditorComponent {
 	onCtrlD?: () => void;
 	onPasteImage?: () => void;
 	onExtensionShortcut?: (data: string) => boolean;
+	getCursor?: () => { line: number; col: number };
+	isShowingAutocomplete?: () => boolean;
+	canObserveNavigationBoundary?: () => boolean;
 }
 
 class PresetBorderEditor implements EditorComponent, Focusable {
@@ -249,6 +252,25 @@ class PresetBorderEditor implements EditorComponent, Focusable {
 
 	getText(): string {
 		return this.editor.getText();
+	}
+
+	getCursor(): { line: number; col: number } | undefined {
+		return (this.editor as AppEditor).getCursor?.();
+	}
+
+	canObserveNavigationBoundary(): boolean {
+		const editor = this.editor as AppEditor;
+		if (typeof editor.canObserveNavigationBoundary === "function") {
+			return editor.canObserveNavigationBoundary();
+		}
+		return (
+			typeof editor.getCursor === "function" &&
+			typeof editor.isShowingAutocomplete === "function"
+		);
+	}
+
+	isShowingAutocomplete(): boolean {
+		return (this.editor as AppEditor).isShowingAutocomplete?.() ?? false;
 	}
 
 	setText(text: string): void {

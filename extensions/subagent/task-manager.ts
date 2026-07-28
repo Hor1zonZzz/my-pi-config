@@ -14,6 +14,7 @@ import {
 	initializeTaskDirectory,
 	markStaleTasksInterrupted,
 	readSessionTaskStatuses,
+	readTaskDetails,
 	type StoredTaskStatus,
 	type TaskPaths,
 	writeTaskResults,
@@ -32,7 +33,14 @@ export interface ManagedSubagentTask {
 	paths: TaskPaths;
 	controller?: AbortController;
 	results: SingleResult[];
+	liveResults: SingleResult[];
+	resultsHydrated: boolean;
 	promise?: Promise<PlanExecution | undefined>;
+}
+
+export interface SubagentTaskView {
+	status: StoredTaskStatus;
+	results: SingleResult[];
 }
 
 export class SubagentTaskManager {
@@ -42,6 +50,7 @@ export class SubagentTaskManager {
 	private shuttingDown = false;
 	private tasks = new Map<string, ManagedSubagentTask>();
 	private pendingCompletions: ManagedSubagentTask[] = [];
+	private taskListeners = new Set<() => void>();
 
 	constructor(private readonly pi: ExtensionAPI) {}
 
@@ -82,6 +91,22 @@ export class SubagentTaskManager {
 		);
 	}
 
+	private notifyTaskChange(): void {
+		this.updateTaskStatusWidget();
+		for (const listener of this.taskListeners) {
+			try {
+				listener();
+			} catch {
+				// A viewer must never interfere with task execution.
+			}
+		}
+	}
+
+	subscribe(listener: () => void): () => void {
+		this.taskListeners.add(listener);
+		return () => this.taskListeners.delete(listener);
+	}
+
 	private persistTask(
 		task: ManagedSubagentTask,
 		appendSessionEntry = false,
@@ -100,7 +125,7 @@ export class SubagentTaskManager {
 				error: task.status.error,
 			});
 		}
-		this.updateTaskStatusWidget();
+		this.notifyTaskChange();
 	}
 
 	private makeCompletionMessage(completedTasks: ManagedSubagentTask[]): string {
@@ -153,18 +178,39 @@ export class SubagentTaskManager {
 	}
 
 	listStatuses(cwd: string): StoredTaskStatus[] {
-		for (const status of readSessionTaskStatuses(cwd, this.sessionId)) {
-			if (!this.tasks.has(status.taskId)) {
-				this.tasks.set(status.taskId, {
-					status,
-					paths: getTaskPaths(cwd, this.sessionId, status.taskId),
-					results: [],
-				});
+		if (this.tasks.size === 0) {
+			for (const status of readSessionTaskStatuses(cwd, this.sessionId)) {
+				if (!this.tasks.has(status.taskId)) {
+					this.tasks.set(status.taskId, {
+						status,
+						paths: getTaskPaths(cwd, this.sessionId, status.taskId),
+						results: [],
+						liveResults: [],
+						resultsHydrated: false,
+					});
+				}
 			}
 		}
 		return Array.from(this.tasks.values())
 			.map((task) => task.status)
 			.sort((left, right) => left.createdAt - right.createdAt);
+	}
+
+	getTaskView(cwd: string, taskId: string): SubagentTaskView | undefined {
+		const task = this.findTask(cwd, taskId);
+		if (!task) return undefined;
+		if (
+			!task.resultsHydrated &&
+			task.status.status !== "queued" &&
+			task.status.status !== "running"
+		) {
+			task.results = readTaskDetails(task.paths)?.results ?? [];
+			task.resultsHydrated = true;
+		}
+		return {
+			status: task.status,
+			results: task.liveResults.length > 0 ? task.liveResults : task.results,
+		};
 	}
 
 	findTask(cwd: string, taskId: string): ManagedSubagentTask | undefined {
@@ -178,6 +224,8 @@ export class SubagentTaskManager {
 			status: stored,
 			paths: getTaskPaths(cwd, this.sessionId, stored.taskId),
 			results: [],
+			liveResults: [],
+			resultsHydrated: false,
 		};
 		this.tasks.set(stored.taskId, task);
 		return task;
@@ -223,6 +271,8 @@ export class SubagentTaskManager {
 			paths,
 			controller: new AbortController(),
 			results: [],
+			liveResults: [],
+			resultsHydrated: true,
 		};
 		this.tasks.set(taskId, task);
 		this.persistTask(task, true);
@@ -268,6 +318,12 @@ export class SubagentTaskManager {
 					this.persistTask(task);
 				},
 			});
+			const handleUpdate: OnUpdateCallback = (partial) => {
+				const results = partial.details?.results;
+				if (Array.isArray(results)) task.liveResults = [...results];
+				this.notifyTaskChange();
+				onUpdate?.(partial);
+			};
 
 			try {
 				const plan = await executePlan({
@@ -277,7 +333,7 @@ export class SubagentTaskManager {
 					mode: task.status.mode,
 					projectAgentsDir,
 					signal: task.controller?.signal,
-					onUpdate,
+					onUpdate: handleUpdate,
 					scheduler: this.getScheduler(),
 					initialReservation,
 					resultPath: task.status.resultPath,
@@ -285,6 +341,15 @@ export class SubagentTaskManager {
 						createScheduleHooks,
 						onResult: (result) => {
 							task.results.push(result);
+							if (task.status.mode === "single") {
+								task.liveResults = [result];
+							} else if (task.status.mode === "chain") {
+								const liveResults = [...task.liveResults];
+								liveResults[
+									Math.max(0, (result.step ?? task.results.length) - 1)
+								] = result;
+								task.liveResults = liveResults.filter(Boolean);
+							}
 							task.status.processes.completed += 1;
 							if (isFailedResult(result)) {
 								task.status.processes.failed += 1;
@@ -294,6 +359,8 @@ export class SubagentTaskManager {
 					},
 				});
 				task.results = plan.results;
+				task.liveResults = plan.results;
+				task.resultsHydrated = true;
 				task.status.status = task.controller?.signal.aborted
 					? "cancelled"
 					: plan.failed
@@ -317,6 +384,9 @@ export class SubagentTaskManager {
 				task.status.completedAt = Date.now();
 				task.status.error =
 					error instanceof Error ? error.message : String(error);
+				if (task.liveResults.length > 0) task.results = task.liveResults;
+				task.liveResults = task.results;
+				task.resultsHydrated = true;
 				writeTaskResults(task.paths, task.status, task.results);
 				this.persistTask(task, true);
 				if (task.status.execution === "background") this.queueCompletion(task);
@@ -332,11 +402,15 @@ export class SubagentTaskManager {
 			task.status.completedAt = Date.now();
 			task.status.error =
 				error instanceof Error ? error.message : String(error);
+			if (task.liveResults.length > 0) task.results = task.liveResults;
+			task.liveResults = task.results;
+			task.resultsHydrated = true;
 			try {
 				writeTaskStatus(task.paths, task.status);
 			} catch {
 				// Nothing else can be persisted if the task directory is unavailable.
 			}
+			this.notifyTaskChange();
 			return undefined;
 		});
 		task.promise = guardedPromise;
@@ -356,10 +430,12 @@ export class SubagentTaskManager {
 					status,
 					paths: getTaskPaths(ctx.cwd, this.sessionId, status.taskId),
 					results: [],
+					liveResults: [],
+					resultsHydrated: false,
 				},
 			]),
 		);
-		this.updateTaskStatusWidget();
+		this.notifyTaskChange();
 	}
 
 	deliverPendingCompletions(): void {

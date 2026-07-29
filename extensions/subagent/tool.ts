@@ -19,6 +19,9 @@ export function createSubagentToolRegistrar(
 		name: "subagent",
 		label: "Subagent",
 		description: "",
+		promptGuidelines: [
+			"Background subagent tasks automatically notify you upon completion.",
+		],
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {

@@ -40,6 +40,7 @@ subagent/
 │   ├── reviewer.md      # Code review
 │   └── worker.md        # Controlled implementation tools
 └── prompts/             # Workflow presets (prompt templates)
+    ├── explore-and-gather.md # parallel scout repository exploration
     ├── implement.md     # scout -> planner -> worker
     ├── scout-and-plan.md    # scout -> planner (no implementation)
     └── implement-and-review.md  # worker -> reviewer -> worker
@@ -125,6 +126,7 @@ Only the final chain step is returned to the parent, capped at 50 KB.
 ### Workflow prompts
 
 ```text
+/explore-and-gather
 /implement add Redis caching to the session store
 /scout-and-plan refactor auth to support OAuth
 /implement-and-review add input validation to API endpoints
@@ -296,6 +298,7 @@ An explicit array first disables automatic extension discovery, then loads only 
 
 | Prompt | Flow |
 | --- | --- |
+| `/explore-and-gather` | parallel scouts explore separate repository directories and gather context |
 | `/implement <query>` | scout → planner → worker |
 | `/scout-and-plan <query>` | scout → planner |
 | `/implement-and-review <query>` | worker → reviewer → worker |

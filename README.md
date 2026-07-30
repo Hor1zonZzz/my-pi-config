@@ -4,7 +4,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 
 ## Included
 
-- `settings.json` — model defaults and installable Pi packages
+- `settings.json` — model defaults and installable Pi packages, including Pi Lens, the MCP adapter, the Herdr tool integration, and server-side compaction support
 - `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
 - `codex-fast.json` — global state for the local Codex priority toggle
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files

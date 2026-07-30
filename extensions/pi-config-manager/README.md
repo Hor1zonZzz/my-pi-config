@@ -1,6 +1,6 @@
 # Pi Config Manager
 
-A unified resource-policy extension for Pi 0.82.0.
+A unified resource-policy extension for Pi 0.83.0.
 
 Pi remains responsible for discovering, resolving, loading, deduplicating, and
 assigning provenance to tools, skills, context files, extensions, and packages.
@@ -29,10 +29,27 @@ immediately. Global defaults can be changed non-interactively:
 
 Extension changes are staged. Press `S` in the Extensions tab to save, confirm,
 and reload Pi. The manager writes Pi's native settings filters through the
-public `SettingsManager`; Pi decides what loads after reload. Pi 0.82 cannot
-filter a local package source that directly names one extension file, so the
-manager reports that edge case instead of claiming to save an ineffective
-toggle.
+public `SettingsManager`; Pi decides what loads after reload. Pi cannot filter
+a local package source that directly names one extension file, so the manager
+reports that edge case instead of claiming to save an ineffective toggle.
+
+## Context Monitor Demo
+
+The manager opens as a centered overlay with a resource list on the left and a
+bordered Context Monitor on the right. Moving through Tools, Skills, and
+Contexts previews the selected resource's model-visible contribution:
+
+- Tools show their description, parameter schema, and active prompt guidelines.
+- Skills show their entry in Pi's system-prompt skill catalog.
+- Contexts show their complete `project_context` system-prompt block.
+
+The status line reports current manager policy and whether the contribution is
+expected in Pi's next base prompt or provider request. It also calls out cases
+such as an unavailable `read` tool, manual-only Skills, and custom prompts that
+omit tool guidelines. Later extension prompt rewrites can still differ from this
+base preview. Use the configured selection page-up/page-down bindings
+(`PageUp`/`PageDown` by default) to scroll. Provider-specific serialization can
+differ from the Pi tool definition shown by this demo.
 
 ## Lifecycle
 

@@ -28,7 +28,10 @@ sync_herdr_skill() {
 	if command -v git >/dev/null 2>&1; then
 		checkout_dir="$(mktemp -d "${TMPDIR:-/tmp}/pi-herdr-skill.XXXXXX")"
 		if GIT_TERMINAL_PROMPT=0 git clone --depth 1 --single-branch --branch "$HERDR_SKILL_REF" "$HERDR_SKILL_REPO" "$checkout_dir/repo"; then
-			candidate="$checkout_dir/repo/SKILL.md"
+			candidate="$checkout_dir/repo/skills/herdr/SKILL.md"
+			if [[ ! -s "$candidate" ]]; then
+				candidate="$checkout_dir/repo/SKILL.md"
+			fi
 			if [[ -s "$candidate" ]]; then
 				mkdir -p "$HERDR_SKILL_CACHE_DIR"
 				cp "$candidate" "$HERDR_SKILL_CACHE_DIR/SKILL.md.tmp"

@@ -14,6 +14,7 @@ import {
 	Input,
 	type KeybindingsManager,
 	truncateToWidth,
+	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import {
@@ -56,12 +57,22 @@ const LABELS: Record<ResourceTab, string> = {
 	extensions: "Extensions",
 };
 
+interface MonitorPayload {
+	title: string;
+	channel: string;
+	status: string;
+	statusColor: "success" | "warning" | "dim";
+	content: string;
+	note?: string;
+}
+
 interface ViewItem {
 	id: string;
 	label: string;
 	enabled?: boolean;
 	state: string;
 	detail: string;
+	monitor?: MonitorPayload;
 }
 
 function unique(values: Iterable<string>): string[] {
@@ -83,10 +94,51 @@ function sourceDetail(sourceInfo: any): string {
 	return `${sourceInfo.scope ?? "unknown"} · ${sourceInfo.source ?? "unknown"} · ${sourceInfo.path ?? "unknown path"}`;
 }
 
+function stringifyJson(value: unknown): string {
+	try {
+		return JSON.stringify(value, null, 2) ?? String(value);
+	} catch {
+		return "[schema could not be serialized]";
+	}
+}
+
+function padToWidth(text: string, width: number): string {
+	const fitted = truncateToWidth(text, Math.max(1, width), "");
+	return `${fitted}${" ".repeat(Math.max(0, width - visibleWidth(fitted)))}`;
+}
+
+function renderPane(
+	title: string,
+	content: string[],
+	width: number,
+	height: number,
+	theme: any,
+	accentBorder = false,
+): string[] {
+	const safeWidth = Math.max(4, width);
+	const safeHeight = Math.max(3, height);
+	const innerWidth = safeWidth - 2;
+	const borderColor = accentBorder ? "borderAccent" : "borderMuted";
+	const border = (text: string) => theme.fg(borderColor, text);
+	const titleText = truncateToWidth(` ${title} `, innerWidth, "");
+	const topFill = "─".repeat(Math.max(0, innerWidth - visibleWidth(titleText)));
+	const lines = [
+		`${border("╭")}${theme.fg(accentBorder ? "accent" : "muted", titleText)}${border(`${topFill}╮`)}`,
+	];
+	for (let index = 0; index < safeHeight - 2; index += 1) {
+		lines.push(
+			`${border("│")}${padToWidth(content[index] ?? "", innerWidth)}${border("│")}`,
+		);
+	}
+	lines.push(border(`╰${"─".repeat(innerWidth)}╯`));
+	return lines;
+}
+
 class ConfigManagerView implements Component, Focusable {
 	private readonly search = new Input();
 	private tab: ResourceTab;
 	private selected = 0;
+	private monitorScroll = 0;
 	private _focused = false;
 
 	constructor(
@@ -130,8 +182,17 @@ class ConfigManagerView implements Component, Focusable {
 			return;
 		}
 		const items = this.filteredItems();
+		if (this.keybindings.matches(data, "tui.select.pageUp")) {
+			this.monitorScroll = Math.max(0, this.monitorScroll - 6);
+			return;
+		}
+		if (this.keybindings.matches(data, "tui.select.pageDown")) {
+			this.monitorScroll += 6;
+			return;
+		}
 		if (this.keybindings.matches(data, "tui.select.up")) {
 			this.selected = Math.max(0, this.selected - 1);
+			this.monitorScroll = 0;
 			return;
 		}
 		if (this.keybindings.matches(data, "tui.select.down")) {
@@ -139,6 +200,7 @@ class ConfigManagerView implements Component, Focusable {
 				Math.max(0, items.length - 1),
 				this.selected + 1,
 			);
+			this.monitorScroll = 0;
 			return;
 		}
 		if (data === " " || this.keybindings.matches(data, "tui.select.confirm")) {
@@ -152,7 +214,10 @@ class ConfigManagerView implements Component, Focusable {
 		}
 		const before = this.search.getValue();
 		this.search.handleInput(data);
-		if (before !== this.search.getValue()) this.selected = 0;
+		if (before !== this.search.getValue()) {
+			this.selected = 0;
+			this.monitorScroll = 0;
+		}
 	}
 
 	render(width: number): string[] {
@@ -160,89 +225,186 @@ class ConfigManagerView implements Component, Focusable {
 		const snapshot = this.getSnapshot();
 		const items = this.filteredItems();
 		this.selected = Math.min(this.selected, Math.max(0, items.length - 1));
-		const maxVisible = Math.max(
-			5,
-			Math.min(14, (process.stdout.rows ?? 24) - 12),
-		);
-		const start = Math.max(
-			0,
-			Math.min(
-				this.selected - Math.floor(maxVisible / 2),
-				items.length - maxVisible,
-			),
-		);
-		const end = Math.min(items.length, start + maxVisible);
+		const selectedItem = items[this.selected];
+		const terminalRows = process.stdout.rows || 24;
+		const overlayBudget = Math.max(1, Math.floor(terminalRows * 0.9) - 2);
+		const paneHeight = Math.max(3, Math.min(16, overlayBudget - 4));
 		const tabs = TABS.map((tab) => {
 			const label = LABELS[tab];
 			return tab === this.tab
 				? this.theme.fg("accent", this.theme.bold(`[${label}]`))
 				: this.theme.fg("muted", label);
 		}).join("  ");
+		const title = truncateToWidth(
+			this.theme.fg(
+				"accent",
+				this.theme.bold("Pi Config Manager · Context Monitor (demo)"),
+			),
+			safeWidth,
+		);
+		if (safeWidth < 4) return [title];
+		const tabLine = truncateToWidth(
+			snapshot.ready
+				? tabs
+				: `${tabs}  ${this.theme.fg("warning", "loading resources…")}`,
+			safeWidth,
+		);
+		if (overlayBudget < 7) {
+			return [
+				title,
+				tabLine,
+				truncateToWidth(`> ${this.search.getValue()}`, safeWidth, ""),
+				truncateToWidth(
+					this.theme.fg("warning", "Terminal too small for Context Monitor"),
+					safeWidth,
+					"",
+				),
+			].slice(0, overlayBudget);
+		}
 		const lines = [
-			truncateToWidth(
-				this.theme.fg("accent", this.theme.bold("Pi Config Manager")),
-				safeWidth,
-			),
-			truncateToWidth(
-				snapshot.ready
-					? tabs
-					: `${tabs}  ${this.theme.fg("warning", "loading resources…")}`,
-				safeWidth,
-			),
+			title,
+			tabLine,
 			truncateToWidth(`> ${this.search.getValue()}`, safeWidth, ""),
-			"",
 		];
-		if (items.length === 0) {
-			lines.push(this.theme.fg("muted", "  No matching resources"));
-		} else {
-			for (let index = start; index < end; index += 1) {
-				const item = items[index]!;
-				const cursor =
-					index === this.selected ? this.theme.fg("accent", "> ") : "  ";
-				const check =
-					item.enabled === undefined
-						? "  "
-						: item.enabled
-							? this.theme.fg("success", "● ")
-							: this.theme.fg("dim", "○ ");
-				const pending =
-					this.tab === "extensions" && this.stagedExtensions.has(item.id)
-						? this.theme.fg("warning", " staged")
-						: "";
+
+		if (safeWidth >= 68) {
+			const leftWidth = Math.max(24, Math.floor(safeWidth * 0.34));
+			const rightWidth = Math.max(4, safeWidth - leftWidth - 1);
+			const left = renderPane(
+				"Resources",
+				this.renderResourceRows(items, paneHeight - 2),
+				leftWidth,
+				paneHeight,
+				this.theme,
+			);
+			const right = renderPane(
+				selectedItem?.monitor?.title ?? "Details",
+				this.renderMonitorRows(selectedItem, rightWidth - 2, paneHeight - 2),
+				rightWidth,
+				paneHeight,
+				this.theme,
+				Boolean(selectedItem?.monitor),
+			);
+			for (let index = 0; index < paneHeight; index += 1) {
 				lines.push(
-					truncateToWidth(
-						`${cursor}${check}${item.label}${this.theme.fg("dim", `  ${item.state}`)}${pending}`,
-						safeWidth,
-					),
+					`${padToWidth(left[index] ?? "", leftWidth)} ${right[index] ?? ""}`,
 				);
 			}
-			const item = items[this.selected];
-			if (item) {
-				lines.push("");
-				for (const rawLine of item.detail.split("\n")) {
-					for (const wrapped of wrapTextWithAnsi(
-						rawLine,
-						Math.max(1, safeWidth - 4),
-					)) {
-						lines.push(
-							truncateToWidth(this.theme.fg("dim", `  ${wrapped}`), safeWidth),
-						);
-					}
-				}
-			}
+		} else {
+			lines.push(
+				...renderPane(
+					"Resources · widen terminal for monitor",
+					this.renderResourceRows(items, paneHeight - 2),
+					safeWidth,
+					paneHeight,
+					this.theme,
+				),
+			);
 		}
+
 		const saveHint = this.tab === "extensions" ? " · S save + reload" : "";
 		lines.push(
-			"",
 			truncateToWidth(
 				this.theme.fg(
 					"dim",
-					`Type search · ←/→/Tab tabs · ↑/↓ move · Space toggle${saveHint} · Esc close`,
+					`Type search · ←/→/Tab tabs · ↑/↓ move · ${this.monitorScrollKeys()} monitor · Space toggle${saveHint} · Esc close`,
 				),
 				safeWidth,
 			),
 		);
 		return lines;
+	}
+
+	private renderResourceRows(items: ViewItem[], height: number): string[] {
+		if (items.length === 0)
+			return [this.theme.fg("muted", "  No matching resources")];
+		const start = Math.max(
+			0,
+			Math.min(this.selected - Math.floor(height / 2), items.length - height),
+		);
+		return items.slice(start, start + height).map((item, offset) => {
+			const index = start + offset;
+			const cursor =
+				index === this.selected ? this.theme.fg("accent", "> ") : "  ";
+			const check =
+				item.enabled === undefined
+					? "  "
+					: item.enabled
+						? this.theme.fg("success", "● ")
+						: this.theme.fg("dim", "○ ");
+			const pending =
+				this.tab === "extensions" && this.stagedExtensions.has(item.id)
+					? this.theme.fg("warning", " staged")
+					: "";
+			return `${cursor}${check}${item.label}${this.theme.fg("dim", `  ${item.state}`)}${pending}`;
+		});
+	}
+
+	private renderMonitorRows(
+		item: ViewItem | undefined,
+		width: number,
+		height: number,
+	): string[] {
+		if (!item) return [this.theme.fg("muted", " No resource selected")];
+		if (!item.monitor) {
+			return item.detail
+				.split("\n")
+				.flatMap((line) =>
+					wrapTextWithAnsi(this.theme.fg("dim", ` ${line}`), width),
+				);
+		}
+
+		const safeWidth = Math.max(1, width);
+		const rows: string[] = [];
+		const addWrapped = (line: string) => {
+			rows.push(...wrapTextWithAnsi(line, safeWidth));
+		};
+		addWrapped(
+			this.theme.fg(
+				item.monitor.statusColor,
+				` ${item.monitor.statusColor === "success" ? "●" : "○"} ${item.monitor.status}`,
+			),
+		);
+		addWrapped(this.theme.fg("dim", ` channel: ${item.monitor.channel}`));
+		addWrapped(
+			this.theme.fg("dim", ` source: ${item.detail.replace(/\n/g, " · ")}`),
+		);
+		if (item.monitor.note) {
+			addWrapped(this.theme.fg("warning", ` note: ${item.monitor.note}`));
+		}
+		rows.push("");
+		for (const rawLine of item.monitor.content.split("\n")) {
+			const styled = rawLine ? this.theme.fg("accent", ` ${rawLine}`) : "";
+			addWrapped(styled);
+		}
+
+		const viewportHeight = Math.max(1, height - (rows.length > height ? 1 : 0));
+		const maxScroll = Math.max(0, rows.length - viewportHeight);
+		this.monitorScroll = Math.min(this.monitorScroll, maxScroll);
+		const visible = rows.slice(
+			this.monitorScroll,
+			this.monitorScroll + viewportHeight,
+		);
+		if (maxScroll > 0) {
+			visible.push(
+				truncateToWidth(
+					this.theme.fg(
+						"dim",
+						` ${this.monitorScrollKeys()} · ${this.monitorScroll + 1}-${Math.min(rows.length, this.monitorScroll + viewportHeight)}/${rows.length}`,
+					),
+					safeWidth,
+					"",
+				),
+			);
+		}
+		return visible;
+	}
+
+	private monitorScrollKeys(): string {
+		const upKey = this.keybindings.getKeys("tui.select.pageUp")[0] ?? "pageUp";
+		const downKey =
+			this.keybindings.getKeys("tui.select.pageDown")[0] ?? "pageDown";
+		return `${upKey}/${downKey}`;
 	}
 
 	private allItems(): ViewItem[] {
@@ -259,7 +421,8 @@ class ConfigManagerView implements Component, Focusable {
 					id: "skills",
 					label: "Skills",
 					state: `${snapshot.enabledSkills.size}/${snapshot.skills.length}`,
-					detail: "Pi-loaded skills exposed to the model.",
+					detail:
+						"Pi-loaded skills enabled by manager policy. Catalog visibility also depends on read and manual-only metadata.",
 				},
 				{
 					id: "contexts",
@@ -280,31 +443,101 @@ class ConfigManagerView implements Component, Focusable {
 			];
 		}
 		if (this.tab === "tools")
-			return snapshot.tools.map((tool) => ({
-				id: tool.name,
-				label: tool.name,
-				enabled: snapshot.activeTools.has(tool.name),
-				state: snapshot.activeTools.has(tool.name) ? "active" : "inactive",
-				detail: `${tool.description}\n${sourceDetail(tool.sourceInfo)}`,
-			}));
+			return snapshot.tools.map((tool) => {
+				const active = snapshot.activeTools.has(tool.name);
+				const guidelinesVisible = active && !snapshot.customPromptActive;
+				return {
+					id: tool.name,
+					label: tool.name,
+					enabled: active,
+					state: active ? "active" : "inactive",
+					detail: sourceDetail(tool.sourceInfo),
+					monitor: {
+						title: `Tool · ${tool.name}`,
+						channel: "provider tools payload",
+						status: active
+							? "active · definition expected on the next provider request"
+							: "inactive · definition excluded by current policy",
+						statusColor: active ? "success" : "dim",
+						note:
+							snapshot.customPromptActive && tool.promptGuidelines?.length
+								? "A custom system prompt is active, so Pi omits this tool's prompt guidelines."
+								: undefined,
+						content: [
+							"Pi tool definition (provider serialization may vary):",
+							stringifyJson({
+								name: tool.name,
+								description: tool.description,
+								parameters: tool.parameters,
+							}),
+							...(tool.promptGuidelines?.length && guidelinesVisible
+								? [
+										"",
+										"System prompt guidelines:",
+										...tool.promptGuidelines.map((line) => `- ${line}`),
+									]
+								: []),
+						].join("\n"),
+					},
+				};
+			});
 		if (this.tab === "skills")
-			return snapshot.skills.map((skill) => ({
-				id: skill.name,
-				label: skill.name,
-				enabled: snapshot.enabledSkills.has(skill.name),
-				state: snapshot.enabledSkills.has(skill.name) ? "enabled" : "disabled",
-				detail: `${skill.description}\n${skill.path}`,
-			}));
+			return snapshot.skills.map((skill) => {
+				const enabled = snapshot.enabledSkills.has(skill.name);
+				const readAvailable = snapshot.activeTools.has("read");
+				const catalogVisible =
+					enabled && readAvailable && !skill.disableModelInvocation;
+				const status = !enabled
+					? "disabled by current policy"
+					: skill.disableModelInvocation
+						? "manual invocation only · omitted from the skill catalog"
+						: !readAvailable
+							? "enabled, but read is inactive · catalog omitted"
+							: "enabled · expected in the next base system prompt";
+				return {
+					id: skill.name,
+					label: skill.name,
+					enabled,
+					state: enabled ? "enabled" : "disabled",
+					detail: skill.path,
+					monitor: {
+						title: `Skill · ${skill.name}`,
+						channel: "system prompt skill catalog",
+						status,
+						statusColor: catalogVisible ? "success" : "warning",
+						note: "This previews Pi's base prompt; later extension prompt rewrites can still differ.",
+						content: formatSkillsForPrompt([
+							{
+								name: skill.name,
+								description: skill.description,
+								filePath: skill.path,
+								disableModelInvocation: false,
+							},
+						]).trim(),
+					},
+				};
+			});
 		if (this.tab === "contexts")
-			return snapshot.contexts.map((context) => ({
-				id: context.path,
-				label: basename(context.path),
-				enabled: snapshot.enabledContexts.has(context.path),
-				state: snapshot.enabledContexts.has(context.path)
-					? "enabled"
-					: "disabled",
-				detail: context.path,
-			}));
+			return snapshot.contexts.map((context) => {
+				const enabled = snapshot.enabledContexts.has(context.path);
+				return {
+					id: context.path,
+					label: basename(context.path),
+					enabled,
+					state: enabled ? "enabled" : "disabled",
+					detail: context.path,
+					monitor: {
+						title: `Context · ${basename(context.path)}`,
+						channel: "system prompt project_context section",
+						status: enabled
+							? "enabled · expected in the next base system prompt"
+							: "disabled by current policy",
+						statusColor: enabled ? "success" : "warning",
+						note: "This previews Pi's base prompt; later extension prompt rewrites can still differ.",
+						content: formatContextSection([context]).trim(),
+					},
+				};
+			});
 		return snapshot.extensions.map((extension) => {
 			const staged = this.stagedExtensions.get(extension.path);
 			const enabled = staged?.enabled ?? extension.enabled;
@@ -334,6 +567,7 @@ class ConfigManagerView implements Component, Focusable {
 		const index = TABS.indexOf(this.tab);
 		this.tab = TABS[(index + offset + TABS.length) % TABS.length] ?? "overview";
 		this.selected = 0;
+		this.monitorScroll = 0;
 	}
 }
 
@@ -358,6 +592,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 	const promptWarnings = new Set<"skills" | "contexts">();
 	let snapshot: ManagerSnapshot = {
 		ready: false,
+		customPromptActive: false,
 		contextsKnown: false,
 		extensionsKnown: false,
 		tools: [],
@@ -493,6 +728,8 @@ export default function piConfigManager(pi: ExtensionAPI) {
 				.map((tool) => ({
 					name: tool.name,
 					description: tool.description,
+					parameters: tool.parameters,
+					promptGuidelines: tool.promptGuidelines,
 					sourceInfo: tool.sourceInfo,
 				}))
 				.sort((a, b) => a.name.localeCompare(b.name)),
@@ -506,6 +743,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 				name: skill.name,
 				description: skill.description ?? "No description",
 				path: skill.path ?? skill.filePath ?? "Path unavailable",
+				disableModelInvocation: skill.disableModelInvocation === true,
 			}))
 			.sort((a, b) => a.name.localeCompare(b.name));
 		const contexts: ContextRecord[] = (options.contextFiles ?? []).map(
@@ -514,6 +752,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 		snapshot = {
 			...snapshot,
 			ready: true,
+			customPromptActive: Boolean(options.customPrompt),
 			skills,
 			enabledSkills: resolveEnabledSkills(skills),
 			contextsKnown: true,
@@ -540,14 +779,22 @@ export default function piConfigManager(pi: ExtensionAPI) {
 	}
 
 	function refreshSkillsFromCommands(): void {
+		const existingSkills = new Map(
+			snapshot.skills.map((skill) => [skill.name, skill]),
+		);
 		const skills = pi
 			.getCommands()
 			.filter((command) => command.source === "skill")
-			.map((command) => ({
-				name: command.name.replace(/^skill:/, ""),
-				description: command.description ?? "No description",
-				path: command.sourceInfo.path,
-			}))
+			.map((command) => {
+				const name = command.name.replace(/^skill:/, "");
+				return {
+					name,
+					description: command.description ?? "No description",
+					path: command.sourceInfo.path,
+					disableModelInvocation:
+						existingSkills.get(name)?.disableModelInvocation,
+				};
+			})
 			.sort((a, b) => a.name.localeCompare(b.name));
 		snapshot = {
 			...snapshot,
@@ -722,6 +969,16 @@ export default function piConfigManager(pi: ExtensionAPI) {
 					},
 					done,
 				),
+			{
+				overlay: true,
+				overlayOptions: {
+					anchor: "center",
+					width: "92%",
+					minWidth: 72,
+					maxHeight: "90%",
+					margin: 1,
+				},
+			},
 		);
 		if (action !== "save" || staged.size === 0) return;
 		const confirmed = await ctx.ui.confirm(
@@ -975,6 +1232,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 		snapshot = {
 			...snapshot,
 			ready: false,
+			customPromptActive: false,
 			contextsKnown: false,
 			extensionsKnown: false,
 			skills: [],

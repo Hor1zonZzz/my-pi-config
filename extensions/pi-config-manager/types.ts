@@ -31,6 +31,8 @@ export interface SessionResourceState {
 export interface ToolRecord {
 	name: string;
 	description: string;
+	parameters: unknown;
+	promptGuidelines?: string[];
 	sourceInfo?: SourceInfo;
 }
 
@@ -38,6 +40,7 @@ export interface SkillRecord {
 	name: string;
 	description: string;
 	path: string;
+	disableModelInvocation?: boolean;
 }
 
 export interface ContextRecord {
@@ -53,6 +56,7 @@ export interface RuntimeLayer {
 
 export interface ManagerSnapshot {
 	ready: boolean;
+	customPromptActive: boolean;
 	contextsKnown: boolean;
 	extensionsKnown: boolean;
 	tools: ToolRecord[];

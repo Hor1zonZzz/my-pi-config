@@ -33,11 +33,7 @@ function isRunningInHerdr(): boolean {
 
 export default function (pi: HerdrCheckAPI) {
 	pi.on("session_start", async (event, ctx) => {
-		if (
-			event.reason !== "startup" ||
-			!isRunningInHerdr() ||
-			!ctx.hasUI
-		) {
+		if (event.reason !== "startup" || !isRunningInHerdr() || !ctx.hasUI) {
 			return;
 		}
 

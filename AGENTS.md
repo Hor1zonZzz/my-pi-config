@@ -25,6 +25,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
   - `plan-mode/` — implements read-only planning, plan extraction, and execution progress tracking; tool restrictions are submitted as a transient Pi Config Manager layer.
   - `questionnaire.ts` — registers the TUI-only `questionnaire` tool for one or more interactive questions.
   - `notify.ts` — emits a terminal notification after an agent run ends.
+  - `herdr-integration-check.ts` — checks `herdr integration status` on initial TUI startup inside Herdr and warns only when the Pi integration is missing or outdated.
   - `subagent/` — registers the `subagent` tool, launches isolated Pi subprocesses, schedules blocking/background work, persists task results under the parent cwd, and injects background completions.
     - `agents/` — user-level subagent definitions. The local versions select OpenAI Codex models.
     - `prompts/` — slash-command workflow templates that compose the subagents.
@@ -40,6 +41,7 @@ Some files must be maintained together:
 - Model identifiers appear in `settings.json`, `presets.json`, `extensions/subagent/agents/*.md`, and `model-overrides.json`. When models are renamed or removed, inspect all four locations.
 - `extensions/plan-mode/index.ts` and `extensions/plan-mode/utils.ts` must agree on state, plan markers, and the bash safety policy. If a question tool is renamed, update `PLAN_MODE_TOOLS` and the injected instructions.
 - `extensions/codex-fast-toggle/index.ts`, `extensions/codex-fast-toggle/README.md`, and `codex-fast.json` define the Fast-mode behavior and state contract together.
+- `extensions/herdr-integration-check.ts` is repository-managed, while `herdr-agent-state.ts` is installed and overwritten by Herdr. The checker may inspect Herdr CLI status but must not vendor, modify, install, or update the Herdr-managed integration.
 
 ## Upstream-Derived Code
 

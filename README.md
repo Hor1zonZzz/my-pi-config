@@ -24,6 +24,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `plan-mode/` — read-only planning mode integrated through the config manager's transient tool-policy layer
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
+- `herdr-integration-check.ts` — silently checks Herdr's Pi integration at startup when Pi is running inside Herdr, warning only when the integration is missing or outdated
 - `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models with blocking/background execution, session task state, persisted results, cancellation, and a below-editor TUI task viewer
 - `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier while keeping the provider identity as `openai-codex`
 
@@ -43,10 +44,12 @@ replacing managed files. It merges `model-overrides.json` into the target
 settings. It also refreshes the Herdr skill from upstream `master`, installs it
 to `~/.pi/agent/skills/herdr/`, and installs the manager-owned
 `preset-settings` skill to `~/.pi/agent/skills/preset-settings/`; an existing
-Herdr cache is used when the remote is temporarily unavailable. Existing
-`subagent-settings.json` and `resource-settings.json` state is
-preserved; on first migration, the installer imports disabled Skills from the
-legacy `skill-settings.json`. Restart Pi or run:
+Herdr cache is used when the remote is temporarily unavailable. When Pi starts
+inside Herdr, the local integration checker warns if Herdr's Pi integration is
+missing or outdated; it never installs or updates the Herdr-managed integration
+automatically. Existing `subagent-settings.json` and `resource-settings.json`
+state is preserved; on first migration, the installer imports disabled Skills
+from the legacy `skill-settings.json`. Restart Pi or run:
 
 ```text
 /reload

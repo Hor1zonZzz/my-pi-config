@@ -24,6 +24,17 @@ Upstream project: <https://github.com/2h2d-co/pi-openai-codex-fast>
 
 License and upstream README are retained in `extensions/codex-fast-toggle/`.
 
+## OpenAI Codex Code Mode
+
+`extensions/code-mode/` is an independent Pi implementation whose cell API,
+parent/child tool-callback architecture, and explicit image-forwarding behavior
+were informed by OpenAI Codex Code Mode. No Codex source file is copied into the
+extension.
+
+Upstream project: <https://github.com/openai/codex>
+
+License: see `licenses/codex-LICENSE`.
+
 ## Herdr skill
 
 `install.sh` downloads the Herdr `SKILL.md` from the upstream repository at

@@ -47,6 +47,7 @@ export interface ContextRecord {
 
 export interface RuntimeLayer {
 	id: string;
+	priority: number;
 	disableTools: string[];
 	requireTools: string[];
 }

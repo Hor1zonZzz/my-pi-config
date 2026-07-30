@@ -352,6 +352,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 	let externalTools = new Set<string>();
 	let lastAppliedTools = new Set<string>();
 	let hasAppliedTools = false;
+	let sessionInitialized = false;
 	const runtimeLayers = new Map<string, RuntimeLayer>();
 	let settleTimer: ReturnType<typeof setTimeout> | undefined;
 	let requestHudRender: (() => void) | undefined;
@@ -430,7 +431,10 @@ export default function piConfigManager(pi: ExtensionAPI) {
 		let effective = resolveBaseTools();
 		for (const name of externalTools)
 			if (discovered.has(name)) effective.add(name);
-		for (const layer of runtimeLayers.values()) {
+		const orderedLayers = Array.from(runtimeLayers.values()).sort(
+			(a, b) => a.priority - b.priority || a.id.localeCompare(b.id),
+		);
+		for (const layer of orderedLayers) {
 			for (const name of layer.disableTools) effective.delete(name);
 			for (const name of layer.requireTools)
 				if (discovered.has(name)) effective.add(name);
@@ -571,7 +575,15 @@ export default function piConfigManager(pi: ExtensionAPI) {
 	function publicSnapshot() {
 		return {
 			ready: snapshot.ready,
+			sessionReady: sessionInitialized,
 			baseTools: Array.from(resolveBaseTools()),
+			toolNames: snapshot.tools.map((tool) => tool.name),
+			runtimeLayers: Array.from(runtimeLayers.values()).map((layer) => ({
+				id: layer.id,
+				priority: layer.priority,
+				disableTools: [...layer.disableTools],
+				requireTools: [...layer.requireTools],
+			})),
 			tools: {
 				active: snapshot.activeTools.size,
 				total: snapshot.tools.length,
@@ -874,18 +886,23 @@ export default function piConfigManager(pi: ExtensionAPI) {
 	pi.events.on("config-manager:layer-set", (event) => {
 		const data = event as Partial<RuntimeLayer>;
 		if (typeof data.id !== "string") return;
+		let priority = 0;
+		if (typeof data.priority === "number" && Number.isFinite(data.priority)) {
+			priority = data.priority;
+		}
 		runtimeLayers.set(data.id, {
 			id: data.id,
+			priority,
 			disableTools: unique(data.disableTools ?? []),
 			requireTools: unique(data.requireTools ?? []),
 		});
-		reconcileTools();
+		if (sessionInitialized) reconcileTools();
 	});
 	pi.events.on("config-manager:layer-clear", (event) => {
 		const id = (event as { id?: unknown }).id;
 		if (typeof id !== "string") return;
 		runtimeLayers.delete(id);
-		reconcileTools();
+		if (sessionInitialized) reconcileTools();
 	});
 	pi.events.on("config-manager:request-snapshot", () => {
 		pi.events.emit("config-manager:state-changed", publicSnapshot());
@@ -966,6 +983,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		promptWarnings.clear();
 		defaultTools = new Set(pi.getActiveTools());
+		sessionInitialized = true;
 		externalTools = new Set();
 		lastAppliedTools = new Set();
 		hasAppliedTools = false;
@@ -998,6 +1016,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 		requestHudRender?.();
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
+		sessionInitialized = false;
 		if (settleTimer) clearTimeout(settleTimer);
 		settleTimer = undefined;
 		ctx.ui.setWidget("pi-config-manager", undefined);

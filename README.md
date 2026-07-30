@@ -7,6 +7,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `settings.json` — model defaults and installable Pi packages
 - `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
 - `codex-fast.json` — global state for the local Codex priority toggle
+- `code-mode.json` — initial global state for the Code Mode toggle
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files
 - `subagent-settings.json` — global child-process concurrency and queue limits for blocking/background subagent tasks
 - `model-overrides.json` — managed, credential-free overrides for built-in models
@@ -26,6 +27,7 @@ My public, reproducible configuration for [Pi Coding Agent](https://github.com/e
 - `notify.ts` — terminal notification when an agent turn ends
 - `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models with blocking/background execution, session task state, persisted results, cancellation, and a below-editor TUI task viewer
 - `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier while keeping the provider identity as `openai-codex`
+- `code-mode/` — `/code-mode on|off|status` switches between normal Pi tools and a Code-Mode-Only JavaScript orchestrator for Pi's built-in tools
 
 ## Install
 
@@ -46,7 +48,8 @@ to `~/.pi/agent/skills/herdr/`, and installs the manager-owned
 Herdr cache is used when the remote is temporarily unavailable. Existing
 `subagent-settings.json` and `resource-settings.json` state is
 preserved; on first migration, the installer imports disabled Skills from the
-legacy `skill-settings.json`. Restart Pi or run:
+legacy `skill-settings.json`. Existing global `code-mode.json` state is also
+preserved. Restart Pi or run:
 
 ```text
 /reload
@@ -66,6 +69,7 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 /sidebar
 /plan
 /fast
+/code-mode on|off|status
 /subagents
 /explore-and-gather
 /implement <task>
@@ -88,8 +92,14 @@ Manager hides disabled Skills and Context Files from the model prompt and blocks
 disabled `/skill:<name>` expansion; it intentionally does not block direct
 `read` access to known paths.
 
+Code Mode executes generated JavaScript in a permission-restricted Node child
+process, but `node:vm` is not a strict security sandbox. Its nested built-in
+tools still run in the parent Pi process with normal filesystem and shell
+permissions. See `extensions/code-mode/README.md` for limits and the Pi 0.82.1
+tool-lifecycle restriction.
+
 ## Attribution and licenses
 
 Several extensions and the subagent workflow are adapted from Pi's official examples. Pi's license is included at `licenses/pi-LICENSE`.
 
-`codex-fast-toggle` derives its streaming approach from `pi-openai-codex-fast`; its upstream MIT license and README are included in that directory. See `THIRD_PARTY_NOTICES.md`.
+`codex-fast-toggle` derives its streaming approach from `pi-openai-codex-fast`; its upstream MIT license and README are included in that directory. Code Mode's architecture was informed by OpenAI Codex Code Mode; the Apache 2.0 license is retained at `licenses/codex-LICENSE`. See `THIRD_PARTY_NOTICES.md`.

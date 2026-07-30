@@ -77,7 +77,7 @@ install_preset_settings_skill() {
 
 sync_herdr_skill
 
-for path in settings.json presets.json resource-settings.json subagent-settings.json skill-settings.json models.json codex-fast.json extensions agents prompts skills; do
+for path in settings.json presets.json resource-settings.json subagent-settings.json skill-settings.json models.json codex-fast.json code-mode.json extensions agents prompts skills; do
 	backup_path "$path"
 done
 
@@ -193,6 +193,9 @@ if (!fs.existsSync(targetPath)) {
 }
 NODE
 cp "$ROOT_DIR/codex-fast.json" "$AGENT_DIR/codex-fast.json"
+if [[ ! -f "$AGENT_DIR/code-mode.json" ]]; then
+	cp "$ROOT_DIR/code-mode.json" "$AGENT_DIR/code-mode.json"
+fi
 cp -R "$ROOT_DIR/extensions/." "$AGENT_DIR/extensions/"
 cp -R "$SUBAGENT_DIR/agents/." "$AGENT_DIR/agents/"
 cp -R "$SUBAGENT_DIR/prompts/." "$AGENT_DIR/prompts/"

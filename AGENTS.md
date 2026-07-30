@@ -13,6 +13,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files.
 - `subagent-settings.json` — global child-process concurrency and queue limits for blocking/background subagent tasks.
 - `codex-fast.json` — initial persisted state for the Codex priority-service toggle.
+- `code-mode.json` — initial global persisted state for the Code Mode toggle.
 - `model-overrides.json` — credential-free overrides merged into the local `models.json`.
 - `install.sh` — backs up the current user configuration, refreshes the Herdr
   skill cache, and copies managed files and the manager-owned `preset-settings`
@@ -29,6 +30,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
     - `agents/` — user-level subagent definitions. The local versions select OpenAI Codex models.
     - `prompts/` — slash-command workflow templates that compose the subagents.
   - `codex-fast-toggle/` — implements `/fast on|off` and modifies Codex request payloads to select the priority service tier.
+  - `code-mode/` — implements `/code-mode on|off|status`, Code-Mode-Only tool policy, a permission-restricted Node child runtime, and a parent-side broker for Pi's built-in tools.
 - `licenses/`, `LICENSE`, and `THIRD_PARTY_NOTICES.md` — project and upstream licensing information.
 
 ## Important Relationships
@@ -40,6 +42,7 @@ Some files must be maintained together:
 - Model identifiers appear in `settings.json`, `presets.json`, `extensions/subagent/agents/*.md`, and `model-overrides.json`. When models are renamed or removed, inspect all four locations.
 - `extensions/plan-mode/index.ts` and `extensions/plan-mode/utils.ts` must agree on state, plan markers, and the bash safety policy. If a question tool is renamed, update `PLAN_MODE_TOOLS` and the injected instructions.
 - `extensions/codex-fast-toggle/index.ts`, `extensions/codex-fast-toggle/README.md`, and `codex-fast.json` define the Fast-mode behavior and state contract together.
+- `extensions/code-mode/`, `extensions/pi-config-manager/`, `extensions/plan-mode/`, and `code-mode.json` define Code Mode's global activation, Code-Mode-Only layer, nested built-in policy, and Plan Mode safeguards together.
 
 ## Upstream-Derived Code
 
@@ -88,6 +91,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - `pi-config-manager` depends on Pi's public `SettingsManager`, `DefaultPackageManager`, resolved resource metadata, dynamic tool APIs, and system-prompt resource snapshots. Pi owns discovery; the manager owns only enablement policy.
 - `plan-mode` depends on tool names, lifecycle event ordering, session entries, the config-manager transient-layer contract, and its bash allowlist. Treat the allowlist as a convenience guard, not a security boundary.
 - `preset` depends on model registry lookup, thinking-level values, the config-manager profile contract, and session entry restoration.
+- `code-mode` depends on Node's permission flags and `node:vm`, Pi's public built-in tool-definition factories, JSONL child-process behavior, Pi Config Manager policy snapshots, and Plan Mode state publication. Its direct nested calls cannot participate in unknown third-party `tool_call`/`tool_result` hooks until Pi exposes a public routed tool-execution API.
 
 ## Editing Guidelines
 
@@ -112,9 +116,12 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - It removes obsolete `extensions/question.ts`, `extensions/tools.ts`, `extensions/skills-manager/`, and `extensions/sidebar-tui/`, then copies the current settings, presets, Fast state, extensions, the subagent-owned agents and prompts, the refreshed Herdr skill, and the manager-owned `preset-settings` skill.
 - It preserves an existing target `resource-settings.json`; when absent, it migrates the disabled Skills list from legacy `skill-settings.json` before falling back to repository defaults.
 - It preserves an existing target `subagent-settings.json`; when absent, it installs the repository defaults.
+- It preserves an existing target `code-mode.json`; when absent, it installs the repository default.
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
 
 `codex-fast.json` is both a repository default and mutable runtime state. Installing the repository seeds/replaces the target value; the extension later updates the target file atomically.
+
+`code-mode.json` is also a repository default and mutable runtime state. The installer seeds it only when absent, and the extension later updates the target file atomically.
 
 Never commit credentials or machine-local Pi state. In particular, keep `auth.json`, `models.json`, `mcp.json`, `trust.json`, sessions, caches, logs, backups, package installation directories, and environment files out of version control. Check `.gitignore` before adding any file copied from `~/.pi/agent`.
 
@@ -126,7 +133,7 @@ Basic repository checks:
 
 ```bash
 bash -n install.sh
-node -e 'for (const f of ["settings.json", "presets.json", "resource-settings.json", "subagent-settings.json", "model-overrides.json", "codex-fast.json"]) JSON.parse(require("node:fs").readFileSync(f, "utf8"))'
+node -e 'for (const f of ["settings.json", "presets.json", "resource-settings.json", "subagent-settings.json", "model-overrides.json", "codex-fast.json", "code-mode.json"]) JSON.parse(require("node:fs").readFileSync(f, "utf8"))'
 git diff --check
 ```
 
@@ -156,6 +163,7 @@ Perform applicable interactive checks:
 - `/plan` blocks writes, preserves unrelated tools through a transient manager layer, extracts a plan, and removes the layer before execution.
 - `questionnaire` handles single, multiple, custom-text, cancellation, narrow-terminal, and non-TUI cases.
 - `/fast on|off` persists state, appears only for `openai-codex`, updates status, and changes only the intended outgoing request field.
+- `/code-mode on|off|status` persists global state, switches only through the config-manager layer, restores normal tools on startup failure, brokers enabled built-ins, preserves Plan Mode restrictions, enforces runtime limits, and forwards only explicitly selected images.
 - `subagent` accepts explicit task-management actions while preserving action-less blocking calls and empty-call Agent discovery; handles blocking/background single, parallel, and chained calls; enforces shared process/queue limits; writes complete task files; injects bounded background follow-ups; blocks tree navigation while active; and handles cancellation, failures, and project-agent confirmation.
 - terminal notifications do not corrupt terminal output on supported terminals.
 

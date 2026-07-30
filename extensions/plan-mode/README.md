@@ -5,7 +5,7 @@ Read-only exploration mode for safe code analysis.
 ## Features
 
 - **Built-in write tools disabled**: Uses Pi Config Manager's transient policy layer to disable edit/write while preserving other active tools
-- **Bash allowlist**: Only read-only bash commands are allowed
+- **Bash allowlist**: Only read-only bash commands are allowed, including built-in bash calls brokered through Code Mode
 - **Plan extraction**: Extracts numbered steps from `Plan:` sections
 - **Progress tracking**: Widget shows completion status during execution
 - **[DONE:n] markers**: Explicit step completion tracking
@@ -23,7 +23,7 @@ Read-only exploration mode for safe code analysis.
 2. Ask the agent to analyze code and create a plan
 3. The agent should output a numbered plan under a `Plan:` header:
 
-```
+```text
 Plan:
 1. First step description
 2. Second step description
@@ -40,7 +40,7 @@ Plan:
 
 - Built-in edit/write tools disabled
 - Other active tools remain available
-- Bash commands filtered through allowlist
+- Bash commands filtered through the same allowlist for ordinary and Code Mode nested calls
 - Agent creates a plan without making changes
 
 ### Execution Mode

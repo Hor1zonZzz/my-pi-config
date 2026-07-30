@@ -100,10 +100,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			disableTools: PLAN_MODE_DISABLED_TOOLS,
 			requireTools: PLAN_MODE_TOOLS,
 		});
+		pi.events.emit("plan-mode:state-changed", { enabled: true });
 	}
 
 	function restoreNormalModeTools(): void {
 		pi.events.emit("config-manager:layer-clear", { id: "plan-mode" });
+		pi.events.emit("plan-mode:state-changed", { enabled: false });
 	}
 
 	function persistState(): void {

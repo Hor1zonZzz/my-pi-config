@@ -1,6 +1,6 @@
 # Pi Config Manager
 
-A unified resource-policy extension for Pi 0.82.0.
+A unified resource-policy extension for Pi 0.82.1.
 
 Pi remains responsible for discovering, resolving, loading, deduplicating, and
 assigning provenance to tools, skills, context files, extensions, and packages.
@@ -48,9 +48,18 @@ Policy precedence is:
 runtime constraint > session override > preset > project/global default > Pi default
 ```
 
-Plan Mode contributes a runtime constraint layer instead of calling
-`setActiveTools()` itself. Pi Config Manager is the only local extension that
-writes the effective active tool set.
+Plan Mode and Code Mode contribute runtime constraint layers instead of calling
+`setActiveTools()` themselves. Pi Config Manager is the only local extension
+that writes the effective active tool set.
+
+Runtime layers are applied by ascending numeric priority and then layer id;
+Code Mode uses a higher priority than the default Plan Mode layer so its
+Code-Mode-Only visibility remains exclusive.
+
+The `config-manager:state-changed` snapshot includes session readiness, base
+tool names, discovered tool names, and cloned runtime layers. Code Mode uses
+that policy view to broker only built-in tools that would remain eligible behind
+its own visibility layer.
 
 ## Bundled Skill
 

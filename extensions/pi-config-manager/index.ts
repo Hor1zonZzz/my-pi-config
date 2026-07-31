@@ -63,6 +63,7 @@ interface MonitorPayload {
 	status: string;
 	statusColor: "success" | "warning" | "dim";
 	content: string;
+	highlight?: string;
 	note?: string;
 }
 
@@ -107,6 +108,37 @@ function padToWidth(text: string, width: number): string {
 	return `${fitted}${" ".repeat(Math.max(0, width - visibleWidth(fitted)))}`;
 }
 
+function showCapturedSystemPrompt(
+	snapshot: ManagerSnapshot,
+	monitor: MonitorPayload,
+	showFullPrompt: boolean,
+): MonitorPayload {
+	const captured = snapshot.effectiveSystemPrompt;
+	if (!showFullPrompt || !captured) return monitor;
+	const isAgentPrompt = captured.source === "agent-start";
+	return {
+		...monitor,
+		title: `${isAgentPrompt ? "Effective Prompt" : "Prompt Preview"} · ${monitor.title}`,
+		channel: isAgentPrompt
+			? "effective Pi system prompt"
+			: "current Pi system prompt preview",
+		status: isAgentPrompt
+			? "captured after the latest agent start"
+			: "captured before an agent run",
+		statusColor: "success",
+		content: captured.content,
+		note: [
+			monitor.status,
+			isAgentPrompt
+				? "This cached prompt reflects the latest agent run; current policy changes appear after the next run."
+				: "This preview has not passed through this turn's before_agent_start handlers.",
+			monitor.note,
+		]
+			.filter(Boolean)
+			.join(" "),
+	};
+}
+
 function renderPane(
 	title: string,
 	content: string[],
@@ -139,6 +171,8 @@ class ConfigManagerView implements Component, Focusable {
 	private tab: ResourceTab;
 	private selected = 0;
 	private monitorScroll = 0;
+	private monitorItemId?: string;
+	private monitorContent?: string;
 	private activePane: "resources" | "monitor" = "resources";
 	private _focused = false;
 
@@ -362,6 +396,10 @@ class ConfigManagerView implements Component, Focusable {
 
 		const safeWidth = Math.max(1, width);
 		const rows: string[] = [];
+		const hasHighlight =
+			!item.monitor.highlight ||
+			item.monitor.content.includes(item.monitor.highlight);
+		let highlightedRow = -1;
 		const addWrapped = (line: string) => {
 			rows.push(...wrapTextWithAnsi(line, safeWidth));
 		};
@@ -378,14 +416,43 @@ class ConfigManagerView implements Component, Focusable {
 		if (item.monitor.note) {
 			addWrapped(this.theme.fg("warning", ` note: ${item.monitor.note}`));
 		}
+		if (!hasHighlight) {
+			addWrapped(
+				this.theme.fg(
+					"warning",
+					" selected resource was not found in this captured system prompt",
+				),
+			);
+		}
 		rows.push("");
 		for (const rawLine of item.monitor.content.split("\n")) {
-			const styled = rawLine ? this.theme.fg("accent", ` ${rawLine}`) : "";
+			const highlighted = Boolean(
+				rawLine &&
+					item.monitor.highlight &&
+					rawLine.includes(item.monitor.highlight),
+			);
+			if (highlighted && highlightedRow < 0) highlightedRow = rows.length;
+			const styled = rawLine
+				? highlighted
+					? this.theme.bg("selectedBg", this.theme.fg("text", ` ${rawLine}`))
+					: this.theme.fg("accent", ` ${rawLine}`)
+				: "";
 			addWrapped(styled);
 		}
 
 		const viewportHeight = Math.max(1, height - (rows.length > height ? 1 : 0));
 		const maxScroll = Math.max(0, rows.length - viewportHeight);
+		if (
+			this.monitorItemId !== item.id ||
+			this.monitorContent !== item.monitor.content
+		) {
+			this.monitorItemId = item.id;
+			this.monitorContent = item.monitor.content;
+			this.monitorScroll = Math.max(
+				0,
+				highlightedRow - Math.floor(viewportHeight / 2),
+			);
+		}
 		this.monitorScroll = Math.min(this.monitorScroll, maxScroll);
 		const visible = rows.slice(
 			this.monitorScroll,
@@ -451,41 +518,53 @@ class ConfigManagerView implements Component, Focusable {
 					enabled: active,
 					state: active ? "active" : "inactive",
 					detail: sourceDetail(tool.sourceInfo),
-					monitor: {
-						title: `Tool · ${tool.name}`,
-						channel: "provider tools payload",
-						status: active
-							? "active · definition expected on the next provider request"
-							: "inactive · definition excluded by current policy",
-						statusColor: active ? "success" : "dim",
-						note:
-							snapshot.customPromptActive &&
-							(tool.promptSnippet || tool.promptGuidelines?.length)
-								? "A custom system prompt is active, so Pi omits this tool's prompt snippet and guidelines."
-								: undefined,
-						content: [
-							"Pi tool definition (provider serialization may vary):",
-							stringifyJson({
-								name: tool.name,
-								description: tool.description,
-								parameters: tool.parameters,
-							}),
-							...(tool.promptSnippet && systemPromptVisible
-								? [
-										"",
-										"System prompt Available tools entry:",
-										`- ${tool.name}: ${tool.promptSnippet}`,
-									]
-								: []),
-							...(tool.promptGuidelines?.length && systemPromptVisible
-								? [
-										"",
-										"System prompt guidelines:",
-										...tool.promptGuidelines.map((line) => `- ${line}`),
-									]
-								: []),
-						].join("\n"),
-					},
+					monitor: showCapturedSystemPrompt(
+						snapshot,
+						{
+							title: `Tool · ${tool.name}`,
+							channel: "provider tools payload",
+							status: active
+								? "active · definition expected on the next provider request"
+								: "inactive · definition excluded by current policy",
+							statusColor: active ? "success" : "dim",
+							note:
+								snapshot.customPromptActive &&
+								(tool.promptSnippet || tool.promptGuidelines?.length)
+									? "A custom system prompt is active, so Pi omits this tool's prompt snippet and guidelines."
+									: undefined,
+							content: [
+								"Pi tool definition (provider serialization may vary):",
+								stringifyJson({
+									name: tool.name,
+									description: tool.description,
+									parameters: tool.parameters,
+								}),
+								...(tool.promptSnippet
+									? [
+											"",
+											systemPromptVisible
+												? "System prompt Available tools entry:"
+												: "Prompt snippet:",
+											`- ${tool.name}: ${tool.promptSnippet}`,
+										]
+									: []),
+								...(tool.promptGuidelines?.length
+									? [
+											"",
+											systemPromptVisible
+												? "System prompt guidelines:"
+												: "Prompt guidelines:",
+											...tool.promptGuidelines.map((line) => `- ${line}`),
+										]
+									: []),
+							].join("\n"),
+							highlight:
+								systemPromptVisible && tool.promptSnippet
+									? `- ${tool.name}: ${tool.promptSnippet}`
+									: undefined,
+						},
+						active,
+					),
 				};
 			});
 		if (this.tab === "skills")
@@ -507,21 +586,26 @@ class ConfigManagerView implements Component, Focusable {
 					enabled,
 					state: enabled ? "enabled" : "disabled",
 					detail: skill.path,
-					monitor: {
-						title: `Skill · ${skill.name}`,
-						channel: "system prompt skill catalog",
-						status,
-						statusColor: catalogVisible ? "success" : "warning",
-						note: "This previews Pi's base prompt; later extension prompt rewrites can still differ.",
-						content: formatSkillsForPrompt([
-							{
-								name: skill.name,
-								description: skill.description,
-								filePath: skill.path,
-								disableModelInvocation: false,
-							},
-						]).trim(),
-					},
+					monitor: showCapturedSystemPrompt(
+						snapshot,
+						{
+							title: `Skill · ${skill.name}`,
+							channel: "system prompt skill catalog",
+							status,
+							statusColor: catalogVisible ? "success" : "warning",
+							note: "This previews Pi's base prompt; later extension prompt rewrites can still differ.",
+							content: formatSkillsForPrompt([
+								{
+									name: skill.name,
+									description: skill.description,
+									filePath: skill.path,
+									disableModelInvocation: false,
+								},
+							]).trim(),
+							highlight: skill.name,
+						},
+						catalogVisible,
+					),
 				};
 			});
 		if (this.tab === "contexts")
@@ -533,16 +617,21 @@ class ConfigManagerView implements Component, Focusable {
 					enabled,
 					state: enabled ? "enabled" : "disabled",
 					detail: context.path,
-					monitor: {
-						title: `Context · ${basename(context.path)}`,
-						channel: "system prompt project_context section",
-						status: enabled
-							? "enabled · expected in the next base system prompt"
-							: "disabled by current policy",
-						statusColor: enabled ? "success" : "warning",
-						note: "This previews Pi's base prompt; later extension prompt rewrites can still differ.",
-						content: formatContextSection([context]).trim(),
-					},
+					monitor: showCapturedSystemPrompt(
+						snapshot,
+						{
+							title: `Context · ${basename(context.path)}`,
+							channel: "system prompt project_context section",
+							status: enabled
+								? "enabled · expected in the next base system prompt"
+								: "disabled by current policy",
+							statusColor: enabled ? "success" : "warning",
+							note: "This previews Pi's base prompt; later extension prompt rewrites can still differ.",
+							content: formatContextSection([context]).trim(),
+							highlight: `<project_instructions path="${context.path}">`,
+						},
+						enabled,
+					),
 				};
 			});
 		return snapshot.extensions.map((extension) => {
@@ -946,6 +1035,19 @@ export default function piConfigManager(pi: ExtensionAPI) {
 			ctx.ui.notify("Pi Config Manager requires TUI mode", "error");
 			return;
 		}
+		if (!snapshot.effectiveSystemPrompt) {
+			const currentPrompt = ctx.getSystemPrompt();
+			if (currentPrompt) {
+				snapshot = {
+					...snapshot,
+					effectiveSystemPrompt: {
+						content: currentPrompt,
+						capturedAt: Date.now(),
+						source: "command",
+					},
+				};
+			}
+		}
 		updatePromptInventory(ctx.getSystemPromptOptions());
 		updateToolsInventory();
 		await refreshExtensions(ctx);
@@ -1236,6 +1338,18 @@ export default function piConfigManager(pi: ExtensionAPI) {
 		return systemPrompt === event.systemPrompt ? undefined : { systemPrompt };
 	});
 
+	pi.on("agent_start", (_event, ctx) => {
+		snapshot = {
+			...snapshot,
+			effectiveSystemPrompt: {
+				content: ctx.getSystemPrompt(),
+				capturedAt: Date.now(),
+				source: "agent-start",
+			},
+		};
+		requestHudRender?.();
+	});
+
 	pi.on("turn_start", () => {
 		updateToolsInventory();
 	});
@@ -1253,6 +1367,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 			...snapshot,
 			ready: false,
 			customPromptActive: false,
+			effectiveSystemPrompt: undefined,
 			contextsKnown: false,
 			extensionsKnown: false,
 			skills: [],
@@ -1270,6 +1385,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 		updateToolsInventory();
 		snapshot = {
 			...snapshot,
+			effectiveSystemPrompt: undefined,
 			enabledSkills: resolveEnabledSkills(snapshot.skills),
 			enabledContexts: resolveEnabledContexts(snapshot.contexts),
 		};

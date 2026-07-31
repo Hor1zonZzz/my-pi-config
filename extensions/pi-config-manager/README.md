@@ -43,14 +43,17 @@ Contexts previews the selected resource's model-visible contribution:
 - Skills show their entry in Pi's system-prompt skill catalog.
 - Contexts show their complete `project_context` system-prompt block.
 
-The status line reports current manager policy and whether the contribution is
-expected in Pi's next base prompt or provider request. It also calls out cases
-such as an unavailable `read` tool, manual-only Skills, and custom prompts that
-omit tool guidelines. Later extension prompt rewrites can still differ from this
-base preview. Press `Right` to focus the monitor and `Left` to return to the
-resource list; while the monitor is focused, `Up`/`Down` scroll it one row at a
-time. Provider-specific serialization can differ from the Pi tool definition
-shown by this demo.
+Before an agent run, the monitor shows Pi's current system-prompt preview;
+it has not passed through the forthcoming turn's `before_agent_start` handlers.
+After an agent run, it shows the complete effective Pi system prompt captured at
+`agent_start`. Both views highlight the selected active Skill, Context, or Tool
+prompt snippet when it is present. An inactive Tool, disabled Skill, or disabled
+Context instead keeps its individual description/preview visible, because it
+should not appear in the system prompt. The cached prompt is refreshed by the
+next agent run, so policy changes made while the manager is open are not
+reflected until then. Tool descriptions and schemas remain provider-payload data
+rather than system-prompt text. Press `Right` to focus the monitor and `Left` to return to the resource list;
+while the monitor is focused, `Up`/`Down` scroll it one row at a time.
 
 ## Lifecycle
 

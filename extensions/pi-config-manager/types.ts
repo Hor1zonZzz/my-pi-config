@@ -55,6 +55,12 @@ export interface RuntimeLayer {
 	requireTools: string[];
 }
 
+export interface EffectiveSystemPrompt {
+	content: string;
+	capturedAt: number;
+	source: "command" | "agent-start";
+}
+
 export interface ManagerSnapshot {
 	ready: boolean;
 	customPromptActive: boolean;
@@ -62,6 +68,7 @@ export interface ManagerSnapshot {
 	extensionsKnown: boolean;
 	tools: ToolRecord[];
 	toolSnippets: Record<string, string>;
+	effectiveSystemPrompt?: EffectiveSystemPrompt;
 	activeTools: Set<string>;
 	skills: SkillRecord[];
 	enabledSkills: Set<string>;

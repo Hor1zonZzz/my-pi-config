@@ -99,3 +99,11 @@ The first run can import the disabled Skills list from the legacy
 manager can locate Pi's standard prompt sections; a custom prompt that omits or
 rewrites those sections is left unchanged with a warning. This is not a
 file-access security boundary.
+
+## Validation
+
+Run the Config Manager behavior-contract tests against the installed Pi runtime:
+
+```bash
+./tests/pi-config-manager.sh
+```

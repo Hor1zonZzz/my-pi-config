@@ -96,13 +96,6 @@ export function saveGlobalSettings(settings: ResourceSettings): void {
 	writeAtomic(join(getAgentDir(), SETTINGS_FILE), settings);
 }
 
-export function saveProjectSettings(
-	cwd: string,
-	settings: ResourceSettings,
-): void {
-	writeAtomic(join(cwd, CONFIG_DIR_NAME, SETTINGS_FILE), settings);
-}
-
 function writeAtomic(filePath: string, value: unknown): void {
 	mkdirSync(dirname(filePath), { recursive: true });
 	const temporaryPath = `${filePath}.${process.pid}.tmp`;

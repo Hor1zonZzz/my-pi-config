@@ -7,6 +7,7 @@ import {
 	type ExtensionAPI,
 	type ExtensionCommandContext,
 	type ExtensionContext,
+	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
@@ -39,6 +40,7 @@ import {
 	type RuntimeLayer,
 	type SessionResourceState,
 	type SkillRecord,
+	type ToolRecord,
 } from "./types";
 
 const SESSION_ENTRY = "pi-config-manager-state";
@@ -91,7 +93,7 @@ function formatContextSection(files: ContextRecord[]): string {
 	return `${result}</project_context>\n`;
 }
 
-function sourceDetail(sourceInfo: any): string {
+function sourceDetail(sourceInfo: ToolRecord["sourceInfo"]): string {
 	if (!sourceInfo) return "unknown source";
 	return `${sourceInfo.scope ?? "unknown"} · ${sourceInfo.source ?? "unknown"} · ${sourceInfo.path ?? "unknown path"}`;
 }
@@ -145,7 +147,7 @@ function renderPane(
 	content: string[],
 	width: number,
 	height: number,
-	theme: any,
+	theme: Theme,
 	accentBorder = false,
 ): string[] {
 	const safeWidth = Math.max(4, width);
@@ -181,7 +183,7 @@ class ConfigManagerView implements Component, Focusable {
 		initialTab: ResourceTab,
 		private readonly getSnapshot: () => ManagerSnapshot,
 		private readonly stagedExtensions: Map<string, ExtensionChange>,
-		private readonly theme: any,
+		private readonly theme: Theme,
 		private readonly keybindings: KeybindingsManager,
 		private readonly onToggle: (tab: ResourceTab, id: string) => void,
 		private readonly onDone: (action: "close" | "save") => void,
@@ -398,28 +400,29 @@ class ConfigManagerView implements Component, Focusable {
 				);
 		}
 
+		const monitor = item.monitor;
 		const safeWidth = Math.max(1, width);
 		const rows: string[] = [];
-		const highlights = item.monitor.highlights ?? [];
+		const highlights = monitor.highlights ?? [];
 		const hasHighlight =
 			highlights.length === 0 ||
-			highlights.some((highlight) => item.monitor!.content.includes(highlight));
+			highlights.some((highlight) => monitor.content.includes(highlight));
 		let highlightedRow = -1;
 		const addWrapped = (line: string) => {
 			rows.push(...wrapTextWithAnsi(line, safeWidth));
 		};
 		addWrapped(
 			this.theme.fg(
-				item.monitor.statusColor,
-				` ${item.monitor.statusColor === "success" ? "●" : "○"} ${item.monitor.status}`,
+				monitor.statusColor,
+				` ${monitor.statusColor === "success" ? "●" : "○"} ${monitor.status}`,
 			),
 		);
-		addWrapped(this.theme.fg("dim", ` channel: ${item.monitor.channel}`));
+		addWrapped(this.theme.fg("dim", ` channel: ${monitor.channel}`));
 		addWrapped(
 			this.theme.fg("dim", ` source: ${item.detail.replace(/\n/g, " · ")}`),
 		);
-		if (item.monitor.note) {
-			addWrapped(this.theme.fg("warning", ` note: ${item.monitor.note}`));
+		if (monitor.note) {
+			addWrapped(this.theme.fg("warning", ` note: ${monitor.note}`));
 		}
 		if (!hasHighlight) {
 			addWrapped(
@@ -430,7 +433,7 @@ class ConfigManagerView implements Component, Focusable {
 			);
 		}
 		rows.push("");
-		for (const rawLine of item.monitor.content.split("\n")) {
+		for (const rawLine of monitor.content.split("\n")) {
 			const highlighted = Boolean(
 				rawLine && highlights.some((highlight) => rawLine.includes(highlight)),
 			);
@@ -447,10 +450,10 @@ class ConfigManagerView implements Component, Focusable {
 		const maxScroll = Math.max(0, rows.length - viewportHeight);
 		if (
 			this.monitorItemId !== item.id ||
-			this.monitorContent !== item.monitor.content
+			this.monitorContent !== monitor.content
 		) {
 			this.monitorItemId = item.id;
-			this.monitorContent = item.monitor.content;
+			this.monitorContent = monitor.content;
 			this.monitorScroll = Math.max(
 				0,
 				highlightedRow - Math.floor(viewportHeight / 2),
@@ -776,7 +779,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 
 	function reconcileTools(): void {
 		const discovered = discoveredToolNames();
-		let effective = resolveBaseTools();
+		const effective = resolveBaseTools();
 		for (const name of externalTools)
 			if (discovered.has(name)) effective.add(name);
 		for (const layer of runtimeLayers.values()) {
@@ -784,9 +787,6 @@ export default function piConfigManager(pi: ExtensionAPI) {
 			for (const name of layer.requireTools)
 				if (discovered.has(name)) effective.add(name);
 		}
-		effective = new Set(
-			Array.from(effective).filter((name) => discovered.has(name)),
-		);
 		pi.setActiveTools(Array.from(effective));
 		lastAppliedTools = new Set(pi.getActiveTools());
 		hasAppliedTools = true;

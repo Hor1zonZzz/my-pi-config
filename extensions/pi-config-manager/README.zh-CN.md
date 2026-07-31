@@ -60,3 +60,11 @@ Pi 按常规方式从 `~/.pi/agent/skills` 发现已安装的技能；Config Man
 全局默认值存放在 `~/.pi/agent/resource-settings.json`；受信任的项目可以使用 `.pi/resource-settings.json`。会话覆盖项以 `pi-config-manager-state` 条目的形式存储，并跟随会话树分支。
 
 首次运行可以从旧的 `skill-settings.json` 导入被禁用的技能列表。当管理器能定位 Pi 的标准提示词区段时，已禁用的技能与上下文文件会被移除；若自定义提示词省略或改写了这些区段，管理器会发出警告并保持提示词不变。这并不是文件访问层面的安全边界。
+
+## 验证
+
+使用当前安装的 Pi 运行 Config Manager 行为契约测试：
+
+```bash
+./tests/pi-config-manager.sh
+```

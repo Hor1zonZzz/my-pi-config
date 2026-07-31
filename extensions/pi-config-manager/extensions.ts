@@ -31,17 +31,6 @@ function createSettingsManager(cwd: string, trusted: boolean): SettingsManager {
 	});
 }
 
-function createPackageManager(
-	cwd: string,
-	settingsManager: SettingsManager,
-): DefaultPackageManager {
-	return new DefaultPackageManager({
-		cwd,
-		agentDir: getAgentDir(),
-		settingsManager,
-	});
-}
-
 function canonicalBase(resource: ResolvedResource, cwd: string): string {
 	return (
 		resource.metadata.baseDir ??
@@ -102,21 +91,29 @@ function equivalentPatterns(
 	]);
 }
 
+function replaceExtensionOverride(
+	entries: string[],
+	aliases: Set<string>,
+	override: string,
+): string[] {
+	return [
+		...entries.filter(
+			(entry) => !/^[+\-!]/.test(entry) || !aliases.has(stripMarker(entry)),
+		),
+		override,
+	];
+}
+
 function updateTopLevelPaths(
 	paths: string[],
 	change: ExtensionChange,
 	cwd: string,
 ): string[] {
-	const aliases = equivalentPatterns(change.resource, cwd);
-	const updated = paths.filter((entry) => {
-		const isOverride =
-			entry.startsWith("+") || entry.startsWith("-") || entry.startsWith("!");
-		return !isOverride || !aliases.has(stripMarker(entry));
-	});
-	updated.push(
+	return replaceExtensionOverride(
+		paths,
+		equivalentPatterns(change.resource, cwd),
 		`${change.enabled ? "+" : "-"}${extensionPattern(change.resource, cwd)}`,
 	);
-	return updated;
 }
 
 function applyPackageChanges(
@@ -147,15 +144,12 @@ function applyPackageChanges(
 			if (change.enabled)
 				(packageEntry as { extensions?: string[] }).extensions = [pattern];
 		} else {
-			const updated = [...(current ?? [])].filter((entry) => {
-				const isOverride =
-					entry.startsWith("+") ||
-					entry.startsWith("-") ||
-					entry.startsWith("!");
-				return !isOverride || !aliases.has(stripMarker(entry));
-			});
-			updated.push(`${change.enabled ? "+" : "-"}${pattern}`);
-			(packageEntry as { extensions?: string[] }).extensions = updated;
+			(packageEntry as { extensions?: string[] }).extensions =
+				replaceExtensionOverride(
+					current ?? [],
+					aliases,
+					`${change.enabled ? "+" : "-"}${pattern}`,
+				);
 		}
 		updatedPackages[packageIndex] = packageEntry;
 	}
@@ -167,8 +161,11 @@ export async function resolveExtensions(
 	trusted: boolean,
 ): Promise<ResolvedResource[]> {
 	const settingsManager = createSettingsManager(cwd, trusted);
-	const manager = createPackageManager(cwd, settingsManager);
-	const resolved = await manager.resolve();
+	const resolved = await new DefaultPackageManager({
+		cwd,
+		agentDir: getAgentDir(),
+		settingsManager,
+	}).resolve();
 	return resolved.extensions.sort((a, b) => a.path.localeCompare(b.path));
 }
 

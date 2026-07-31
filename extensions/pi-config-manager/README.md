@@ -39,7 +39,7 @@ The manager opens as a centered overlay with a resource list on the left and a
 bordered Context Monitor on the right. Moving through Tools, Skills, and
 Contexts previews the selected resource's model-visible contribution:
 
-- Tools show their description, parameter schema, and active prompt guidelines.
+- Tools show their description, parameter schema, active `promptSnippet`, and active prompt guidelines.
 - Skills show their entry in Pi's system-prompt skill catalog.
 - Contexts show their complete `project_context` system-prompt block.
 

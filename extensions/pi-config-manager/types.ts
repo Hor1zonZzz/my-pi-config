@@ -31,6 +31,7 @@ export interface SessionResourceState {
 export interface ToolRecord {
 	name: string;
 	description: string;
+	promptSnippet?: string;
 	parameters: unknown;
 	promptGuidelines?: string[];
 	sourceInfo?: SourceInfo;
@@ -60,6 +61,7 @@ export interface ManagerSnapshot {
 	contextsKnown: boolean;
 	extensionsKnown: boolean;
 	tools: ToolRecord[];
+	toolSnippets: Record<string, string>;
 	activeTools: Set<string>;
 	skills: SkillRecord[];
 	enabledSkills: Set<string>;

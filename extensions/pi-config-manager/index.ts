@@ -444,7 +444,7 @@ class ConfigManagerView implements Component, Focusable {
 		if (this.tab === "tools")
 			return snapshot.tools.map((tool) => {
 				const active = snapshot.activeTools.has(tool.name);
-				const guidelinesVisible = active && !snapshot.customPromptActive;
+				const systemPromptVisible = active && !snapshot.customPromptActive;
 				return {
 					id: tool.name,
 					label: tool.name,
@@ -459,8 +459,9 @@ class ConfigManagerView implements Component, Focusable {
 							: "inactive · definition excluded by current policy",
 						statusColor: active ? "success" : "dim",
 						note:
-							snapshot.customPromptActive && tool.promptGuidelines?.length
-								? "A custom system prompt is active, so Pi omits this tool's prompt guidelines."
+							snapshot.customPromptActive &&
+							(tool.promptSnippet || tool.promptGuidelines?.length)
+								? "A custom system prompt is active, so Pi omits this tool's prompt snippet and guidelines."
 								: undefined,
 						content: [
 							"Pi tool definition (provider serialization may vary):",
@@ -469,7 +470,14 @@ class ConfigManagerView implements Component, Focusable {
 								description: tool.description,
 								parameters: tool.parameters,
 							}),
-							...(tool.promptGuidelines?.length && guidelinesVisible
+							...(tool.promptSnippet && systemPromptVisible
+								? [
+										"",
+										"System prompt Available tools entry:",
+										`- ${tool.name}: ${tool.promptSnippet}`,
+									]
+								: []),
+							...(tool.promptGuidelines?.length && systemPromptVisible
 								? [
 										"",
 										"System prompt guidelines:",
@@ -596,6 +604,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 		contextsKnown: false,
 		extensionsKnown: false,
 		tools: [],
+		toolSnippets: {},
 		activeTools: new Set(),
 		skills: [],
 		enabledSkills: new Set(),
@@ -728,6 +737,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 				.map((tool) => ({
 					name: tool.name,
 					description: tool.description,
+					promptSnippet: snapshot.toolSnippets[tool.name],
 					parameters: tool.parameters,
 					promptGuidelines: tool.promptGuidelines,
 					sourceInfo: tool.sourceInfo,
@@ -749,10 +759,16 @@ export default function piConfigManager(pi: ExtensionAPI) {
 		const contexts: ContextRecord[] = (options.contextFiles ?? []).map(
 			(file) => ({ path: file.path, content: file.content }),
 		);
+		const toolSnippets = Object.fromEntries(
+			Object.entries(options.toolSnippets ?? {}).filter(
+				([, snippet]) => typeof snippet === "string" && snippet.length > 0,
+			),
+		);
 		snapshot = {
 			...snapshot,
 			ready: true,
 			customPromptActive: Boolean(options.customPrompt),
+			toolSnippets,
 			skills,
 			enabledSkills: resolveEnabledSkills(skills),
 			contextsKnown: true,
@@ -964,7 +980,11 @@ export default function piConfigManager(pi: ExtensionAPI) {
 							}
 							const current = staged.get(id)?.enabled ?? resource.enabled;
 							staged.set(id, { resource, enabled: !current });
-						} else toggleSessionResource(tab, id);
+						} else {
+							toggleSessionResource(tab, id);
+							updatePromptInventory(ctx.getSystemPromptOptions());
+							updateToolsInventory();
+						}
 						tui.requestRender();
 					},
 					done,

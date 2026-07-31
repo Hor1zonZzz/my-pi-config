@@ -7,6 +7,7 @@ HERDR_SKILL_REPO="https://github.com/ogulcancelik/herdr.git"
 HERDR_SKILL_REF="master"
 HERDR_SKILL_CACHE_DIR="$ROOT_DIR/skills/herdr"
 PRESET_SETTINGS_SKILL_DIR="$ROOT_DIR/extensions/pi-config-manager/skills/preset-settings"
+HERDR_PI_REFERENCE_SKILL_DIR="$ROOT_DIR/skills/herdr-pi-reference"
 AGENT_DIR="${PI_CODING_AGENT_DIR:-${PI_AGENT_DIR:-$HOME/.pi/agent}}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$AGENT_DIR/backups/my-pi-config-$TIMESTAMP"
@@ -74,6 +75,15 @@ install_preset_settings_skill() {
 	destination_dir="$AGENT_DIR/skills/preset-settings"
 	staging_dir="$(mktemp -d "$AGENT_DIR/skills/.preset-settings.XXXXXX")"
 	cp "$PRESET_SETTINGS_SKILL_DIR/SKILL.md" "$staging_dir/SKILL.md"
+	rm -rf "$destination_dir"
+	mv "$staging_dir" "$destination_dir"
+}
+
+install_herdr_pi_reference_skill() {
+	local staging_dir destination_dir
+	destination_dir="$AGENT_DIR/skills/herdr-pi-reference"
+	staging_dir="$(mktemp -d "$AGENT_DIR/skills/.herdr-pi-reference.XXXXXX")"
+	cp -R "$HERDR_PI_REFERENCE_SKILL_DIR/." "$staging_dir/"
 	rm -rf "$destination_dir"
 	mv "$staging_dir" "$destination_dir"
 }
@@ -201,6 +211,7 @@ cp -R "$SUBAGENT_DIR/agents/." "$AGENT_DIR/agents/"
 cp -R "$SUBAGENT_DIR/prompts/." "$AGENT_DIR/prompts/"
 install_herdr_skill
 install_preset_settings_skill
+install_herdr_pi_reference_skill
 
 printf 'Installed Pi configuration into %s\n' "$AGENT_DIR"
 printf 'Backup created at %s\n' "$BACKUP_DIR"

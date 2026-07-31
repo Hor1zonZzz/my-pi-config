@@ -17,7 +17,6 @@ resource is enabled.
 /skills          Open Skills
 /contexts        Open Context Files
 /extensions      Open Extensions
-/sidebar         Alias for the overview
 ```
 
 Tools, Skills, and Context toggles are current-session overrides and apply

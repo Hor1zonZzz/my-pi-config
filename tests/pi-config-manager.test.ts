@@ -429,7 +429,6 @@ describe("manager behavior contract", () => {
 				"config-manager",
 				"contexts",
 				"extensions",
-				"sidebar",
 				"skills",
 				"tools",
 			]);

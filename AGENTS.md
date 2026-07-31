@@ -152,7 +152,7 @@ Perform applicable interactive checks:
 
 - Pi starts without extension load errors and `/reload` succeeds.
 - `/preset` applies model, thinking level, tools, instructions, and status correctly.
-- `/config-manager` reflects Pi-resolved resources; `/tools`, `/skills`, `/contexts`, `/extensions`, and `/sidebar` open the corresponding manager views.
+- `/config-manager` reflects Pi-resolved resources; `/tools`, `/skills`, `/contexts`, and `/extensions` open the corresponding manager views.
 - Tool and skill state stays synchronized with the active preset and survives session/tree restoration.
 - Extension changes are staged, saved through Pi settings, and applied only after confirmed reload.
 - `/plan` blocks writes, preserves unrelated tools through a transient manager layer, extracts a plan, and removes the layer before execution.

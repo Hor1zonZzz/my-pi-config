@@ -1205,10 +1205,6 @@ export default function piConfigManager(pi: ExtensionAPI) {
 		description: "Manage Pi tools, skills, contexts, and extensions",
 		handler: async (_args, ctx) => showManager("overview", ctx),
 	});
-	pi.registerCommand("sidebar", {
-		description: "Open Pi resource overview",
-		handler: async (_args, ctx) => showManager("overview", ctx),
-	});
 	registerResourceCommand("tools", "tools", "tools");
 	registerResourceCommand("skills", "skills", "skills");
 	registerResourceCommand("contexts", "contexts", "contexts");

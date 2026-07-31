@@ -26,8 +26,7 @@ English | [中文文档](README.zh-CN.md)
 - `plan-mode/` — read-only planning mode integrated through the installed `pi-config-manager` package's transient tool-policy layer
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
-- `herdr-integration-check.ts` — silently checks Herdr's Pi integration at startup when Pi is running inside Herdr, warning only when the integration is missing or outdated
-- `herdr-background-monitor/` — watches successful official `herdr_agent prompt` calls with explicit `wait: false`, keeps the tool call non-blocking, and injects a session-scoped follow-up when the target pane settles
+- `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
 - `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models with blocking/background execution, session task state, persisted results, cancellation, and a below-editor TUI task viewer
 - `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier while keeping the provider identity as `openai-codex`
 
@@ -45,7 +44,8 @@ The installer creates a timestamped backup under `~/.pi/agent/backups/` before
 replacing managed files. It merges `model-overrides.json` into the target
 `models.json`, preserving all unrelated local providers, credentials, and model
 settings. It also refreshes the Herdr skill from upstream `master`, installs it
-to `~/.pi/agent/skills/herdr/`, and installs the preset-owned
+to `~/.pi/agent/skills/herdr/`, installs the Herdr-owned `herdr-pi-reference`
+skill to `~/.pi/agent/skills/herdr-pi-reference/`, and installs the preset-owned
 `preset-settings` skill to `~/.pi/agent/skills/preset-settings/`; an existing
 Herdr cache is used when the remote is temporarily unavailable. When Pi starts
 inside Herdr, the local integration checker warns if Herdr's Pi integration is

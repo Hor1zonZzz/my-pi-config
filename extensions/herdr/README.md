@@ -1,8 +1,16 @@
-# Herdr Background Monitor
+# Local Herdr Integration
 
-A local companion extension for the official `@ogulcancelik/pi-herdr` package. It does not replace, modify, or import Herdr's package or Herdr-managed Pi state integration.
+Repository-managed Herdr configuration that complements the official `@ogulcancelik/pi-herdr` package. It does not replace, modify, or import Herdr's package or Herdr-managed Pi state integration.
 
-When the active Pi session successfully calls the official `herdr_agent` tool with `action: "prompt"` and explicit `wait: false`, this extension:
+This directory owns:
+
+- `integration-check.ts`, which warns on initial TUI startup when Herdr reports that its Pi integration is missing or outdated;
+- the background-monitor modules, which observe explicit asynchronous official tool calls; and
+- `skills/herdr-pi-reference/`, the source copied by `install.sh` to Pi's top-level skills directory.
+
+## Background monitor
+
+When the active Pi session successfully calls the official `herdr_agent` tool with `action: "prompt"` and explicit `wait: false`, the monitor:
 
 1. lets the official tool return immediately;
 2. tracks the resolved Herdr pane in the background, using Herdr's state-change sequence when available;
@@ -10,7 +18,7 @@ When the active Pi session successfully calls the official `herdr_agent` tool wi
 4. injects one custom `followUp` message into the owning Pi session; and
 5. asks the parent agent to use the official `herdr_agent read` action for the result.
 
-The extension is inactive unless both `HERDR_ENV=1` and `HERDR_PANE_ID` are present. It uses only Pi's public extension APIs and the public `herdr agent get` CLI command. It deliberately does not depend on the implementation of `~/.pi/agent/extensions/herdr-agent-state.ts`, which Herdr owns and may overwrite.
+Background monitoring is inactive unless both `HERDR_ENV=1` and `HERDR_PANE_ID` are present. The integration uses only Pi's public extension APIs and the public Herdr CLI. It deliberately does not depend on the implementation of `~/.pi/agent/extensions/herdr-agent-state.ts`, which Herdr owns and may overwrite.
 
 ## Scope and isolation
 

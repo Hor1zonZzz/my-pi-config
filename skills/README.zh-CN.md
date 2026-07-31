@@ -12,5 +12,5 @@
 
 ## Herdr Pi Reference
 
-`skills/herdr-pi-reference/` 由本仓库维护，并会安装到
+`extensions/herdr/skills/herdr-pi-reference/` 由本仓库维护，并归本地 Herdr 扩展所有；它会安装到
 `~/.pi/agent/skills/herdr-pi-reference/`（或由 `PI_CODING_AGENT_DIR` 指定的目录下）。其中记录本机当前可用的模型和 thinking level。依赖其中的模型信息前，请运行 `pi --list-models` 刷新可用性。

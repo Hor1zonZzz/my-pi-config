@@ -31,7 +31,7 @@ function isRunningInHerdr(): boolean {
 	return runtime.process?.env?.HERDR_ENV === "1";
 }
 
-export default function (pi: HerdrCheckAPI) {
+export default function registerHerdrIntegrationCheck(pi: HerdrCheckAPI) {
 	pi.on("session_start", async (event, ctx) => {
 		if (event.reason !== "startup" || !isRunningInHerdr() || !ctx.hasUI) {
 			return;

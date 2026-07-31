@@ -5,6 +5,7 @@ import {
 	getMarkdownTheme,
 } from "@earendil-works/pi-coding-agent";
 import { Markdown } from "@earendil-works/pi-tui";
+import registerIntegrationCheck from "./integration-check.ts";
 import { HerdrBackgroundTaskManager } from "./task-manager.ts";
 
 const PROMPT_MARKER = "Herdr asynchronous prompt policy:";
@@ -20,6 +21,7 @@ function enabled(): boolean {
 }
 
 export default function (pi: ExtensionAPI) {
+	registerIntegrationCheck(pi);
 	if (!enabled()) return;
 
 	const taskManager = new HerdrBackgroundTaskManager(pi);

@@ -24,8 +24,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
   - `plan-mode/` — implements read-only planning, plan extraction, and execution progress tracking; tool restrictions are submitted as a transient layer to the installed Pi Config Manager package.
   - `questionnaire.ts` — registers the TUI-only `questionnaire` tool for one or more interactive questions.
   - `notify.ts` — emits a terminal notification after an agent run ends.
-  - `herdr-integration-check.ts` — checks `herdr integration status` on initial TUI startup inside Herdr and warns only when the Pi integration is missing or outdated.
-  - `herdr-background-monitor/` — observes successful official `herdr_agent prompt` calls with explicit `wait: false`, monitors the resolved pane through the public Herdr CLI, and injects session-scoped completion follow-ups without modifying Herdr-managed integration files.
+  - `herdr/` — owns the repository-managed Herdr integration checker, the asynchronous official `herdr_agent prompt` monitor, and the source for the installed `herdr-pi-reference` skill. It uses the public Herdr CLI and does not modify Herdr-managed integration files.
   - `subagent/` — registers the `subagent` tool, launches isolated Pi subprocesses, schedules blocking/background work, persists task results under the parent cwd, and injects background completions.
     - `agents/` — user-level subagent definitions. The local versions select OpenAI Codex models.
     - `prompts/` — slash-command workflow templates that compose the subagents.
@@ -41,7 +40,7 @@ Some files must be maintained together:
 - Model identifiers appear in `settings.json`, `presets.json`, `extensions/subagent/agents/*.md`, and `model-overrides.json`. When models are renamed or removed, inspect all four locations.
 - `extensions/plan-mode/index.ts` and `extensions/plan-mode/utils.ts` must agree on state, plan markers, and the bash safety policy. If a question tool is renamed, update `PLAN_MODE_TOOLS` and the injected instructions.
 - `extensions/codex-fast-toggle/index.ts`, `extensions/codex-fast-toggle/README.md`, and `codex-fast.json` define the Fast-mode behavior and state contract together.
-- `extensions/herdr-integration-check.ts` and `extensions/herdr-background-monitor/` are repository-managed, while `herdr-agent-state.ts` is installed and overwritten by Herdr. The local extensions may use documented Herdr CLI behavior but must not vendor, import, modify, install, or update the Herdr-managed integration. The background monitor is session-scoped and must not deliver a completion to a replacement Pi session.
+- `extensions/herdr/` owns `integration-check.ts`, the background-monitor modules, and `skills/herdr-pi-reference/`; `install.sh` must install that skill into the target skills directory and remove the former standalone extension paths. `herdr-agent-state.ts` is installed and overwritten by Herdr. The local extension may use documented Herdr CLI behavior but must not vendor, import, modify, install, or update the Herdr-managed integration. The background monitor is session-scoped and must not deliver a completion to a replacement Pi session.
 
 ## Upstream-Derived Code
 
@@ -86,7 +85,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 
 - `codex-fast-toggle` depends on the `before_provider_request` lifecycle and the provider-specific outgoing payload accepting `service_tier`. Verify the real request shape after provider/runtime changes.
 - `subagent` depends on Pi CLI flags, LF-delimited JSON-mode events, message shapes, executable discovery, subprocess cancellation behavior, session IDs, `agent_settled` follow-up injection, and `session_before_tree`. Blocking and background calls share one FIFO child-process scheduler per parent Pi process.
-- `herdr-background-monitor` depends on the official `herdr_agent` tool-result shape, Herdr's public `agent get` JSON response and lifecycle states, Pi session IDs, cancellable `pi.exec`, and `agent_settled` follow-up delivery. It must remain separate from the Herdr-managed Pi state extension and cannot provide prompt-level attribution when multiple Pi sessions share one target pane.
+- `extensions/herdr/` background monitoring depends on the official `herdr_agent` tool-result shape, Herdr's public `agent get` JSON response and lifecycle states, Pi session IDs, cancellable `pi.exec`, and `agent_settled` follow-up delivery. It must remain separate from the Herdr-managed Pi state extension and cannot provide prompt-level attribution when multiple Pi sessions share one target pane.
 - `questionnaire` and `preset` depend on TUI component, key handling, autocomplete, theming, and invalidation contracts.
 - The external `pi-config-manager` package owns effective tool activation, prompt filtering, extension enablement, resource-state persistence, the unified manager UI, and the resource HUD. Keep its package version and event contract compatible with the local Preset and Plan Mode extensions.
 - `plan-mode` depends on tool names, lifecycle event ordering, session entries, the config-manager transient-layer contract, and its bash allowlist. Treat the allowlist as a convenience guard, not a security boundary.
@@ -161,7 +160,7 @@ Perform applicable interactive checks:
 - `questionnaire` handles single, multiple, custom-text, cancellation, narrow-terminal, and non-TUI cases.
 - `/fast on|off` persists state, appears only for `openai-codex`, updates status, and changes only the intended outgoing request field.
 - `subagent` accepts explicit task-management actions while preserving action-less blocking calls and empty-call Agent discovery; handles blocking/background single, parallel, and chained calls; enforces shared process/queue limits; writes complete task files; injects bounded background follow-ups; blocks tree navigation while active; and handles cancellation, failures, and project-agent confirmation.
-- `herdr-background-monitor` is a no-op outside Herdr; tracks only successful explicit `herdr_agent prompt` calls with `wait: false`; delivers grouped, bounded follow-ups to the owning session after `done`, post-working `idle`, or `blocked`; and cancels cleanly on session replacement, reload, and shutdown.
+- `extensions/herdr/` background monitoring is a no-op outside Herdr; tracks only successful explicit `herdr_agent prompt` calls with `wait: false`; delivers grouped, bounded follow-ups to the owning session after `done`, post-working `idle`, or `blocked`; and cancels cleanly on session replacement, reload, and shutdown.
 - terminal notifications do not corrupt terminal output on supported terminals.
 
 After testing in isolation, install into the live agent directory only when the diff and generated backup location have been reviewed.

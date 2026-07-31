@@ -19,7 +19,8 @@ Review its upstream source and license before installing it.
 
 ## Herdr Pi Reference
 
-`skills/herdr-pi-reference/` is repository-managed and is installed as
+`extensions/herdr/skills/herdr-pi-reference/` is repository-managed and owned
+by the local Herdr extension. It is installed as
 `~/.pi/agent/skills/herdr-pi-reference/` (or beneath the directory set by
 `PI_CODING_AGENT_DIR`). It records the models and thinking levels currently
 available on this Mac. Run

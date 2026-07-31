@@ -55,7 +55,7 @@ published prompt guidelines as inactive metadata. The cached prompt is refreshed
 by the next agent run, so policy changes made while the manager is open are not
 reflected until then. Tool descriptions and schemas remain provider-payload data
 rather than system-prompt text. Press `Right` to focus the monitor and `Left` to return to the resource list;
-while the monitor is focused, `Up`/`Down` scroll it one row at a time.
+while the monitor is focused, `Up`/`Down` scroll it three rows at a time.
 
 ## Lifecycle
 

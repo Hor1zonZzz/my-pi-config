@@ -42,6 +42,7 @@ import {
 } from "./types";
 
 const SESSION_ENTRY = "pi-config-manager-state";
+const MONITOR_SCROLL_STEP = 3;
 const TABS: ResourceTab[] = [
 	"overview",
 	"tools",
@@ -221,7 +222,10 @@ class ConfigManagerView implements Component, Focusable {
 		}
 		if (this.keybindings.matches(data, "tui.select.up")) {
 			if (this.activePane === "monitor" && selectedItem?.monitor) {
-				this.monitorScroll = Math.max(0, this.monitorScroll - 1);
+				this.monitorScroll = Math.max(
+					0,
+					this.monitorScroll - MONITOR_SCROLL_STEP,
+				);
 				return;
 			}
 			this.selected = Math.max(0, this.selected - 1);
@@ -230,7 +234,7 @@ class ConfigManagerView implements Component, Focusable {
 		}
 		if (this.keybindings.matches(data, "tui.select.down")) {
 			if (this.activePane === "monitor" && selectedItem?.monitor) {
-				this.monitorScroll += 1;
+				this.monitorScroll += MONITOR_SCROLL_STEP;
 				return;
 			}
 			this.selected = Math.min(

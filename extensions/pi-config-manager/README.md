@@ -47,9 +47,10 @@ The status line reports current manager policy and whether the contribution is
 expected in Pi's next base prompt or provider request. It also calls out cases
 such as an unavailable `read` tool, manual-only Skills, and custom prompts that
 omit tool guidelines. Later extension prompt rewrites can still differ from this
-base preview. Use the configured selection page-up/page-down bindings
-(`PageUp`/`PageDown` by default) to scroll. Provider-specific serialization can
-differ from the Pi tool definition shown by this demo.
+base preview. Press `Right` to focus the monitor and `Left` to return to the
+resource list; while the monitor is focused, `Up`/`Down` scroll it one row at a
+time. Provider-specific serialization can differ from the Pi tool definition
+shown by this demo.
 
 ## Lifecycle
 

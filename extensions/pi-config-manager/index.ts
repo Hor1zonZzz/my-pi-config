@@ -139,6 +139,7 @@ class ConfigManagerView implements Component, Focusable {
 	private tab: ResourceTab;
 	private selected = 0;
 	private monitorScroll = 0;
+	private activePane: "resources" | "monitor" = "resources";
 	private _focused = false;
 
 	constructor(
@@ -170,32 +171,34 @@ class ConfigManagerView implements Component, Focusable {
 			this.onDone("close");
 			return;
 		}
-		if (
-			this.keybindings.matches(data, "tui.input.tab") ||
-			this.keybindings.matches(data, "tui.editor.cursorRight")
-		) {
+		if (this.keybindings.matches(data, "tui.input.tab")) {
 			this.changeTab(1);
 			return;
 		}
-		if (this.keybindings.matches(data, "tui.editor.cursorLeft")) {
-			this.changeTab(-1);
-			return;
-		}
 		const items = this.filteredItems();
-		if (this.keybindings.matches(data, "tui.select.pageUp")) {
-			this.monitorScroll = Math.max(0, this.monitorScroll - 6);
+		const selectedItem = items[this.selected];
+		if (this.keybindings.matches(data, "tui.editor.cursorRight")) {
+			if (selectedItem?.monitor) this.activePane = "monitor";
 			return;
 		}
-		if (this.keybindings.matches(data, "tui.select.pageDown")) {
-			this.monitorScroll += 6;
+		if (this.keybindings.matches(data, "tui.editor.cursorLeft")) {
+			this.activePane = "resources";
 			return;
 		}
 		if (this.keybindings.matches(data, "tui.select.up")) {
+			if (this.activePane === "monitor" && selectedItem?.monitor) {
+				this.monitorScroll = Math.max(0, this.monitorScroll - 1);
+				return;
+			}
 			this.selected = Math.max(0, this.selected - 1);
 			this.monitorScroll = 0;
 			return;
 		}
 		if (this.keybindings.matches(data, "tui.select.down")) {
+			if (this.activePane === "monitor" && selectedItem?.monitor) {
+				this.monitorScroll += 1;
+				return;
+			}
 			this.selected = Math.min(
 				Math.max(0, items.length - 1),
 				this.selected + 1,
@@ -217,6 +220,7 @@ class ConfigManagerView implements Component, Focusable {
 		if (before !== this.search.getValue()) {
 			this.selected = 0;
 			this.monitorScroll = 0;
+			this.activePane = "resources";
 		}
 	}
 
@@ -226,6 +230,7 @@ class ConfigManagerView implements Component, Focusable {
 		const items = this.filteredItems();
 		this.selected = Math.min(this.selected, Math.max(0, items.length - 1));
 		const selectedItem = items[this.selected];
+		if (!selectedItem?.monitor) this.activePane = "resources";
 		const terminalRows = process.stdout.rows || 24;
 		const overlayBudget = Math.max(1, Math.floor(terminalRows * 0.9) - 2);
 		const paneHeight = Math.max(3, Math.min(16, overlayBudget - 4));
@@ -276,6 +281,7 @@ class ConfigManagerView implements Component, Focusable {
 				leftWidth,
 				paneHeight,
 				this.theme,
+				this.activePane === "resources",
 			);
 			const right = renderPane(
 				selectedItem?.monitor?.title ?? "Details",
@@ -283,7 +289,7 @@ class ConfigManagerView implements Component, Focusable {
 				rightWidth,
 				paneHeight,
 				this.theme,
-				Boolean(selectedItem?.monitor),
+				this.activePane === "monitor" && Boolean(selectedItem?.monitor),
 			);
 			for (let index = 0; index < paneHeight; index += 1) {
 				lines.push(
@@ -307,7 +313,7 @@ class ConfigManagerView implements Component, Focusable {
 			truncateToWidth(
 				this.theme.fg(
 					"dim",
-					`Type search · ←/→/Tab tabs · ↑/↓ move · ${this.monitorScrollKeys()} monitor · Space toggle${saveHint} · Esc close`,
+					`Type search · Tab tabs · ←/→ panes · ↑/↓ move or scroll · Space toggle${saveHint} · Esc close`,
 				),
 				safeWidth,
 			),
@@ -390,7 +396,7 @@ class ConfigManagerView implements Component, Focusable {
 				truncateToWidth(
 					this.theme.fg(
 						"dim",
-						` ${this.monitorScrollKeys()} · ${this.monitorScroll + 1}-${Math.min(rows.length, this.monitorScroll + viewportHeight)}/${rows.length}`,
+						` ↑/↓ · ${this.monitorScroll + 1}-${Math.min(rows.length, this.monitorScroll + viewportHeight)}/${rows.length}`,
 					),
 					safeWidth,
 					"",
@@ -398,13 +404,6 @@ class ConfigManagerView implements Component, Focusable {
 			);
 		}
 		return visible;
-	}
-
-	private monitorScrollKeys(): string {
-		const upKey = this.keybindings.getKeys("tui.select.pageUp")[0] ?? "pageUp";
-		const downKey =
-			this.keybindings.getKeys("tui.select.pageDown")[0] ?? "pageDown";
-		return `${upKey}/${downKey}`;
 	}
 
 	private allItems(): ViewItem[] {
@@ -568,6 +567,7 @@ class ConfigManagerView implements Component, Focusable {
 		this.tab = TABS[(index + offset + TABS.length) % TABS.length] ?? "overview";
 		this.selected = 0;
 		this.monitorScroll = 0;
+		this.activePane = "resources";
 	}
 }
 

@@ -6,7 +6,7 @@
 
 ## 包含内容
 
-- `settings.json` — 模型默认值与可安装的 Pi 包，包括 Pi Lens、MCP 适配器、Herdr 工具集成以及服务端压缩（compaction）支持
+- `settings.json` — 模型默认值与可安装的 Pi 包，包括为兼容性固定版本的 [Pi Config Manager](https://github.com/Hor1zonZzz/pi-config-manager)、Pi Lens、MCP 适配器、Herdr 工具集成以及服务端压缩（compaction）支持
 - `presets.json` — `quick`、`explore`、`orchestrator` 与 `deep-code` 预设
 - `codex-fast.json` — 本地 Codex 优先级（priority）开关的全局状态
 - `resource-settings.json` — 针对 Pi 发现的工具、技能（skills）与上下文文件的默认启用/禁用策略
@@ -18,9 +18,8 @@
 
 ## 本地扩展
 
-- `preset.ts` — 通过 `/preset` 切换模型、思考等级、工具与指令；在输入编辑器上边框右侧嵌入当前预设名称，同时保留 Pi 的滚动指示器
-- `pi-config-manager/` — 统一的 `/config-manager` 界面与资源 HUD，支持切换 Default/Session 作用域；管理 Pi 发现的工具、技能、上下文文件与扩展的启用状态，同时保留 `/tools`、`/skills`、`/contexts` 与 `/extensions` 入口；附带用于在默认模式下安全编辑预设配置的 `preset-settings` 技能
-- `plan-mode/` — 只读规划模式，通过配置管理器的瞬态（transient）工具策略层集成
+- `preset/` — 通过 `/preset` 切换模型、思考等级、工具与指令；在输入编辑器上边框右侧嵌入当前预设名称，同时保留 Pi 的滚动指示器，并持有随附的 `preset-settings` 技能
+- `plan-mode/` — 只读规划模式，通过已安装的 `pi-config-manager` 包提供的瞬态（transient）工具策略层集成
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
 - `notify.ts` — 代理回合结束时的终端通知
 - `herdr-integration-check.ts` — 当 Pi 运行在 Herdr 内时，在启动时静默检查 Herdr 的 Pi 集成，仅在集成缺失或过旧时发出警告
@@ -37,7 +36,7 @@ cd my-pi-config
 ./install.sh
 ```
 
-安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，并把管理器持有的 `preset-settings` 技能安装到 `~/.pi/agent/skills/preset-settings/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。已有的 `subagent-settings.json` 与 `resource-settings.json` 状态会被保留；首次迁移时，安装程序会从旧的 `skill-settings.json` 导入被禁用的技能列表。重启 Pi 或运行：
+安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，并把 Preset 扩展持有的 `preset-settings` 技能安装到 `~/.pi/agent/skills/preset-settings/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。已有的 `subagent-settings.json` 与 `resource-settings.json` 状态会被保留；首次迁移时，安装程序会从旧的 `skill-settings.json` 导入被禁用的技能列表。重启 Pi 或运行：
 
 ```text
 /reload
@@ -69,7 +68,7 @@ cd my-pi-config
 
 `model-overrides.json` 是受管配置，而不是 `models.json` 的副本；它只包含不含凭据的模型覆盖项，由安装程序合并进本地文件。
 
-`resource-settings.json` 是受管配置，不是机密。Pi Config Manager 会将已禁用的技能与上下文文件从模型提示词中隐藏，并阻止已禁用的 `/skill:<name>` 展开；但它有意不阻止对已知路径的直接 `read` 访问。
+`resource-settings.json` 是受管配置，不是机密。已安装的 `pi-config-manager` 包会将已禁用的技能与上下文文件从模型提示词中隐藏，并阻止已禁用的 `/skill:<name>` 展开；但它有意不阻止对已知路径的直接 `read` 访问。
 
 ## 署名与许可证
 

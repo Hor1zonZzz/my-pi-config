@@ -6,7 +6,7 @@ SUBAGENT_DIR="$ROOT_DIR/extensions/subagent"
 HERDR_SKILL_REPO="https://github.com/ogulcancelik/herdr.git"
 HERDR_SKILL_REF="master"
 HERDR_SKILL_CACHE_DIR="$ROOT_DIR/skills/herdr"
-PRESET_SETTINGS_SKILL_DIR="$ROOT_DIR/extensions/pi-config-manager/skills/preset-settings"
+PRESET_SETTINGS_SKILL_DIR="$ROOT_DIR/extensions/preset/skills/preset-settings"
 HERDR_PI_REFERENCE_SKILL_DIR="$ROOT_DIR/skills/herdr-pi-reference"
 AGENT_DIR="${PI_CODING_AGENT_DIR:-${PI_AGENT_DIR:-$HOME/.pi/agent}}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
@@ -95,8 +95,8 @@ for path in settings.json presets.json resource-settings.json subagent-settings.
 done
 
 mkdir -p "$AGENT_DIR/extensions" "$AGENT_DIR/agents" "$AGENT_DIR/prompts" "$AGENT_DIR/skills"
-rm -f "$AGENT_DIR/extensions/question.ts" "$AGENT_DIR/extensions/tools.ts"
-rm -rf "$AGENT_DIR/extensions/skills-manager" "$AGENT_DIR/extensions/sidebar-tui"
+rm -f "$AGENT_DIR/extensions/question.ts" "$AGENT_DIR/extensions/tools.ts" "$AGENT_DIR/extensions/preset.ts"
+rm -rf "$AGENT_DIR/extensions/skills-manager" "$AGENT_DIR/extensions/sidebar-tui" "$AGENT_DIR/extensions/pi-config-manager"
 node - "$ROOT_DIR/settings.json" "$AGENT_DIR/settings.json" <<'NODE'
 const fs = require("node:fs");
 

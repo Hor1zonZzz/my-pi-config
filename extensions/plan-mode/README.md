@@ -6,7 +6,7 @@ English | [中文文档](README.zh-CN.md)
 
 ## Features
 
-- **Built-in write tools disabled**: Uses Pi Config Manager's transient policy layer to disable edit/write while preserving other active tools
+- **Built-in write tools disabled**: Uses the installed `pi-config-manager` package's transient policy layer to disable edit/write while preserving other active tools
 - **Bash allowlist**: Only read-only bash commands are allowed
 - **Plan extraction**: Extracts numbered steps from `Plan:` sections
 - **Progress tracking**: Widget shows completion status during execution
@@ -25,7 +25,7 @@ English | [中文文档](README.zh-CN.md)
 2. Ask the agent to analyze code and create a plan
 3. The agent should output a numbered plan under a `Plan:` header:
 
-```
+```text
 Plan:
 1. First step description
 2. Second step description

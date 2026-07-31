@@ -6,7 +6,7 @@ English | [中文文档](README.zh-CN.md)
 
 ## Included
 
-- `settings.json` — model defaults and installable Pi packages, including Pi Lens, the MCP adapter, the Herdr tool integration, and server-side compaction support
+- `settings.json` — model defaults and installable Pi packages, including the compatibility-pinned [Pi Config Manager](https://github.com/Hor1zonZzz/pi-config-manager), Pi Lens, the MCP adapter, the Herdr tool integration, and server-side compaction support
 - `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
 - `codex-fast.json` — global state for the local Codex priority toggle
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files
@@ -19,11 +19,11 @@ English | [中文文档](README.zh-CN.md)
 
 ## Local extensions
 
-- `preset.ts` — switch model, thinking level, tools, and instructions with
+- `preset/` — switch model, thinking level, tools, and instructions with
   `/preset`; embeds the active preset at the right of the input editor's top
-  border while preserving Pi's scroll indicator
-- `pi-config-manager/` — unified `/config-manager` UI and resource HUD with switchable Default/Session scopes; manages the enabled state of Pi-discovered tools, skills, context files, and extensions while preserving `/tools`, `/skills`, `/contexts`, and `/extensions` entry points; bundles the `preset-settings` skill for safely editing preset profiles in default mode
-- `plan-mode/` — read-only planning mode integrated through the config manager's transient tool-policy layer
+  border while preserving Pi's scroll indicator, and owns the bundled
+  `preset-settings` skill
+- `plan-mode/` — read-only planning mode integrated through the installed `pi-config-manager` package's transient tool-policy layer
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
 - `herdr-integration-check.ts` — silently checks Herdr's Pi integration at startup when Pi is running inside Herdr, warning only when the integration is missing or outdated
@@ -44,7 +44,7 @@ The installer creates a timestamped backup under `~/.pi/agent/backups/` before
 replacing managed files. It merges `model-overrides.json` into the target
 `models.json`, preserving all unrelated local providers, credentials, and model
 settings. It also refreshes the Herdr skill from upstream `master`, installs it
-to `~/.pi/agent/skills/herdr/`, and installs the manager-owned
+to `~/.pi/agent/skills/herdr/`, and installs the preset-owned
 `preset-settings` skill to `~/.pi/agent/skills/preset-settings/`; an existing
 Herdr cache is used when the remote is temporarily unavailable. When Pi starts
 inside Herdr, the local integration checker warns if Herdr's Pi integration is
@@ -87,9 +87,10 @@ files. Never commit `~/.pi/agent/auth.json` or the raw local `models.json`.
 contains only credential-free model overrides that the installer merges into the
 local file.
 
-`resource-settings.json` is managed configuration, not a secret. Pi Config
-Manager hides disabled Skills and Context Files from the model prompt and blocks
-disabled `/skill:<name>` expansion; it intentionally does not block direct
+`resource-settings.json` is managed configuration, not a secret. The installed
+`pi-config-manager` package hides disabled Skills and Context Files from the
+model prompt and blocks disabled `/skill:<name>` expansion; it intentionally
+does not block direct
 `read` access to known paths.
 
 ## Attribution and licenses

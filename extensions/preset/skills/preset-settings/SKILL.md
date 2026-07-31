@@ -66,9 +66,9 @@ When working in the source-controlled Pi configuration repository:
 
 - Inspect `settings.json`, `model-overrides.json`, and
   `extensions/subagent/agents/*.md` before renaming or removing a model.
-- Preserve the event contract between `extensions/preset.ts` and
-  `extensions/pi-config-manager/`; editing a profile normally requires no
-  TypeScript change.
+- Preserve the event contract between `extensions/preset/` and the
+  `npm:pi-config-manager` package declared in `settings.json`; editing a profile
+  normally requires no TypeScript change.
 - Do not run the installer or overwrite the live agent directory unless the
   user asks to install the repository changes.
 
@@ -87,8 +87,8 @@ extensions from the source repository:
 
 ```bash
 pi --no-extensions \
-  -e ./extensions/pi-config-manager \
-  -e ./extensions/preset.ts \
+  -e npm:pi-config-manager@0.1.0 \
+  -e ./extensions/preset \
   --list-models
 ```
 

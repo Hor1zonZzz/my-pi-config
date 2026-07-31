@@ -6,7 +6,7 @@
 
 ## 功能
 
-- **禁用内置写入工具**：利用 Pi Config Manager 的瞬态策略层禁用 edit/write，同时保留其他激活工具
+- **禁用内置写入工具**：利用已安装的 `pi-config-manager` 包提供的瞬态策略层禁用 edit/write，同时保留其他激活工具
 - **Bash 白名单**：只允许只读的 bash 命令
 - **计划提取**：从 `Plan:` 段落中提取编号步骤
 - **进度跟踪**：执行期间通过 widget 显示完成状态
@@ -25,7 +25,7 @@
 2. 让代理分析代码并制定计划
 3. 代理应在 `Plan:` 标题下输出编号计划：
 
-```
+```text
 Plan:
 1. First step description
 2. Second step description

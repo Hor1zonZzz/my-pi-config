@@ -49,8 +49,10 @@ After an agent run, it shows the complete effective Pi system prompt captured at
 `agent_start`. Both views highlight the selected active Skill, Context, or Tool
 prompt snippet when it is present. An inactive Tool, disabled Skill, or disabled
 Context instead keeps its individual description/preview visible, because it
-should not appear in the system prompt. The cached prompt is refreshed by the
-next agent run, so policy changes made while the manager is open are not
+should not appear in the system prompt. For inactive Tools, Pi does not expose
+their `promptSnippet`; the monitor labels it unavailable while still showing any
+published prompt guidelines as inactive metadata. The cached prompt is refreshed
+by the next agent run, so policy changes made while the manager is open are not
 reflected until then. Tool descriptions and schemas remain provider-payload data
 rather than system-prompt text. Press `Right` to focus the monitor and `Left` to return to the resource list;
 while the monitor is focused, `Up`/`Down` scroll it one row at a time.

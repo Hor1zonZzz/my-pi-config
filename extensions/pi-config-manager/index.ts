@@ -527,9 +527,10 @@ class ConfigManagerView implements Component, Focusable {
 								? "active · definition expected on the next provider request"
 								: "inactive · definition excluded by current policy",
 							statusColor: active ? "success" : "dim",
-							note:
-								snapshot.customPromptActive &&
-								(tool.promptSnippet || tool.promptGuidelines?.length)
+							note: !active
+								? "Pi does not expose an inactive tool's promptSnippet."
+								: snapshot.customPromptActive &&
+									(tool.promptSnippet || tool.promptGuidelines?.length)
 									? "A custom system prompt is active, so Pi omits this tool's prompt snippet and guidelines."
 									: undefined,
 							content: [
@@ -539,24 +540,32 @@ class ConfigManagerView implements Component, Focusable {
 									description: tool.description,
 									parameters: tool.parameters,
 								}),
-								...(tool.promptSnippet
-									? [
-											"",
-											systemPromptVisible
-												? "System prompt Available tools entry:"
-												: "Prompt snippet:",
-											`- ${tool.name}: ${tool.promptSnippet}`,
-										]
-									: []),
-								...(tool.promptGuidelines?.length
-									? [
-											"",
-											systemPromptVisible
-												? "System prompt guidelines:"
-												: "Prompt guidelines:",
-											...tool.promptGuidelines.map((line) => `- ${line}`),
-										]
-									: []),
+							...(active && tool.promptSnippet
+								? [
+										"",
+										systemPromptVisible
+											? "System prompt Available tools entry:"
+											: "Prompt snippet:",
+										`- ${tool.name}: ${tool.promptSnippet}`,
+									]
+								: []),
+							...(!active
+								? [
+										"",
+										"Prompt snippet: unavailable while inactive",
+									]
+								: []),
+							...(tool.promptGuidelines?.length
+								? [
+										"",
+										active && systemPromptVisible
+											? "System prompt guidelines:"
+											: active
+												? "Prompt guidelines:"
+												: "Declared prompt guidelines (inactive):",
+										...tool.promptGuidelines.map((line) => `- ${line}`),
+									]
+								: []),
 							].join("\n"),
 							highlight:
 								systemPromptVisible && tool.promptSnippet

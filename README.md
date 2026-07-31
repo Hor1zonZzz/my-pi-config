@@ -2,6 +2,8 @@
 
 My public, reproducible configuration for [Pi Coding Agent](https://github.com/earendil-works/pi).
 
+English | [中文文档](README.zh-CN.md)
+
 ## Included
 
 - `settings.json` — model defaults and installable Pi packages, including Pi Lens, the MCP adapter, the Herdr tool integration, and server-side compaction support

@@ -2,6 +2,8 @@
 
 Delegate tasks to specialized subagents with isolated context windows.
 
+English | [中文文档](README.zh-CN.md)
+
 ## Features
 
 - **Isolated context**: Each subagent runs in a separate `pi` process

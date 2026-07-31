@@ -2,6 +2,8 @@
 
 A unified resource-policy extension for Pi 0.83.0.
 
+English | [中文文档](README.zh-CN.md)
+
 Pi remains responsible for discovering, resolving, loading, deduplicating, and
 assigning provenance to tools, skills, context files, extensions, and packages.
 The manager consumes those public Pi inventories and controls only whether a
@@ -93,5 +95,7 @@ may use `.pi/resource-settings.json`. Session overrides are stored as
 `pi-config-manager-state` entries and follow session-tree branches.
 
 The first run can import the disabled Skills list from the legacy
-`skill-settings.json`. Disabled Skills and Context Files are removed from the
-next system prompt, but this is not a file-access security boundary.
+`skill-settings.json`. Disabled Skills and Context Files are removed when the
+manager can locate Pi's standard prompt sections; a custom prompt that omits or
+rewrites those sections is left unchanged with a warning. This is not a
+file-access security boundary.

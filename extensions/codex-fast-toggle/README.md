@@ -2,6 +2,8 @@
 
 Local Pi extension derived from `pi-openai-codex-fast` (MIT) with a persistent Fast On/Off control.
 
+English | [中文文档](README.zh-CN.md)
+
 ## Behavior
 
 - Keeps Pi's built-in `openai-codex` provider and modifies only the outgoing request payload.

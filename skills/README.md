@@ -1,5 +1,7 @@
 # Managed skills
 
+English | [中文文档](README.zh-CN.md)
+
 ## Herdr
 
 `install.sh` synchronizes `skills/herdr/SKILL.md` from

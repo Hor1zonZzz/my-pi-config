@@ -2,6 +2,8 @@
 
 Read-only exploration mode for safe code analysis.
 
+English | [中文文档](README.zh-CN.md)
+
 ## Features
 
 - **Built-in write tools disabled**: Uses Pi Config Manager's transient policy layer to disable edit/write while preserving other active tools

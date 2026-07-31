@@ -47,7 +47,7 @@ Before an agent run, the monitor shows Pi's current system-prompt preview;
 it has not passed through the forthcoming turn's `before_agent_start` handlers.
 After an agent run, it shows the complete effective Pi system prompt captured at
 `agent_start`. Both views highlight the selected active Skill, Context, or Tool
-prompt snippet when it is present. An inactive Tool, disabled Skill, or disabled
+prompt snippet and prompt guidelines when they are present. An inactive Tool, disabled Skill, or disabled
 Context instead keeps its individual description/preview visible, because it
 should not appear in the system prompt. For inactive Tools, Pi does not expose
 their `promptSnippet`; the monitor labels it unavailable while still showing any

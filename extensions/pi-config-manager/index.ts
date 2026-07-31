@@ -64,7 +64,7 @@ interface MonitorPayload {
 	status: string;
 	statusColor: "success" | "warning" | "dim";
 	content: string;
-	highlight?: string;
+	highlights?: string[];
 	note?: string;
 }
 
@@ -400,9 +400,10 @@ class ConfigManagerView implements Component, Focusable {
 
 		const safeWidth = Math.max(1, width);
 		const rows: string[] = [];
+		const highlights = item.monitor.highlights ?? [];
 		const hasHighlight =
-			!item.monitor.highlight ||
-			item.monitor.content.includes(item.monitor.highlight);
+			highlights.length === 0 ||
+			highlights.some((highlight) => item.monitor!.content.includes(highlight));
 		let highlightedRow = -1;
 		const addWrapped = (line: string) => {
 			rows.push(...wrapTextWithAnsi(line, safeWidth));
@@ -431,9 +432,7 @@ class ConfigManagerView implements Component, Focusable {
 		rows.push("");
 		for (const rawLine of item.monitor.content.split("\n")) {
 			const highlighted = Boolean(
-				rawLine &&
-					item.monitor.highlight &&
-					rawLine.includes(item.monitor.highlight),
+				rawLine && highlights.some((highlight) => rawLine.includes(highlight)),
 			);
 			if (highlighted && highlightedRow < 0) highlightedRow = rows.length;
 			const styled = rawLine
@@ -534,7 +533,7 @@ class ConfigManagerView implements Component, Focusable {
 							note: !active
 								? "Pi does not expose an inactive tool's promptSnippet."
 								: snapshot.customPromptActive &&
-									(tool.promptSnippet || tool.promptGuidelines?.length)
+										(tool.promptSnippet || tool.promptGuidelines?.length)
 									? "A custom system prompt is active, so Pi omits this tool's prompt snippet and guidelines."
 									: undefined,
 							content: [
@@ -544,37 +543,41 @@ class ConfigManagerView implements Component, Focusable {
 									description: tool.description,
 									parameters: tool.parameters,
 								}),
-							...(active && tool.promptSnippet
-								? [
-										"",
-										systemPromptVisible
-											? "System prompt Available tools entry:"
-											: "Prompt snippet:",
-										`- ${tool.name}: ${tool.promptSnippet}`,
-									]
-								: []),
-							...(!active
-								? [
-										"",
-										"Prompt snippet: unavailable while inactive",
-									]
-								: []),
-							...(tool.promptGuidelines?.length
-								? [
-										"",
-										active && systemPromptVisible
-											? "System prompt guidelines:"
-											: active
-												? "Prompt guidelines:"
-												: "Declared prompt guidelines (inactive):",
-										...tool.promptGuidelines.map((line) => `- ${line}`),
-									]
-								: []),
+								...(active && tool.promptSnippet
+									? [
+											"",
+											systemPromptVisible
+												? "System prompt Available tools entry:"
+												: "Prompt snippet:",
+											`- ${tool.name}: ${tool.promptSnippet}`,
+										]
+									: []),
+								...(!active
+									? ["", "Prompt snippet: unavailable while inactive"]
+									: []),
+								...(tool.promptGuidelines?.length
+									? [
+											"",
+											active && systemPromptVisible
+												? "System prompt guidelines:"
+												: active
+													? "Prompt guidelines:"
+													: "Declared prompt guidelines (inactive):",
+											...tool.promptGuidelines.map((line) => `- ${line}`),
+										]
+									: []),
 							].join("\n"),
-							highlight:
-								systemPromptVisible && tool.promptSnippet
-									? `- ${tool.name}: ${tool.promptSnippet}`
-									: undefined,
+							highlights: systemPromptVisible
+								? [
+										...(tool.promptSnippet
+											? [`- ${tool.name}: ${tool.promptSnippet}`]
+											: []),
+										...(tool.promptGuidelines ?? [])
+											.map((line) => line.trim())
+											.filter(Boolean)
+											.map((line) => `- ${line}`),
+									]
+								: undefined,
 						},
 						active,
 					),
@@ -615,7 +618,7 @@ class ConfigManagerView implements Component, Focusable {
 									disableModelInvocation: false,
 								},
 							]).trim(),
-							highlight: skill.name,
+							highlights: [skill.name],
 						},
 						catalogVisible,
 					),
@@ -641,7 +644,7 @@ class ConfigManagerView implements Component, Focusable {
 							statusColor: enabled ? "success" : "warning",
 							note: "This previews Pi's base prompt; later extension prompt rewrites can still differ.",
 							content: formatContextSection([context]).trim(),
-							highlight: `<project_instructions path="${context.path}">`,
+							highlights: [`<project_instructions path="${context.path}">`],
 						},
 						enabled,
 					),

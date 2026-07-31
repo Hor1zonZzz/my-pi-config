@@ -23,6 +23,7 @@
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
 - `notify.ts` — 代理回合结束时的终端通知
 - `herdr-integration-check.ts` — 当 Pi 运行在 Herdr 内时，在启动时静默检查 Herdr 的 Pi 集成，仅在集成缺失或过旧时发出警告
+- `herdr-background-monitor/` — 监听官方 `herdr_agent prompt` 中显式设置 `wait: false` 的成功调用，使工具保持非阻塞，并在目标 pane 稳定后向所属 Pi 会话注入 follow-up
 - `subagent/` — Pi 官方的子代理示例，适配 OpenAI Codex 模型，支持阻塞/后台执行、会话任务状态、持久化结果、取消操作，以及编辑器下方的 TUI 任务查看器
 - `codex-fast-toggle/` — `/fast on|off` 切换 Codex 优先级服务层级（service tier），同时保持提供方标识为 `openai-codex`
 

@@ -27,6 +27,7 @@ English | [中文文档](README.zh-CN.md)
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
 - `herdr-integration-check.ts` — silently checks Herdr's Pi integration at startup when Pi is running inside Herdr, warning only when the integration is missing or outdated
+- `herdr-background-monitor/` — watches successful official `herdr_agent prompt` calls with explicit `wait: false`, keeps the tool call non-blocking, and injects a session-scoped follow-up when the target pane settles
 - `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models with blocking/background execution, session task state, persisted results, cancellation, and a below-editor TUI task viewer
 - `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier while keeping the provider identity as `openai-codex`
 

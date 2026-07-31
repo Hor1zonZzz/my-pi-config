@@ -95,8 +95,8 @@ for path in settings.json presets.json resource-settings.json subagent-settings.
 done
 
 mkdir -p "$AGENT_DIR/extensions" "$AGENT_DIR/agents" "$AGENT_DIR/prompts" "$AGENT_DIR/skills"
-rm -f "$AGENT_DIR/extensions/question.ts" "$AGENT_DIR/extensions/tools.ts" "$AGENT_DIR/extensions/preset.ts" "$AGENT_DIR/extensions/herdr-integration-check.ts"
-rm -rf "$AGENT_DIR/extensions/skills-manager" "$AGENT_DIR/extensions/sidebar-tui" "$AGENT_DIR/extensions/pi-config-manager" "$AGENT_DIR/extensions/herdr-background-monitor"
+rm -f "$AGENT_DIR/extensions/question.ts" "$AGENT_DIR/extensions/tools.ts" "$AGENT_DIR/extensions/preset.ts" "$AGENT_DIR/extensions/herdr-integration-check.ts" "$AGENT_DIR/prompts/explore-and-gather.md" "$AGENT_DIR/subagent-settings.json"
+rm -rf "$AGENT_DIR/extensions/skills-manager" "$AGENT_DIR/extensions/sidebar-tui" "$AGENT_DIR/extensions/pi-config-manager" "$AGENT_DIR/extensions/herdr-background-monitor" "$AGENT_DIR/extensions/subagent"
 node - "$ROOT_DIR/settings.json" "$AGENT_DIR/settings.json" <<'NODE'
 const fs = require("node:fs");
 
@@ -181,9 +181,6 @@ fs.writeFileSync(
 fs.renameSync(temporaryPath, targetPath);
 NODE
 cp "$ROOT_DIR/presets.json" "$AGENT_DIR/presets.json"
-if [[ ! -f "$AGENT_DIR/subagent-settings.json" ]]; then
-	cp "$ROOT_DIR/subagent-settings.json" "$AGENT_DIR/subagent-settings.json"
-fi
 node - "$ROOT_DIR/resource-settings.json" "$AGENT_DIR/resource-settings.json" "$AGENT_DIR/skill-settings.json" <<'NODE'
 const fs = require("node:fs");
 

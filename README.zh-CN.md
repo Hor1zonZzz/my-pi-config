@@ -10,7 +10,6 @@
 - `presets.json` — `quick`、`explore`、`orchestrator` 与 `deep-code` 预设
 - `codex-fast.json` — 本地 Codex 优先级（priority）开关的全局状态
 - `resource-settings.json` — 针对 Pi 发现的工具、技能（skills）与上下文文件的默认启用/禁用策略
-- `subagent-settings.json` — 阻塞/后台子代理任务的全局子进程并发与队列上限
 - `model-overrides.json` — 受管理的、不含凭据的内置模型覆盖项
 - `extensions/` — 本地扩展；`extensions/subagent/` 同时持有其代理定义与工作流提示词
 - `skills/` — 远端受管的技能缓存；Herdr 会在安装期间从其上游 Git 仓库刷新
@@ -23,7 +22,7 @@
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
 - `notify.ts` — 代理回合结束时的终端通知
 - `herdr/` — 统一持有本地 Herdr 集成检查器、异步 `herdr_agent prompt` 监控器和 `herdr-pi-reference` 技能源码；它让显式 `wait: false` 调用保持非阻塞，并注入会话级完成 follow-up
-- `subagent/` — Pi 官方的子代理示例，适配 OpenAI Codex 模型，支持阻塞/后台执行、会话任务状态、持久化结果、取消操作，以及编辑器下方的 TUI 任务查看器
+- `subagent/` — 直接复制 Pi 官方上游的子代理示例，仅将示例代理的模型 frontmatter 改为本地 OpenAI Codex 模型
 - `codex-fast-toggle/` — `/fast on|off` 切换 Codex 优先级服务层级（service tier），同时保持提供方标识为 `openai-codex`
 
 ## 安装
@@ -36,7 +35,7 @@ cd my-pi-config
 ./install.sh
 ```
 
-安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，把 Herdr 扩展持有的 `herdr-pi-reference` 技能安装到 `~/.pi/agent/skills/herdr-pi-reference/`，并把 Preset 扩展持有的 `preset-settings` 技能安装到 `~/.pi/agent/skills/preset-settings/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。已有的 `subagent-settings.json` 与 `resource-settings.json` 状态会被保留；首次迁移时，安装程序会从旧的 `skill-settings.json` 导入被禁用的技能列表。重启 Pi 或运行：
+安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，把 Herdr 扩展持有的 `herdr-pi-reference` 技能安装到 `~/.pi/agent/skills/herdr-pi-reference/`，并把 Preset 扩展持有的 `preset-settings` 技能安装到 `~/.pi/agent/skills/preset-settings/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。已有的 `resource-settings.json` 状态会被保留；首次迁移时，安装程序会从旧的 `skill-settings.json` 导入被禁用的技能列表。重启 Pi 或运行：
 
 ```text
 /reload
@@ -55,8 +54,6 @@ cd my-pi-config
 /extensions
 /plan
 /fast
-/subagents
-/explore-and-gather
 /implement <task>
 /scout-and-plan <task>
 /implement-and-review <task>

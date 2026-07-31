@@ -11,7 +11,6 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `settings.json` — global Pi defaults and Pi package dependencies, including the published `npm:pi-config-manager` package.
 - `presets.json` — named model, thinking-level, resource, and instruction presets.
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files.
-- `subagent-settings.json` — global child-process concurrency and queue limits for blocking/background subagent tasks.
 - `codex-fast.json` — initial persisted state for the Codex priority-service toggle.
 - `model-overrides.json` — credential-free overrides merged into the local `models.json`.
 - `install.sh` — backs up the current user configuration, refreshes the Herdr
@@ -25,9 +24,9 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
   - `questionnaire.ts` — registers the TUI-only `questionnaire` tool for one or more interactive questions.
   - `notify.ts` — emits a terminal notification after an agent run ends.
   - `herdr/` — owns the repository-managed Herdr integration checker, the asynchronous official `herdr_agent prompt` monitor, and the source for the installed `herdr-pi-reference` skill. It uses the public Herdr CLI and does not modify Herdr-managed integration files.
-  - `subagent/` — registers the `subagent` tool, launches isolated Pi subprocesses, schedules blocking/background work, persists task results under the parent cwd, and injects background completions.
-    - `agents/` — user-level subagent definitions. The local versions select OpenAI Codex models.
-    - `prompts/` — slash-command workflow templates that compose the subagents.
+  - `subagent/` — Pi's upstream subagent example copied from `packages/coding-agent/examples/extensions/subagent`; only model frontmatter in `agents/*.md` is intentionally changed to local OpenAI Codex models.
+    - `agents/` — user-level subagent definitions.
+    - `prompts/` — the upstream slash-command workflow templates.
   - `codex-fast-toggle/` — implements `/fast on|off` and modifies Codex request payloads to select the priority service tier.
 - `licenses/`, `LICENSE`, and `THIRD_PARTY_NOTICES.md` — project and upstream licensing information.
 
@@ -36,7 +35,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 Some files must be maintained together:
 
 - `settings.json`, `extensions/preset/`, `extensions/preset/skills/preset-settings/`, `extensions/plan-mode/`, `presets.json`, and `resource-settings.json` are coupled through the published `npm:pi-config-manager` event contract. Presets submit profile policy, Plan Mode submits a transient restriction layer, and the bundled skill documents the supported profile-editing contract. Config Manager source and behavior tests live in <https://github.com/Hor1zonZzz/pi-config-manager>, not in this repository; alternate-screen follow-up is tracked in [issue #1](https://github.com/Hor1zonZzz/pi-config-manager/issues/1).
-- `extensions/subagent/index.ts`, `extensions/subagent/tool.ts`, `extensions/subagent/task-manager.ts`, `extensions/subagent/types.ts`, `extensions/subagent/schema.ts`, `extensions/subagent/runner.ts`, `extensions/subagent/execution.ts`, `extensions/subagent/render.ts`, `extensions/subagent/scheduler.ts`, `extensions/subagent/task-storage.ts`, `extensions/subagent/output.ts`, `extensions/subagent/settings.ts`, `extensions/subagent/agents.ts`, `extensions/subagent/agents/*.md`, `extensions/subagent/prompts/*.md`, and `subagent-settings.json` form one workflow. Agent names referenced by a prompt must exist in `extensions/subagent/agents/`.
+- `extensions/subagent/index.ts`, `extensions/subagent/agents.ts`, `extensions/subagent/agents/*.md`, and `extensions/subagent/prompts/*.md` form the upstream-derived subagent workflow. Agent names referenced by a prompt must exist in `extensions/subagent/agents/`.
 - Model identifiers appear in `settings.json`, `presets.json`, `extensions/subagent/agents/*.md`, and `model-overrides.json`. When models are renamed or removed, inspect all four locations.
 - `extensions/plan-mode/index.ts` and `extensions/plan-mode/utils.ts` must agree on state, plan markers, and the bash safety policy. If a question tool is renamed, update `PLAN_MODE_TOOLS` and the injected instructions.
 - `extensions/codex-fast-toggle/index.ts`, `extensions/codex-fast-toggle/README.md`, and `codex-fast.json` define the Fast-mode behavior and state contract together.
@@ -84,7 +83,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 ### High-Risk Compatibility Areas
 
 - `codex-fast-toggle` depends on the `before_provider_request` lifecycle and the provider-specific outgoing payload accepting `service_tier`. Verify the real request shape after provider/runtime changes.
-- `subagent` depends on Pi CLI flags, LF-delimited JSON-mode events, message shapes, executable discovery, subprocess cancellation behavior, session IDs, `agent_settled` follow-up injection, and `session_before_tree`. Blocking and background calls share one FIFO child-process scheduler per parent Pi process.
+- `subagent` depends on Pi CLI flags, LF-delimited JSON-mode events, message shapes, executable discovery, and subprocess cancellation behavior. Re-copy the matching installed Pi version's upstream example when compatibility changes, then reapply only the local model frontmatter.
 - `extensions/herdr/` background monitoring depends on the official `herdr_agent` tool-result shape, Herdr's public `agent get` JSON response and lifecycle states, Pi session IDs, cancellable `pi.exec`, and `agent_settled` follow-up delivery. It must remain separate from the Herdr-managed Pi state extension and cannot provide prompt-level attribution when multiple Pi sessions share one target pane.
 - `questionnaire` and `preset` depend on TUI component, key handling, autocomplete, theming, and invalidation contracts.
 - The external `pi-config-manager` package owns effective tool activation, prompt filtering, extension enablement, resource-state persistence, the unified manager UI, and the resource HUD. Keep its package version and event contract compatible with the local Preset and Plan Mode extensions.
@@ -111,9 +110,8 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - Existing managed paths are backed up under `backups/my-pi-config-<timestamp>/` before copying.
 - The installer preserves Pi-managed `settings.json.lastChangelogVersion` instead of tracking it in this repository.
 - It merges credential-free `model-overrides.json` entries into the target `models.json`, preserving unrelated local providers and settings.
-- It removes obsolete `extensions/question.ts`, `extensions/tools.ts`, `extensions/preset.ts`, `extensions/skills-manager/`, `extensions/sidebar-tui/`, and the former local `extensions/pi-config-manager/`, then copies the current settings, presets, Fast state, local extensions, the subagent-owned agents and prompts, the refreshed Herdr skill, and the preset-owned `preset-settings` skill.
+- It removes obsolete extension paths, the previously customized `extensions/subagent/`, `subagent-settings.json`, and the retired `explore-and-gather` prompt before copying the current settings, presets, Fast state, local extensions, upstream subagent-owned agents/prompts, the refreshed Herdr skill, and the preset-owned skills.
 - It preserves an existing target `resource-settings.json`; when absent, it migrates the disabled Skills list from legacy `skill-settings.json` before falling back to repository defaults.
-- It preserves an existing target `subagent-settings.json`; when absent, it installs the repository defaults.
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
 
 `codex-fast.json` is both a repository default and mutable runtime state. Installing the repository seeds/replaces the target value; the extension later updates the target file atomically.
@@ -128,7 +126,7 @@ Basic repository checks:
 
 ```bash
 bash -n install.sh
-node -e 'for (const f of ["settings.json", "presets.json", "resource-settings.json", "subagent-settings.json", "model-overrides.json", "codex-fast.json"]) JSON.parse(require("node:fs").readFileSync(f, "utf8"))'
+node -e 'for (const f of ["settings.json", "presets.json", "resource-settings.json", "model-overrides.json", "codex-fast.json"]) JSON.parse(require("node:fs").readFileSync(f, "utf8"))'
 git diff --check
 ```
 
@@ -159,7 +157,7 @@ Perform applicable interactive checks:
 - `/plan` blocks writes, preserves unrelated tools through a transient manager layer, extracts a plan, and removes the layer before execution.
 - `questionnaire` handles single, multiple, custom-text, cancellation, narrow-terminal, and non-TUI cases.
 - `/fast on|off` persists state, appears only for `openai-codex`, updates status, and changes only the intended outgoing request field.
-- `subagent` accepts explicit task-management actions while preserving action-less blocking calls and empty-call Agent discovery; handles blocking/background single, parallel, and chained calls; enforces shared process/queue limits; writes complete task files; injects bounded background follow-ups; blocks tree navigation while active; and handles cancellation, failures, and project-agent confirmation.
+- `subagent` handles the upstream single, parallel, and chained modes, cancellation, failures, output limits, and project-agent confirmation; verify the four local agent files still select the intended OpenAI Codex models.
 - `extensions/herdr/` background monitoring is a no-op outside Herdr; tracks only successful explicit `herdr_agent prompt` calls with `wait: false`; delivers grouped, bounded follow-ups to the owning session after `done`, post-working `idle`, or `blocked`; and cancels cleanly on session replacement, reload, and shutdown.
 - terminal notifications do not corrupt terminal output on supported terminals.
 

@@ -10,7 +10,6 @@ English | [中文文档](README.zh-CN.md)
 - `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
 - `codex-fast.json` — global state for the local Codex priority toggle
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files
-- `subagent-settings.json` — global child-process concurrency and queue limits for blocking/background subagent tasks
 - `model-overrides.json` — managed, credential-free overrides for built-in models
 - `extensions/` — local extensions; `extensions/subagent/` also owns its agent definitions and workflow prompts
 - `skills/` — remote-managed skill caches; Herdr is refreshed from its upstream
@@ -27,7 +26,7 @@ English | [中文文档](README.zh-CN.md)
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
-- `subagent/` — Pi's official subagent example, adapted to OpenAI Codex models with blocking/background execution, session task state, persisted results, cancellation, and a below-editor TUI task viewer
+- `subagent/` — Pi's official subagent example copied from upstream, with only the sample agents' model frontmatter changed to local OpenAI Codex models
 - `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier while keeping the provider identity as `openai-codex`
 
 ## Install
@@ -50,8 +49,8 @@ skill to `~/.pi/agent/skills/herdr-pi-reference/`, and installs the preset-owned
 Herdr cache is used when the remote is temporarily unavailable. When Pi starts
 inside Herdr, the local integration checker warns if Herdr's Pi integration is
 missing or outdated; it never installs or updates the Herdr-managed integration
-automatically. Existing `subagent-settings.json` and `resource-settings.json`
-state is preserved; on first migration, the installer imports disabled Skills
+automatically. Existing `resource-settings.json` state is preserved; on first
+migration, the installer imports disabled Skills
 from the legacy `skill-settings.json`. Restart Pi or run:
 
 ```text
@@ -71,8 +70,6 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 /extensions
 /plan
 /fast
-/subagents
-/explore-and-gather
 /implement <task>
 /scout-and-plan <task>
 /implement-and-review <task>

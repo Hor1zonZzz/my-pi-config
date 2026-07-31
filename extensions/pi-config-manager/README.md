@@ -19,8 +19,16 @@ resource is enabled.
 /extensions      Open Extensions
 ```
 
-Tools, Skills, and Context toggles are current-session overrides and apply
-immediately. Global defaults can be changed non-interactively:
+The manager has two resource scopes. With no active preset it opens in
+**Default** scope; with a preset active it opens in **Session** scope. Press `G`
+to switch scopes:
+
+- **Default** writes Tool, Skill, and Context choices to the global
+  `resource-settings.json`, so new Pi sessions inherit them.
+- **Session** stores immediate overrides in the current session tree without
+  changing future defaults.
+
+Global defaults can also be changed non-interactively:
 
 ```text
 /tools global enable|disable <name>
@@ -55,8 +63,9 @@ their `promptSnippet`; the monitor labels it unavailable while still showing any
 published prompt guidelines as inactive metadata. The cached prompt is refreshed
 by the next agent run, so policy changes made while the manager is open are not
 reflected until then. Tool descriptions and schemas remain provider-payload data
-rather than system-prompt text. Press `Right` to focus the monitor and `Left` to return to the resource list;
-while the monitor is focused, `Up`/`Down` scroll it three rows at a time.
+rather than system-prompt text. Press `G` to switch Default/Session scope,
+`Right` to focus the monitor, and `Left` to return to the resource list; while
+the monitor is focused, `Up`/`Down` scroll it three rows at a time.
 
 ## Lifecycle
 

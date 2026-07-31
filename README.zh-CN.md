@@ -19,7 +19,7 @@
 ## 本地扩展
 
 - `preset.ts` — 通过 `/preset` 切换模型、思考等级、工具与指令；在输入编辑器上边框右侧嵌入当前预设名称，同时保留 Pi 的滚动指示器
-- `pi-config-manager/` — 统一的 `/config-manager` 界面与资源 HUD；管理 Pi 发现的工具、技能、上下文文件与扩展的启用状态，同时保留 `/tools`、`/skills`、`/contexts` 与 `/extensions` 入口；附带用于在默认模式下安全编辑预设配置的 `preset-settings` 技能
+- `pi-config-manager/` — 统一的 `/config-manager` 界面与资源 HUD，支持切换 Default/Session 作用域；管理 Pi 发现的工具、技能、上下文文件与扩展的启用状态，同时保留 `/tools`、`/skills`、`/contexts` 与 `/extensions` 入口；附带用于在默认模式下安全编辑预设配置的 `preset-settings` 技能
 - `plan-mode/` — 只读规划模式，通过配置管理器的瞬态（transient）工具策略层集成
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
 - `notify.ts` — 代理回合结束时的终端通知

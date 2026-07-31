@@ -22,7 +22,7 @@ English | [中文文档](README.zh-CN.md)
 - `preset.ts` — switch model, thinking level, tools, and instructions with
   `/preset`; embeds the active preset at the right of the input editor's top
   border while preserving Pi's scroll indicator
-- `pi-config-manager/` — unified `/config-manager` UI and resource HUD; manages the enabled state of Pi-discovered tools, skills, context files, and extensions while preserving `/tools`, `/skills`, `/contexts`, and `/extensions` entry points; bundles the `preset-settings` skill for safely editing preset profiles in default mode
+- `pi-config-manager/` — unified `/config-manager` UI and resource HUD with switchable Default/Session scopes; manages the enabled state of Pi-discovered tools, skills, context files, and extensions while preserving `/tools`, `/skills`, `/contexts`, and `/extensions` entry points; bundles the `preset-settings` skill for safely editing preset profiles in default mode
 - `plan-mode/` — read-only planning mode integrated through the config manager's transient tool-policy layer
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends

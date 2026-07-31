@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+	existsSync,
 	mkdtempSync,
 	mkdirSync,
 	readFileSync,
@@ -279,6 +280,12 @@ function writeAgentSettings(value: unknown) {
 
 function readAgentSettings(): any {
 	return JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
+}
+
+function readResourceSettings(): any {
+	return JSON.parse(
+		readFileSync(join(agentDir, "resource-settings.json"), "utf8"),
+	);
 }
 
 describe("storage compatibility", () => {
@@ -611,7 +618,7 @@ describe("manager behavior contract", () => {
 		}
 	});
 
-	test("opens the tools view as an overlay and persists an interactive toggle", async () => {
+	test("opens default scope and persists tool toggles for new sessions", async () => {
 		const harness = createHarness({
 			tools: [
 				{
@@ -667,11 +674,70 @@ describe("manager behavior contract", () => {
 				"Pi Config Manager · Context Monitor (demo)",
 			);
 			expect(renderedText).toContain("[Tools]");
+			expect(renderedText).toContain("Scope: Default");
 			expect(renderedText).toContain("System prompt Available tools entry:");
 			expect(renderedText).toContain("- read: Read files safely");
 			expect(renderedText).toContain("System prompt guidelines:");
 			expect(renderedText).toContain("- Use read carefully");
 			expect(harness.getActiveTools()).toEqual([]);
+			expect(readResourceSettings()).toEqual({
+				version: 1,
+				disabledTools: ["read"],
+				disabledSkills: [],
+				disabledContexts: [],
+			});
+			expect(
+				harness.entries.some(
+					(entry) => entry.customType === "pi-config-manager-state",
+				),
+			).toBe(false);
+			const nextSession = createHarness({
+				tools: [{ name: "read", description: "Read files" }],
+				activeTools: ["read"],
+			});
+			await nextSession.start();
+			try {
+				expect(nextSession.getActiveTools()).toEqual([]);
+			} finally {
+				await nextSession.shutdown();
+			}
+			expect(renderRequests).toBeGreaterThan(0);
+		} finally {
+			await harness.shutdown();
+		}
+	});
+
+	test("switches to session scope without changing global defaults", async () => {
+		const harness = createHarness({
+			tools: [{ name: "read", description: "Read files" }],
+			activeTools: ["read"],
+		});
+		await harness.start();
+		try {
+			let defaultView = "";
+			let sessionView = "";
+			harness.setCustomImplementation(async (factory) => {
+				let result: "close" | "save" = "close";
+				const component = await factory(
+					{ requestRender() {} },
+					createTheme(),
+					createKeybindings(),
+					(value: "close" | "save") => {
+						result = value;
+					},
+				);
+				defaultView = component.render(100).join("\n");
+				component.handleInput("G");
+				sessionView = component.render(100).join("\n");
+				component.handleInput(" ");
+				component.handleInput("escape");
+				return result;
+			});
+
+			await harness.commands.get("tools").handler("", harness.ctx);
+			expect(defaultView).toContain("Scope: Default");
+			expect(sessionView).toContain("Scope: Session");
+			expect(existsSync(join(agentDir, "resource-settings.json"))).toBe(false);
 			expect(
 				harness.entries.some(
 					(entry) =>
@@ -680,7 +746,50 @@ describe("manager behavior contract", () => {
 						entry.data.tools.length === 0,
 				),
 			).toBe(true);
-			expect(renderRequests).toBeGreaterThan(0);
+		} finally {
+			await harness.shutdown();
+		}
+	});
+
+	test("persists skill toggles from default scope", async () => {
+		const harness = createHarness({
+			tools: [{ name: "read", description: "Read files" }],
+			activeTools: ["read"],
+			skills: [
+				{
+					name: "alpha",
+					description: "Alpha skill",
+					path: "/skills/alpha/SKILL.md",
+				},
+			],
+		});
+		await harness.start();
+		try {
+			let rendered = "";
+			harness.setCustomImplementation(async (factory) => {
+				let result: "close" | "save" = "close";
+				const component = await factory(
+					{ requestRender() {} },
+					createTheme(),
+					createKeybindings(),
+					(value: "close" | "save") => {
+						result = value;
+					},
+				);
+				rendered = component.render(100).join("\n");
+				component.handleInput(" ");
+				component.handleInput("escape");
+				return result;
+			});
+
+			await harness.commands.get("skills").handler("", harness.ctx);
+			expect(rendered).toContain("Scope: Default");
+			expect(readResourceSettings()).toEqual({
+				version: 1,
+				disabledTools: [],
+				disabledSkills: ["alpha"],
+				disabledContexts: [],
+			});
 		} finally {
 			await harness.shutdown();
 		}

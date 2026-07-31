@@ -79,6 +79,19 @@ interface ViewItem {
 	monitor?: MonitorPayload;
 }
 
+type ResourceScope = "session" | "default";
+type ToggleableResourceTab = "tools" | "skills" | "contexts";
+
+function isResourceEnabled(
+	snapshot: ManagerSnapshot,
+	tab: ToggleableResourceTab,
+	id: string,
+): boolean {
+	if (tab === "tools") return snapshot.activeTools.has(id);
+	if (tab === "skills") return snapshot.enabledSkills.has(id);
+	return snapshot.enabledContexts.has(id);
+}
+
 function unique(values: Iterable<string>): string[] {
 	return Array.from(new Set(values)).sort();
 }
@@ -181,11 +194,16 @@ class ConfigManagerView implements Component, Focusable {
 
 	constructor(
 		initialTab: ResourceTab,
-		private readonly getSnapshot: () => ManagerSnapshot,
+		private scope: ResourceScope,
+		private readonly getSnapshot: (scope: ResourceScope) => ManagerSnapshot,
 		private readonly stagedExtensions: Map<string, ExtensionChange>,
 		private readonly theme: Theme,
 		private readonly keybindings: KeybindingsManager,
-		private readonly onToggle: (tab: ResourceTab, id: string) => void,
+		private readonly onToggle: (
+			tab: ResourceTab,
+			id: string,
+			scope: ResourceScope,
+		) => void,
 		private readonly onDone: (action: "close" | "save") => void,
 	) {
 		this.tab = initialTab;
@@ -210,6 +228,13 @@ class ConfigManagerView implements Component, Focusable {
 		}
 		if (this.keybindings.matches(data, "tui.input.tab")) {
 			this.changeTab(1);
+			return;
+		}
+		if (data === "G") {
+			this.scope = this.scope === "default" ? "session" : "default";
+			this.selected = 0;
+			this.monitorScroll = 0;
+			this.activePane = "resources";
 			return;
 		}
 		const items = this.filteredItems();
@@ -248,7 +273,8 @@ class ConfigManagerView implements Component, Focusable {
 		}
 		if (data === " " || this.keybindings.matches(data, "tui.select.confirm")) {
 			const item = items[this.selected];
-			if (item?.enabled !== undefined) this.onToggle(this.tab, item.id);
+			if (item?.enabled !== undefined)
+				this.onToggle(this.tab, item.id, this.scope);
 			return;
 		}
 		if (data === "S" && this.tab === "extensions") {
@@ -266,7 +292,7 @@ class ConfigManagerView implements Component, Focusable {
 
 	render(width: number): string[] {
 		const safeWidth = Math.max(1, width);
-		const snapshot = this.getSnapshot();
+		const snapshot = this.getSnapshot(this.scope);
 		const items = this.filteredItems();
 		this.selected = Math.min(this.selected, Math.max(0, items.length - 1));
 		const selectedItem = items[this.selected];
@@ -288,10 +314,12 @@ class ConfigManagerView implements Component, Focusable {
 			safeWidth,
 		);
 		if (safeWidth < 4) return [title];
+		const scopeLabel = this.theme.fg(
+			this.scope === "default" ? "success" : "warning",
+			`Scope: ${this.scope === "default" ? "Default" : "Session"}`,
+		);
 		const tabLine = truncateToWidth(
-			snapshot.ready
-				? tabs
-				: `${tabs}  ${this.theme.fg("warning", "loading resources…")}`,
+			`${snapshot.ready ? tabs : `${tabs}  ${this.theme.fg("warning", "loading resources…")}`}  ·  ${scopeLabel}`,
 			safeWidth,
 		);
 		if (overlayBudget < 7) {
@@ -353,7 +381,7 @@ class ConfigManagerView implements Component, Focusable {
 			truncateToWidth(
 				this.theme.fg(
 					"dim",
-					`Type search · Tab tabs · ←/→ panes · ↑/↓ move or scroll · Space toggle${saveHint} · Esc close`,
+					`Type search · Tab tabs · G scope · ←/→ panes · ↑/↓ move or scroll · Space toggle${saveHint} · Esc close`,
 				),
 				safeWidth,
 			),
@@ -480,7 +508,7 @@ class ConfigManagerView implements Component, Focusable {
 	}
 
 	private allItems(): ViewItem[] {
-		const snapshot = this.getSnapshot();
+		const snapshot = this.getSnapshot(this.scope);
 		if (this.tab === "overview") {
 			return [
 				{
@@ -829,6 +857,42 @@ export default function piConfigManager(pi: ExtensionAPI) {
 		return enabled;
 	}
 
+	function resolveDefaultTools(): Set<string> {
+		const discovered = discoveredToolNames();
+		const disabled = new Set(globalSettings.disabledTools);
+		return new Set(
+			[...defaultTools, ...externalTools].filter(
+				(name) => discovered.has(name) && !disabled.has(name),
+			),
+		);
+	}
+
+	function resolveDefaultSkills(skills: SkillRecord[]): Set<string> {
+		const disabled = new Set(globalSettings.disabledSkills);
+		return new Set(
+			skills.map((skill) => skill.name).filter((name) => !disabled.has(name)),
+		);
+	}
+
+	function resolveDefaultContexts(contexts: ContextRecord[]): Set<string> {
+		const disabled = new Set(globalSettings.disabledContexts);
+		return new Set(
+			contexts
+				.map((context) => context.path)
+				.filter((path) => !disabled.has(path)),
+		);
+	}
+
+	function getSnapshotForScope(scope: ResourceScope): ManagerSnapshot {
+		if (scope === "session") return snapshot;
+		return {
+			...snapshot,
+			activeTools: resolveDefaultTools(),
+			enabledSkills: resolveDefaultSkills(snapshot.skills),
+			enabledContexts: resolveDefaultContexts(snapshot.contexts),
+		};
+	}
+
 	function updateToolsInventory(): void {
 		if (hasAppliedTools) {
 			for (const name of pi.getActiveTools()) {
@@ -1029,6 +1093,7 @@ export default function piConfigManager(pi: ExtensionAPI) {
 		if (enabled) values.delete(name);
 		else values.add(name);
 		globalSettings = { ...globalSettings, [key]: unique(values) };
+		if (kind === "tools" && !enabled) externalTools.delete(name);
 		saveGlobalSettings(globalSettings);
 		updateToolsInventory();
 		snapshot = {
@@ -1068,15 +1133,19 @@ export default function piConfigManager(pi: ExtensionAPI) {
 		updateToolsInventory();
 		await refreshExtensions(ctx);
 		const staged = new Map<string, ExtensionChange>();
+		const initialScope: ResourceScope = snapshot.presetName
+			? "session"
+			: "default";
 		const action = await ctx.ui.custom<"close" | "save">(
 			(tui, theme, keybindings, done) =>
 				new ConfigManagerView(
 					initialTab,
-					() => snapshot,
+					initialScope,
+					getSnapshotForScope,
 					staged,
 					theme,
 					keybindings,
-					(tab, id) => {
+					(tab, id, scope) => {
 						if (tab === "extensions") {
 							const resource = snapshot.extensions.find(
 								(item) => item.path === id,
@@ -1098,7 +1167,15 @@ export default function piConfigManager(pi: ExtensionAPI) {
 							}
 							const current = staged.get(id)?.enabled ?? resource.enabled;
 							staged.set(id, { resource, enabled: !current });
-						} else {
+						} else if (tab !== "overview" && scope === "default") {
+							const scoped = getSnapshotForScope("default");
+							setGlobalResource(
+								tab,
+								id,
+								!isResourceEnabled(scoped, tab, id),
+								ctx,
+							);
+						} else if (tab !== "overview") {
 							toggleSessionResource(tab, id);
 							updatePromptInventory(ctx.getSystemPromptOptions());
 							updateToolsInventory();

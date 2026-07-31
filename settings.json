@@ -6,6 +6,7 @@
   "packages": [
     "npm:pi-mcp-adapter",
     "npm:pi-lens",
+    "npm:pi-annotate",
     "npm:@ogulcancelik/pi-herdr",
     "git:github.com/algal/pi-openai-server-compaction"
   ]

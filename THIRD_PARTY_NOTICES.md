@@ -6,7 +6,6 @@ Files adapted or copied from Pi's official extension examples include:
 
 - `extensions/notify.ts`
 - `extensions/plan-mode/`
-- `extensions/preset/`
 - `extensions/questionnaire.ts`
 - `extensions/subagent/`
 - `extensions/subagent/agents/`

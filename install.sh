@@ -6,7 +6,6 @@ SUBAGENT_DIR="$ROOT_DIR/extensions/subagent"
 HERDR_SKILL_REPO="https://github.com/ogulcancelik/herdr.git"
 HERDR_SKILL_REF="master"
 HERDR_SKILL_CACHE_DIR="$ROOT_DIR/skills/herdr"
-PRESET_SETTINGS_SKILL_DIR="$ROOT_DIR/extensions/preset/skills/preset-settings"
 HERDR_PI_REFERENCE_SKILL_DIR="$ROOT_DIR/extensions/herdr/skills/herdr-pi-reference"
 AGENT_DIR="${PI_CODING_AGENT_DIR:-${PI_AGENT_DIR:-$HOME/.pi/agent}}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
@@ -70,15 +69,6 @@ install_herdr_skill() {
 	mv "$staging_dir" "$destination_dir"
 }
 
-install_preset_settings_skill() {
-	local staging_dir destination_dir
-	destination_dir="$AGENT_DIR/skills/preset-settings"
-	staging_dir="$(mktemp -d "$AGENT_DIR/skills/.preset-settings.XXXXXX")"
-	cp "$PRESET_SETTINGS_SKILL_DIR/SKILL.md" "$staging_dir/SKILL.md"
-	rm -rf "$destination_dir"
-	mv "$staging_dir" "$destination_dir"
-}
-
 install_herdr_pi_reference_skill() {
 	local staging_dir destination_dir
 	destination_dir="$AGENT_DIR/skills/herdr-pi-reference"
@@ -96,7 +86,7 @@ done
 
 mkdir -p "$AGENT_DIR/extensions" "$AGENT_DIR/agents" "$AGENT_DIR/prompts" "$AGENT_DIR/skills"
 rm -f "$AGENT_DIR/extensions/question.ts" "$AGENT_DIR/extensions/tools.ts" "$AGENT_DIR/extensions/preset.ts" "$AGENT_DIR/extensions/herdr-integration-check.ts" "$AGENT_DIR/prompts/explore-and-gather.md" "$AGENT_DIR/subagent-settings.json"
-rm -rf "$AGENT_DIR/extensions/skills-manager" "$AGENT_DIR/extensions/sidebar-tui" "$AGENT_DIR/extensions/pi-config-manager" "$AGENT_DIR/extensions/herdr-background-monitor" "$AGENT_DIR/extensions/subagent"
+rm -rf "$AGENT_DIR/extensions/skills-manager" "$AGENT_DIR/extensions/sidebar-tui" "$AGENT_DIR/extensions/pi-config-manager" "$AGENT_DIR/extensions/herdr-background-monitor" "$AGENT_DIR/extensions/subagent" "$AGENT_DIR/extensions/preset" "$AGENT_DIR/skills/preset-settings"
 node - "$ROOT_DIR/settings.json" "$AGENT_DIR/settings.json" <<'NODE'
 const fs = require("node:fs");
 
@@ -207,7 +197,6 @@ cp -R "$ROOT_DIR/extensions/." "$AGENT_DIR/extensions/"
 cp -R "$SUBAGENT_DIR/agents/." "$AGENT_DIR/agents/"
 cp -R "$SUBAGENT_DIR/prompts/." "$AGENT_DIR/prompts/"
 install_herdr_skill
-install_preset_settings_skill
 install_herdr_pi_reference_skill
 
 printf 'Installed Pi configuration into %s\n' "$AGENT_DIR"

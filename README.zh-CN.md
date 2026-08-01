@@ -6,7 +6,7 @@
 
 ## 包含内容
 
-- `settings.json` — 模型默认值与可安装的 Pi 包，包括为兼容性固定版本的 [Pi Config Manager](https://github.com/Hor1zonZzz/pi-config-manager)、Pi Lens、MCP 适配器、Herdr 工具集成以及服务端压缩（compaction）支持
+- `settings.json` — 模型默认值与可安装的 Pi 包，包括最新的 [Pi Config Manager](https://github.com/Hor1zonZzz/pi-config-manager)、Pi Lens、MCP 适配器、Herdr 工具集成以及服务端压缩（compaction）支持
 - `presets.json` — `quick`、`explore`、`orchestrator` 与 `deep-code` 预设
 - `codex-fast.json` — 本地 Codex 优先级（priority）开关的全局状态
 - `resource-settings.json` — 针对 Pi 发现的工具、技能（skills）与上下文文件的默认启用/禁用策略
@@ -17,7 +17,8 @@
 
 ## 本地扩展
 
-- `preset/` — 通过 `/preset` 切换模型、思考等级、工具与指令；在输入编辑器上边框右侧嵌入当前预设名称，同时保留 Pi 的滚动指示器，并持有随附的 `preset-settings` 技能
+Preset 选择、模型/思考/资源配置、编辑器边框标签和 `preset-settings` 技能均由已安装的 `pi-config-manager` 包提供。
+
 - `plan-mode/` — 只读规划模式，通过已安装的 `pi-config-manager` 包提供的瞬态（transient）工具策略层集成
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
 - `notify.ts` — 代理回合结束时的终端通知
@@ -35,7 +36,7 @@ cd my-pi-config
 ./install.sh
 ```
 
-安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，把 Herdr 扩展持有的 `herdr-pi-reference` 技能安装到 `~/.pi/agent/skills/herdr-pi-reference/`，并把 Preset 扩展持有的 `preset-settings` 技能安装到 `~/.pi/agent/skills/preset-settings/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。已有的 `resource-settings.json` 状态会被保留；首次迁移时，安装程序会从旧的 `skill-settings.json` 导入被禁用的技能列表。重启 Pi 或运行：
+安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，并把 Herdr 扩展持有的 `herdr-pi-reference` 技能安装到 `~/.pi/agent/skills/herdr-pi-reference/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。`preset-settings` 技能由 Pi Config Manager 包自行提供。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。已有的 `resource-settings.json` 状态会被保留；首次迁移时，安装程序会从旧的 `skill-settings.json` 导入被禁用的技能列表。重启 Pi 或运行：
 
 ```text
 /reload

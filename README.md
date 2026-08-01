@@ -6,7 +6,7 @@ English | [中文文档](README.zh-CN.md)
 
 ## Included
 
-- `settings.json` — model defaults and installable Pi packages, including the compatibility-pinned [Pi Config Manager](https://github.com/Hor1zonZzz/pi-config-manager), Pi Lens, the MCP adapter, the Herdr tool integration, and server-side compaction support
+- `settings.json` — model defaults and installable Pi packages, including the latest [Pi Config Manager](https://github.com/Hor1zonZzz/pi-config-manager), Pi Lens, the MCP adapter, the Herdr tool integration, and server-side compaction support
 - `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
 - `codex-fast.json` — global state for the local Codex priority toggle
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files
@@ -18,10 +18,8 @@ English | [中文文档](README.zh-CN.md)
 
 ## Local extensions
 
-- `preset/` — switch model, thinking level, tools, and instructions with
-  `/preset`; embeds the active preset at the right of the input editor's top
-  border while preserving Pi's scroll indicator, and owns the bundled
-  `preset-settings` skill
+Preset selection, model/thinking/resource profiles, editor-border labels, and the `preset-settings` skill are provided by the installed `pi-config-manager` package.
+
 - `plan-mode/` — read-only planning mode integrated through the installed `pi-config-manager` package's transient tool-policy layer
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
@@ -43,10 +41,10 @@ The installer creates a timestamped backup under `~/.pi/agent/backups/` before
 replacing managed files. It merges `model-overrides.json` into the target
 `models.json`, preserving all unrelated local providers, credentials, and model
 settings. It also refreshes the Herdr skill from upstream `master`, installs it
-to `~/.pi/agent/skills/herdr/`, installs the Herdr-owned `herdr-pi-reference`
-skill to `~/.pi/agent/skills/herdr-pi-reference/`, and installs the preset-owned
-`preset-settings` skill to `~/.pi/agent/skills/preset-settings/`; an existing
-Herdr cache is used when the remote is temporarily unavailable. When Pi starts
+to `~/.pi/agent/skills/herdr/`, and installs the Herdr-owned `herdr-pi-reference`
+skill to `~/.pi/agent/skills/herdr-pi-reference/`; an existing Herdr cache is
+used when the remote is temporarily unavailable. Pi Config Manager supplies its
+own `preset-settings` skill. When Pi starts
 inside Herdr, the local integration checker warns if Herdr's Pi integration is
 missing or outdated; it never installs or updates the Herdr-managed integration
 automatically. Existing `resource-settings.json` state is preserved; on first

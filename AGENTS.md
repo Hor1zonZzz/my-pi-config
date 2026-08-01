@@ -14,12 +14,11 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `codex-fast.json` — initial persisted state for the Codex priority-service toggle.
 - `model-overrides.json` — credential-free overrides merged into the local `models.json`.
 - `install.sh` — backs up the current user configuration, refreshes the Herdr
-  skill cache, and copies managed files and the preset-owned `preset-settings`
-  skill into the Pi agent directory.
+  skill cache, and copies managed files into the Pi agent directory. The
+  installed Pi Config Manager package supplies `preset-settings`.
 - `skills/` — remote-managed skill caches; `install.sh` refreshes Herdr from
   its upstream Git repository and installs it to the target Pi skills directory.
 - `extensions/` — user-level TypeScript extensions loaded by Pi.
-  - `preset/` — implements `/preset`, preset cycling, input-border labels, and preset instruction injection; resource choices are submitted to the installed Pi Config Manager package. Its `skills/preset-settings/` directory contains the source for the installed preset-editing skill.
   - `plan-mode/` — implements read-only planning, plan extraction, and execution progress tracking; tool restrictions are submitted as a transient layer to the installed Pi Config Manager package.
   - `questionnaire.ts` — registers the TUI-only `questionnaire` tool for one or more interactive questions.
   - `notify.ts` — emits a terminal notification after an agent run ends.
@@ -34,7 +33,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 
 Some files must be maintained together:
 
-- `settings.json`, `extensions/preset/`, `extensions/preset/skills/preset-settings/`, `extensions/plan-mode/`, `presets.json`, and `resource-settings.json` are coupled through the published `npm:pi-config-manager` event contract. Presets submit profile policy, Plan Mode submits a transient restriction layer, and the bundled skill documents the supported profile-editing contract. Config Manager source and behavior tests live in <https://github.com/Hor1zonZzz/pi-config-manager>, not in this repository; alternate-screen follow-up is tracked in [issue #1](https://github.com/Hor1zonZzz/pi-config-manager/issues/1).
+- `settings.json`, `presets.json`, `resource-settings.json`, and `extensions/plan-mode/` are coupled through the published `npm:pi-config-manager` package. Config Manager owns Preset model/thinking/resource policy, session restoration, editor-border labels, prompt injection, and the bundled `preset-settings` skill; Plan Mode submits a transient restriction layer. Config Manager source and behavior tests live in <https://github.com/Hor1zonZzz/pi-config-manager>, not in this repository; alternate-screen follow-up is tracked in [issue #1](https://github.com/Hor1zonZzz/pi-config-manager/issues/1).
 - `extensions/subagent/index.ts`, `extensions/subagent/agents.ts`, `extensions/subagent/agents/*.md`, and `extensions/subagent/prompts/*.md` form the upstream-derived subagent workflow. Agent names referenced by a prompt must exist in `extensions/subagent/agents/`.
 - Model identifiers appear in `settings.json`, `presets.json`, `extensions/subagent/agents/*.md`, and `model-overrides.json`. When models are renamed or removed, inspect all four locations.
 - `extensions/plan-mode/index.ts` and `extensions/plan-mode/utils.ts` must agree on state, plan markers, and the bash safety policy. If a question tool is renamed, update `PLAN_MODE_TOOLS` and the injected instructions.
@@ -51,12 +50,10 @@ The following areas closely track official examples:
 - `extensions/plan-mode/`
 - `extensions/questionnaire.ts`
 - `extensions/subagent/`
-- most of `extensions/preset/`
 - `extensions/subagent/agents/` and `extensions/subagent/prompts/`
 
 Local behavior that must be preserved during an upstream refresh includes:
 
-- preset/config-manager synchronization and editor-border behavior;
 - OpenAI Codex model choices in `extensions/subagent/agents/*.md`;
 - any local tool choices or instructions in `presets.json` and plan mode;
 - the custom Codex Fast implementation and its retained upstream attribution.
@@ -85,10 +82,10 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - `codex-fast-toggle` depends on the `before_provider_request` lifecycle and the provider-specific outgoing payload accepting `service_tier`. Verify the real request shape after provider/runtime changes.
 - `subagent` depends on Pi CLI flags, LF-delimited JSON-mode events, message shapes, executable discovery, and subprocess cancellation behavior. Re-copy the matching installed Pi version's upstream example when compatibility changes, then reapply only the local model frontmatter.
 - `extensions/herdr/` background monitoring depends on the official `herdr_agent` tool-result shape, Herdr's public `agent get` JSON response and lifecycle states, Pi session IDs, cancellable `pi.exec`, and `agent_settled` follow-up delivery. It must remain separate from the Herdr-managed Pi state extension and cannot provide prompt-level attribution when multiple Pi sessions share one target pane.
-- `questionnaire` and `preset` depend on TUI component, key handling, autocomplete, theming, and invalidation contracts.
-- The external `pi-config-manager` package owns effective tool activation, prompt filtering, extension enablement, resource-state persistence, the unified manager UI, and the resource HUD. Keep its package version and event contract compatible with the local Preset and Plan Mode extensions.
+- `questionnaire` depends on TUI component, key handling, autocomplete, theming, and invalidation contracts.
+- The external `pi-config-manager` package owns Presets, effective tool activation, prompt filtering, extension enablement, resource-state persistence, the unified manager UI, and the resource HUD. Keep its runtime-layer event contract compatible with the local Plan Mode extension.
 - `plan-mode` depends on tool names, lifecycle event ordering, session entries, the config-manager transient-layer contract, and its bash allowlist. Treat the allowlist as a convenience guard, not a security boundary.
-- `preset` depends on model registry lookup, thinking-level values, the config-manager profile contract, and session entry restoration.
+- Config Manager Presets depend on model identifiers and resource names in `presets.json`; validate those values when changing models, tools, or skills.
 
 ## Editing Guidelines
 
@@ -110,7 +107,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - Existing managed paths are backed up under `backups/my-pi-config-<timestamp>/` before copying.
 - The installer preserves Pi-managed `settings.json.lastChangelogVersion` instead of tracking it in this repository.
 - It merges credential-free `model-overrides.json` entries into the target `models.json`, preserving unrelated local providers and settings.
-- It removes obsolete extension paths, the previously customized `extensions/subagent/`, `subagent-settings.json`, and the retired `explore-and-gather` prompt before copying the current settings, presets, Fast state, local extensions, upstream subagent-owned agents/prompts, the refreshed Herdr skill, and the preset-owned skills.
+- It removes obsolete extension paths, including the former standalone Preset extension and skill, the previously customized `extensions/subagent/`, `subagent-settings.json`, and the retired `explore-and-gather` prompt before copying the current settings, presets, Fast state, local extensions, upstream subagent-owned agents/prompts, and refreshed Herdr-owned skills.
 - It preserves an existing target `resource-settings.json`; when absent, it migrates the disabled Skills list from legacy `skill-settings.json` before falling back to repository defaults.
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
 

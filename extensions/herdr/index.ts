@@ -12,7 +12,7 @@ const PROMPT_MARKER = "Herdr asynchronous prompt policy:";
 const PROMPT_GUIDANCE = [
 	PROMPT_MARKER,
 	'- When Herdr work should continue asynchronously, call `herdr_agent` with `action: "prompt"` and explicit `wait: false`.',
-	"- After an asynchronous Herdr prompt, continue useful parent work instead of immediately calling `herdr_agent` wait; this extension will send a follow-up when the target settles.",
+	"- After dispatching an asynchronous sub-agent, do not poll or wait. Continue with other useful work, or stop if none remains; completion will be reported automatically.",
 	"- Do not submit another asynchronous prompt to the same Herdr pane until its completion follow-up unless the prompts intentionally belong to one grouped run.",
 ].join("\n");
 

@@ -16,24 +16,220 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { Message } from "@earendil-works/pi-ai";
-import { StringEnum } from "@earendil-works/pi-ai";
+import type { AgentToolResult, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+	clampThinkingLevel,
+	getSupportedThinkingLevels,
+	type Message,
+	type Model,
+	StringEnum,
+} from "@earendil-works/pi-ai";
 import {
 	CONFIG_DIR_NAME,
+	DynamicBorder,
 	type ExtensionAPI,
+	type ExtensionCommandContext,
 	getAgentDir,
 	getMarkdownTheme,
+	getSelectListTheme,
+	type KeybindingsManager,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import {
+	Container,
+	fuzzyFilter,
+	type Focusable,
+	Input,
+	Markdown,
+	type SelectItem,
+	SelectList,
+	Spacer,
+	Text,
+} from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+import {
+	type AgentConfig,
+	type AgentScope,
+	discoverAgents,
+	updateAgentModelSettings,
+} from "./agents.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
+const THINKING_LEVELS: ThinkingLevel[] = [
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+];
+
+const THINKING_LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
+	off: "No reasoning",
+	minimal: "Very brief reasoning",
+	low: "Light reasoning",
+	medium: "Moderate reasoning",
+	high: "Deep reasoning",
+	xhigh: "Extra-high reasoning",
+	max: "Maximum reasoning",
+};
+
+class SearchableSelector extends Container implements Focusable {
+	private readonly searchInput = new Input();
+	private selectList: SelectList;
+	private readonly selectListChildIndex: number;
+	private readonly allItems: SelectItem[];
+	private readonly keybindings: KeybindingsManager;
+	private readonly requestRender: () => void;
+	private readonly onSelect: (value: string) => void;
+	private readonly onCancel: () => void;
+	private _focused = false;
+
+	get focused(): boolean {
+		return this._focused;
+	}
+
+	set focused(value: boolean) {
+		this._focused = value;
+		this.searchInput.focused = value;
+	}
+
+	constructor(
+		title: string,
+		items: SelectItem[],
+		selectedValue: string | undefined,
+		keybindings: KeybindingsManager,
+		requestRender: () => void,
+		onSelect: (value: string) => void,
+		onCancel: () => void,
+	) {
+		super();
+		this.allItems = items;
+		this.keybindings = keybindings;
+		this.requestRender = requestRender;
+		this.onSelect = onSelect;
+		this.onCancel = onCancel;
+
+		this.addChild(new DynamicBorder());
+		this.addChild(new Spacer(1));
+		this.addChild(new Text(title, 1, 0));
+		this.addChild(new Spacer(1));
+		this.addChild(this.searchInput);
+		this.addChild(new Spacer(1));
+		this.selectList = this.createSelectList(items, selectedValue);
+		this.selectListChildIndex = this.children.length;
+		this.addChild(this.selectList);
+		this.addChild(new Spacer(1));
+		this.addChild(new Text("Type to filter · ↑↓ navigate · Enter select · Esc cancel", 1, 0));
+		this.addChild(new Spacer(1));
+		this.addChild(new DynamicBorder());
+	}
+
+	private createSelectList(items: SelectItem[], selectedValue?: string): SelectList {
+		const baseTheme = getSelectListTheme();
+		const list = new SelectList(
+			items,
+			Math.min(Math.max(items.length, 1), 12),
+			{
+				...baseTheme,
+				noMatch: () => baseTheme.noMatch("  No matching options"),
+			},
+			{ minPrimaryColumnWidth: 24, maxPrimaryColumnWidth: 48 },
+		);
+		const selectedIndex = selectedValue
+			? items.findIndex((item) => item.value === selectedValue)
+			: -1;
+		if (selectedIndex >= 0) list.setSelectedIndex(selectedIndex);
+		list.onSelect = (item) => this.onSelect(item.value);
+		list.onCancel = this.onCancel;
+		return list;
+	}
+
+	private applyFilter(): void {
+		const selectedValue = this.selectList.getSelectedItem()?.value;
+		const query = this.searchInput.getValue();
+		const filteredItems = query
+			? fuzzyFilter(
+					this.allItems,
+					query,
+					(item) => `${item.label} ${item.value} ${item.description ?? ""}`,
+				)
+			: this.allItems;
+		this.selectList = this.createSelectList(filteredItems, selectedValue);
+		this.children[this.selectListChildIndex] = this.selectList;
+	}
+
+	handleInput(data: string): void {
+		if (
+			this.keybindings.matches(data, "tui.select.up") ||
+			this.keybindings.matches(data, "tui.select.down") ||
+			this.keybindings.matches(data, "tui.select.confirm") ||
+			this.keybindings.matches(data, "tui.select.cancel")
+		) {
+			this.selectList.handleInput(data);
+		} else {
+			this.searchInput.handleInput(data);
+			this.applyFilter();
+		}
+		this.requestRender();
+	}
+}
+
+async function selectOption(
+	ctx: ExtensionCommandContext,
+	title: string,
+	items: SelectItem[],
+	selectedValue?: string,
+): Promise<string | undefined> {
+	return ctx.ui.custom<string | undefined>((tui, _theme, keybindings, done) =>
+		new SearchableSelector(
+			title,
+			items,
+			selectedValue,
+			keybindings,
+			() => tui.requestRender(),
+			done,
+			() => done(undefined),
+		),
+	);
+}
+
+function getModelRef(model: Model<any>): string {
+	return `${model.provider}/${model.id}`;
+}
+
+function getSelectableModels(ctx: ExtensionCommandContext): Model<any>[] {
+	const available = ctx.modelRegistry.getAvailable();
+	if (ctx.scopedModels.length === 0) {
+		return available.sort((a, b) => getModelRef(a).localeCompare(getModelRef(b)));
+	}
+
+	const scopedRefs = new Set(ctx.scopedModels.map(({ model }) => getModelRef(model)));
+	return available
+		.filter((model) => scopedRefs.has(getModelRef(model)))
+		.sort((a, b) => getModelRef(a).localeCompare(getModelRef(b)));
+}
+
+function resolveConfiguredModel(
+	configuredRef: string | undefined,
+	models: Model<any>[],
+): { model?: Model<any>; thinkingLevel?: ThinkingLevel } {
+	if (!configuredRef) return {};
+	const exact = models.find((model) => getModelRef(model) === configuredRef);
+	if (exact) return { model: exact };
+
+	const separator = configuredRef.lastIndexOf(":");
+	if (separator === -1) return {};
+	const suffix = configuredRef.slice(separator + 1) as ThinkingLevel;
+	if (!THINKING_LEVELS.includes(suffix)) return {};
+	const baseRef = configuredRef.slice(0, separator);
+	const model = models.find((candidate) => getModelRef(candidate) === baseRef);
+	return model ? { model, thinkingLevel: suffix } : {};
+}
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -264,8 +460,14 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
+interface DispatchDefaults {
+	model?: string;
+	thinkingLevel?: ThinkingLevel;
+}
+
 async function runSingleAgent(
 	defaultCwd: string,
+	dispatchDefaults: DispatchDefaults,
 	agents: AgentConfig[],
 	agentName: string,
 	task: string,
@@ -292,7 +494,13 @@ async function runSingleAgent(
 	}
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (agent.model) args.push("--model", agent.model);
+	const inheritsDispatchModel = !agent.model;
+	const model = agent.model ?? dispatchDefaults.model;
+	const thinkingLevel =
+		agent.thinkingLevel ??
+		(inheritsDispatchModel ? dispatchDefaults.thinkingLevel : undefined);
+	if (model) args.push("--model", model);
+	if (thinkingLevel) args.push("--thinking", thinkingLevel);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
 	let tmpPromptDir: string | null = null;
@@ -306,7 +514,7 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: agent.model,
+		model,
 		step,
 	};
 
@@ -458,6 +666,104 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
+	pi.registerCommand("subagent", {
+		description: "Configure a user subagent model and thinking level",
+		handler: async (_args, ctx) => {
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify("/subagent requires TUI mode", "error");
+				return;
+			}
+
+			const agents = discoverAgents(ctx.cwd, "user").agents.sort((a, b) =>
+				a.name.localeCompare(b.name),
+			);
+			if (agents.length === 0) {
+				ctx.ui.notify(`No user agents found in ${path.join(getAgentDir(), "agents")}`, "warning");
+				return;
+			}
+
+			const selectedAgentName = await selectOption(
+				ctx,
+				"Select Subagent",
+				agents.map((agent) => ({
+					value: agent.name,
+					label: agent.name,
+					description: `${agent.description} · ${agent.model ?? "inherits current model"} · thinking:${agent.thinkingLevel ?? "default"}`,
+				})),
+			);
+			if (!selectedAgentName) return;
+			const agent = agents.find((candidate) => candidate.name === selectedAgentName);
+			if (!agent) return;
+
+			const models = getSelectableModels(ctx);
+			if (models.length === 0) {
+				ctx.ui.notify("No models are currently available to this Pi session", "warning");
+				return;
+			}
+
+			const configured = resolveConfiguredModel(agent.model, models);
+			const selectedModelRef = await selectOption(
+				ctx,
+				`Select Model for ${agent.name}`,
+				models.map((model) => ({
+					value: getModelRef(model),
+					label: getModelRef(model),
+					description:
+						model.name === model.id
+							? ctx.modelRegistry.getProviderDisplayName(model.provider)
+							: model.name,
+				})),
+				configured.model ? getModelRef(configured.model) : undefined,
+			);
+			if (!selectedModelRef) return;
+			const selectedModel = models.find((model) => getModelRef(model) === selectedModelRef);
+			if (!selectedModel) return;
+
+			const supportedThinkingLevels = getSupportedThinkingLevels(
+				selectedModel,
+			) as ThinkingLevel[];
+			const scopedThinkingLevel = ctx.scopedModels.find(
+				({ model }) => getModelRef(model) === selectedModelRef,
+			)?.thinkingLevel;
+			const currentThinkingLevel = clampThinkingLevel(
+				selectedModel,
+				agent.thinkingLevel ??
+					configured.thinkingLevel ??
+					scopedThinkingLevel ??
+					ctx.thinkingLevel ??
+					"off",
+			) as ThinkingLevel;
+			const selectedThinkingLevel = await selectOption(
+				ctx,
+				`Select Thinking Level for ${agent.name}`,
+				supportedThinkingLevels.map((level) => ({
+					value: level,
+					label: level,
+					description: THINKING_LEVEL_DESCRIPTIONS[level],
+				})),
+				currentThinkingLevel,
+			);
+			if (!selectedThinkingLevel) return;
+
+			try {
+				await updateAgentModelSettings(
+					agent,
+					selectedModelRef,
+					selectedThinkingLevel as ThinkingLevel,
+				);
+				ctx.ui.notify(
+					`${agent.name}: ${selectedModelRef} · thinking:${selectedThinkingLevel}`,
+					"info",
+				);
+			} catch (error) {
+				ctx.ui.notify(
+					`Failed to update ${agent.name}: ${error instanceof Error ? error.message : String(error)}`,
+					"error",
+				);
+			}
+		},
+	});
+
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
@@ -471,6 +777,10 @@ export default function (pi: ExtensionAPI) {
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const agentScope: AgentScope = params.agentScope ?? "user";
+			const dispatchDefaults: DispatchDefaults = {
+				model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+				thinkingLevel: ctx.thinkingLevel,
+			};
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
@@ -502,7 +812,11 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
+			if (
+				(agentScope === "project" || agentScope === "both") &&
+				confirmProjectAgents &&
+				ctx.hasUI
+			) {
 				const requestedAgentNames = new Set<string>();
 				if (params.chain) for (const step of params.chain) requestedAgentNames.add(step.agent);
 				if (params.tasks) for (const t of params.tasks) requestedAgentNames.add(t.agent);
@@ -552,6 +866,7 @@ export default function (pi: ExtensionAPI) {
 
 					const result = await runSingleAgent(
 						ctx.cwd,
+						dispatchDefaults,
 						agents,
 						step.agent,
 						taskWithContext,
@@ -624,6 +939,7 @@ export default function (pi: ExtensionAPI) {
 				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
 					const result = await runSingleAgent(
 						ctx.cwd,
+						dispatchDefaults,
 						agents,
 						t.agent,
 						t.task,
@@ -666,6 +982,7 @@ export default function (pi: ExtensionAPI) {
 			if (params.agent && params.task) {
 				const result = await runSingleAgent(
 					ctx.cwd,
+					dispatchDefaults,
 					agents,
 					params.agent,
 					params.task,

@@ -23,7 +23,7 @@ Preset selection, model/thinking/resource profiles, editor-border labels, and th
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
-- `subagent/` — Pi's official subagent example copied from upstream, with only the sample agents' model frontmatter changed to local OpenAI Codex models
+- `subagent/` — Pi's official subagent example adapted with local model defaults and a `/subagent` TUI for selecting a user agent's available model and thinking level
 - `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier for the current Pi session while keeping the provider identity as `openai-codex`
 
 ## Install
@@ -67,6 +67,7 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 /extensions
 /plan
 /fast
+/subagent
 /implement <task>
 /scout-and-plan <task>
 /implement-and-review <task>

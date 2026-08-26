@@ -22,7 +22,7 @@ Preset 选择、模型/思考/资源配置、编辑器边框标签和 `preset-se
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
 - `notify.ts` — 代理回合结束时的终端通知
 - `herdr/` — 统一持有本地 Herdr 集成检查器、异步 `herdr_agent prompt` 监控器和 `herdr-pi-reference` 技能源码；它让显式 `wait: false` 调用保持非阻塞，并注入会话级完成 follow-up
-- `subagent/` — 直接复制 Pi 官方上游的子代理示例，仅将示例代理的模型 frontmatter 改为本地 OpenAI Codex 模型
+- `subagent/` — 基于 Pi 官方 subagent 示例适配，包含本地模型默认值，以及用于选择用户级 agent 可用模型与 thinking level 的 `/subagent` TUI
 - `codex-fast-toggle/` — `/fast on|off` 为当前 Pi session 切换 Codex 优先级服务层级（service tier），同时保持提供方标识为 `openai-codex`
 
 ## 安装
@@ -54,6 +54,7 @@ cd my-pi-config
 /extensions
 /plan
 /fast
+/subagent
 /implement <task>
 /scout-and-plan <task>
 /implement-and-review <task>

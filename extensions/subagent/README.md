@@ -10,6 +10,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Markdown rendering**: Final output rendered with proper formatting (expanded view)
 - **Usage tracking**: Shows turns, tokens, cost, and context usage per agent
 - **Abort support**: Ctrl+C propagates to kill subagent processes
+- **Interactive configuration**: `/subagent` selects a user agent, an available model, and a supported thinking level
 
 ## Structure
 
@@ -65,6 +66,16 @@ To enable project-local agents, pass `agentScope: "both"` (or `"project"`). Only
 When running interactively, the tool prompts for confirmation before running project-local agents. Set `confirmProjectAgents: false` to disable.
 
 ## Usage
+
+### Configure a user agent
+
+```text
+/subagent
+```
+
+The command opens searchable agent, model, and thinking-level selectors. The model list is restricted to models currently available to Pi and, when configured, the current session's scoped models. The selected values are written directly to the user agent's Markdown frontmatter and apply on its next invocation without `/reload`.
+
+Re-running this repository's installer backs up and then replaces installed user agent files with the repository defaults, so make durable defaults in the repository before reinstalling.
 
 ### Single agent
 ```
@@ -131,11 +142,14 @@ Agents are markdown files with YAML frontmatter:
 name: my-agent
 description: What this agent does
 tools: read, grep, find, ls
-model: claude-haiku-4-5
+model: openai-codex/gpt-5.6-sol
+thinkingLevel: high
 ---
 
 System prompt for the agent goes here.
 ```
+
+`model` and `thinkingLevel` are optional. When `model` is omitted, the subagent inherits the dispatching session's active model; when both fields are omitted, it also inherits the dispatching thinking level. Legacy `model: provider/model:thinking` values remain valid and are normalized into separate fields the next time `/subagent` saves that agent.
 
 **Locations:**
 - `~/.pi/agent/agents/*.md` - User-level (always loaded)
@@ -147,10 +161,10 @@ Project agents override user agents with the same name when `agentScope: "both"`
 
 | Agent | Purpose | Model | Tools |
 |-------|---------|-------|-------|
-| `scout` | Fast codebase recon | Haiku | read, grep, find, ls, bash |
-| `planner` | Implementation plans | Sonnet | read, grep, find, ls |
-| `reviewer` | Code review | Sonnet | read, grep, find, ls, bash |
-| `worker` | General-purpose | Sonnet | (all default) |
+| `scout` | Fast codebase recon | Configurable | read, grep, find, ls, bash |
+| `planner` | Implementation plans | Configurable | read, grep, find, ls |
+| `reviewer` | Code review | Configurable | read, grep, find, ls, bash |
+| `worker` | General-purpose | Configurable | (all default) |
 
 ## Workflow Prompts
 
@@ -171,5 +185,5 @@ Project agents override user agents with the same name when `agentScope: "both"`
 
 - Output truncated to last 10 items in collapsed view (expand to see all)
 - Parallel model-visible output is capped at 50 KB per task; full results remain in tool details
-- Agents discovered fresh on each invocation (allows editing mid-session)
+- Agents discovered fresh on each invocation (allows `/subagent` changes to apply immediately)
 - Parallel mode limited to 8 tasks, 4 concurrent

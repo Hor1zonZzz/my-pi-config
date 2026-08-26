@@ -11,7 +11,7 @@ English | [中文文档](README.zh-CN.md)
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files
 - `model-overrides.json` — managed, credential-free overrides for built-in models
 - `extensions/` — local extensions; `extensions/subagent/` also owns its agent definitions and workflow prompts
-- `prompts/` — local general-purpose prompt templates, including `/understand` for requirement alignment
+- `prompts/` — local general-purpose prompt templates, including `/understand` and `/explore-understand` for manually controlled requirement alignment
 - `skills/` — remote-managed skill caches; Herdr is refreshed from its upstream
   Git repository during installation
 - `install.sh` — backup and install into `~/.pi/agent`
@@ -70,11 +70,14 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 /fast
 /subagent
 /understand [requirement]
+/explore-understand [requirement]
 /scout <task>
 /implement <task>
 /scout-and-plan <task>
 /implement-and-review <task>
 ```
+
+`/understand` clarifies the requirement directly. `/explore-understand` explicitly begins with focused, read-only repository exploration. Both wait for confirmation before implementation.
 
 ## Security
 

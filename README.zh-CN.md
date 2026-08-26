@@ -55,6 +55,7 @@ cd my-pi-config
 /plan
 /fast
 /subagent
+/scout <task>
 /implement <task>
 /scout-and-plan <task>
 /implement-and-review <task>

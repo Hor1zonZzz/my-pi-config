@@ -68,6 +68,7 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 /plan
 /fast
 /subagent
+/scout <task>
 /implement <task>
 /scout-and-plan <task>
 /implement-and-review <task>

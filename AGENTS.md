@@ -15,6 +15,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `install.sh` — backs up the current user configuration, refreshes the Herdr
   skill cache, and copies managed files into the Pi agent directory. The
   installed Pi Config Manager package supplies `preset-settings`.
+- `prompts/` — local general-purpose prompt templates installed as global slash commands.
 - `skills/` — remote-managed skill caches; `install.sh` refreshes Herdr from
   its upstream Git repository and installs it to the target Pi skills directory.
 - `extensions/` — user-level TypeScript extensions loaded by Pi.
@@ -108,7 +109,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - Existing managed paths are backed up under `backups/my-pi-config-<timestamp>/` before copying.
 - The installer preserves Pi-managed `settings.json.lastChangelogVersion` instead of tracking it in this repository.
 - It merges credential-free `model-overrides.json` entries into the target `models.json`, preserving unrelated local providers and settings.
-- It removes obsolete extension paths and state, including the former standalone Preset extension and skill, the previously customized `extensions/subagent/`, `subagent-settings.json`, the retired `explore-and-gather` prompt, and the former global `codex-fast.json` state before copying the current settings, presets, local extensions, upstream subagent-owned agents/prompts, and refreshed Herdr-owned skills.
+- It removes obsolete extension paths and state, including the former standalone Preset extension and skill, the previously customized `extensions/subagent/`, `subagent-settings.json`, the retired `explore-and-gather` prompt, and the former global `codex-fast.json` state before copying the current settings, presets, local extensions, local general-purpose prompts, upstream subagent-owned agents/prompts, and refreshed Herdr-owned skills.
 - It preserves an existing target `resource-settings.json`; when absent, it migrates the disabled Skills list from legacy `skill-settings.json` before falling back to repository defaults.
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
 - It backs up and then replaces installed user-agent Markdown files with repository copies, so `/subagent` runtime edits must be moved into this repository before reinstalling if they should become reproducible defaults.

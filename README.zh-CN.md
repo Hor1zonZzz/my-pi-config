@@ -11,6 +11,7 @@
 - `resource-settings.json` — 针对 Pi 发现的工具、技能（skills）与上下文文件的默认启用/禁用策略
 - `model-overrides.json` — 受管理的、不含凭据的内置模型覆盖项
 - `extensions/` — 本地扩展；`extensions/subagent/` 同时持有其代理定义与工作流提示词
+- `prompts/` — 本地通用提示词模板，包括用于需求对齐的 `/understand`
 - `skills/` — 远端受管的技能缓存；Herdr 会在安装期间从其上游 Git 仓库刷新
 - `install.sh` — 备份并安装到 `~/.pi/agent`
 
@@ -55,6 +56,7 @@ cd my-pi-config
 /plan
 /fast
 /subagent
+/understand [requirement]
 /scout <task>
 /implement <task>
 /scout-and-plan <task>

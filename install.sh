@@ -195,6 +195,7 @@ NODE
 cp -R "$ROOT_DIR/extensions/." "$AGENT_DIR/extensions/"
 cp -R "$SUBAGENT_DIR/agents/." "$AGENT_DIR/agents/"
 cp -R "$SUBAGENT_DIR/prompts/." "$AGENT_DIR/prompts/"
+cp -R "$ROOT_DIR/prompts/." "$AGENT_DIR/prompts/"
 install_herdr_skill
 install_herdr_pi_reference_skill
 

@@ -8,7 +8,6 @@ English | [中文文档](README.zh-CN.md)
 
 - `settings.json` — model defaults and installable Pi packages, including the latest [Pi Config Manager](https://github.com/Hor1zonZzz/pi-config-manager), Pi Lens, the MCP adapter, the Herdr tool integration, and server-side compaction support
 - `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
-- `codex-fast.json` — global state for the local Codex priority toggle
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files
 - `model-overrides.json` — managed, credential-free overrides for built-in models
 - `extensions/` — local extensions; `extensions/subagent/` also owns its agent definitions and workflow prompts
@@ -25,7 +24,7 @@ Preset selection, model/thinking/resource profiles, editor-border labels, and th
 - `notify.ts` — terminal notification when an agent turn ends
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
 - `subagent/` — Pi's official subagent example copied from upstream, with only the sample agents' model frontmatter changed to local OpenAI Codex models
-- `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier while keeping the provider identity as `openai-codex`
+- `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier for the current Pi session while keeping the provider identity as `openai-codex`
 
 ## Install
 
@@ -49,7 +48,7 @@ inside Herdr, the local integration checker warns if Herdr's Pi integration is
 missing or outdated; it never installs or updates the Herdr-managed integration
 automatically. Existing `resource-settings.json` state is preserved; on first
 migration, the installer imports disabled Skills
-from the legacy `skill-settings.json`. Restart Pi or run:
+from the legacy `skill-settings.json`. During migration it also backs up and removes the former global `codex-fast.json` state file. Restart Pi or run:
 
 ```text
 /reload

@@ -1,6 +1,6 @@
 # Codex Fast Toggle
 
-Local Pi extension derived from `pi-openai-codex-fast` (MIT) with a persistent Fast On/Off control.
+Local Pi extension derived from `pi-openai-codex-fast` (MIT) with a session-scoped Fast On/Off control.
 
 English | [中文文档](README.zh-CN.md)
 
@@ -10,7 +10,9 @@ English | [中文文档](README.zh-CN.md)
 - Fast On sends Codex requests with `service_tier: "priority"`.
 - Fast Off uses the default service tier.
 - Provider and model identity always remain `openai-codex/<model>`.
-- Global state is stored in `~/.pi/agent/codex-fast.json` and is shared by Pi processes and subagents.
+- Fast is Off by default in sessions without saved state.
+- State is stored in the current Pi session. Resuming or reloading that session restores it, and tree navigation follows the active branch.
+- Other Pi sessions, processes, and standalone subagents are not affected. Forks and clones inherit the state at the copied branch point, then diverge independently.
 - `/fast` autocomplete is shown only while an `openai-codex` model is active.
 - The status bar shows `⚡ fast` while Fast is enabled on a Codex model.
 

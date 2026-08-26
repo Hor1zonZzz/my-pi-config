@@ -1,9 +1,6 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import {
-	getAgentDir,
-	type ExtensionAPI,
-	type ExtensionContext,
+import type {
+	ExtensionAPI,
+	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 
@@ -13,7 +10,7 @@ type FastState = {
 	enabled: boolean;
 };
 
-const FAST_STATE_PATH = join(getAgentDir(), "codex-fast.json");
+const FAST_STATE_ENTRY_TYPE = "codex-fast";
 
 function isCodexProvider(provider: string | undefined): boolean {
 	return provider === OPENAI_CODEX_PROVIDER;
@@ -40,36 +37,22 @@ function applyFastServiceTier(
 	return nextRequest;
 }
 
-async function readFastState(): Promise<boolean> {
-	try {
-		const parsed = JSON.parse(
-			await readFile(FAST_STATE_PATH, "utf8"),
-		) as Partial<FastState>;
-		return parsed.enabled === true;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-			console.warn(
-				`[codex-fast-toggle] Failed to read ${FAST_STATE_PATH}:`,
-				error,
-			);
+function getFastState(ctx: ExtensionContext): boolean {
+	let enabled = false;
+	for (const entry of ctx.sessionManager.getBranch()) {
+		if (
+			entry.type !== "custom" ||
+			entry.customType !== FAST_STATE_ENTRY_TYPE
+		) {
+			continue;
 		}
-		return true;
-	}
-}
 
-async function writeFastState(enabled: boolean): Promise<void> {
-	await mkdir(dirname(FAST_STATE_PATH), { recursive: true });
-	const temporaryPath = `${FAST_STATE_PATH}.${process.pid}.${Date.now()}.tmp`;
-	try {
-		await writeFile(
-			temporaryPath,
-			`${JSON.stringify({ enabled }, null, 2)}\n`,
-			"utf8",
-		);
-		await rename(temporaryPath, FAST_STATE_PATH);
-	} finally {
-		await rm(temporaryPath, { force: true }).catch(() => undefined);
+		const state = entry.data as Partial<FastState> | undefined;
+		if (typeof state?.enabled === "boolean") {
+			enabled = state.enabled;
+		}
 	}
+	return enabled;
 }
 
 function createFastAutocompleteProvider(
@@ -154,8 +137,8 @@ function createFastAutocompleteProvider(
 	};
 }
 
-export default async function (pi: ExtensionAPI) {
-	let fastEnabled = await readFastState();
+export default function (pi: ExtensionAPI) {
+	let fastEnabled = false;
 
 	pi.on("before_provider_request", (event, ctx) => {
 		if (!isCodexProvider(ctx.model?.provider)) {
@@ -172,17 +155,14 @@ export default async function (pi: ExtensionAPI) {
 		);
 	}
 
-	async function refreshState(ctx: ExtensionContext): Promise<void> {
-		fastEnabled = await readFastState();
+	function restoreFastState(ctx: ExtensionContext): void {
+		fastEnabled = getFastState(ctx);
 		updateStatus(ctx);
 	}
 
-	async function setFastMode(
-		enabled: boolean,
-		ctx: ExtensionContext,
-	): Promise<void> {
+	function setFastMode(enabled: boolean, ctx: ExtensionContext): void {
 		fastEnabled = enabled;
-		await writeFastState(enabled);
+		pi.appendEntry(FAST_STATE_ENTRY_TYPE, { enabled });
 		updateStatus(ctx);
 		ctx.ui.notify(
 			`Codex Fast: ${enabled ? "On (priority)" : "Off (default)"}`,
@@ -190,21 +170,21 @@ export default async function (pi: ExtensionAPI) {
 		);
 	}
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", (_event, ctx) => {
 		ctx.ui.addAutocompleteProvider((current) =>
 			createFastAutocompleteProvider(current, () =>
 				isCodexProvider(ctx.model?.provider),
 			),
 		);
-		await refreshState(ctx);
+		restoreFastState(ctx);
 	});
 
-	pi.on("model_select", async (_event, ctx) => {
-		await refreshState(ctx);
+	pi.on("session_tree", (_event, ctx) => {
+		restoreFastState(ctx);
 	});
 
-	pi.on("before_agent_start", async (_event, ctx) => {
-		await refreshState(ctx);
+	pi.on("model_select", (_event, ctx) => {
+		updateStatus(ctx);
 	});
 
 	pi.on("input", async (event, ctx) => {
@@ -242,7 +222,7 @@ export default async function (pi: ExtensionAPI) {
 			return { action: "handled" as const };
 		}
 
-		await setFastMode(requested === "on", ctx);
+		setFastMode(requested === "on", ctx);
 		return { action: "handled" as const };
 	});
 }

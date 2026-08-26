@@ -11,7 +11,6 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `settings.json` — global Pi defaults and Pi package dependencies, including the published `npm:pi-config-manager` package.
 - `presets.json` — named model, thinking-level, resource, and instruction presets.
 - `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files.
-- `codex-fast.json` — initial persisted state for the Codex priority-service toggle.
 - `model-overrides.json` — credential-free overrides merged into the local `models.json`.
 - `install.sh` — backs up the current user configuration, refreshes the Herdr
   skill cache, and copies managed files into the Pi agent directory. The
@@ -37,7 +36,7 @@ Some files must be maintained together:
 - `extensions/subagent/index.ts`, `extensions/subagent/agents.ts`, `extensions/subagent/agents/*.md`, and `extensions/subagent/prompts/*.md` form the upstream-derived subagent workflow. Agent names referenced by a prompt must exist in `extensions/subagent/agents/`.
 - Model identifiers appear in `settings.json`, `presets.json`, `extensions/subagent/agents/*.md`, and `model-overrides.json`. When models are renamed or removed, inspect all four locations.
 - `extensions/plan-mode/index.ts` and `extensions/plan-mode/utils.ts` must agree on state, plan markers, and the bash safety policy. If a question tool is renamed, update `PLAN_MODE_TOOLS` and the injected instructions.
-- `extensions/codex-fast-toggle/index.ts`, `extensions/codex-fast-toggle/README.md`, and `codex-fast.json` define the Fast-mode behavior and state contract together.
+- `extensions/codex-fast-toggle/index.ts`, its English and Chinese READMEs, and `install.sh` define the session-scoped Fast behavior and migration from the former global state file.
 - `extensions/herdr/` owns `integration-check.ts`, the background-monitor modules, and `skills/herdr-pi-reference/`; `install.sh` must install that skill into the target skills directory and remove the former standalone extension paths. `herdr-agent-state.ts` is installed and overwritten by Herdr. The local extension may use documented Herdr CLI behavior but must not vendor, import, modify, install, or update the Herdr-managed integration. The background monitor is session-scoped and must not deliver a completion to a replacement Pi session.
 
 ## Upstream-Derived Code
@@ -79,7 +78,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 
 ### High-Risk Compatibility Areas
 
-- `codex-fast-toggle` depends on the `before_provider_request` lifecycle and the provider-specific outgoing payload accepting `service_tier`. Verify the real request shape after provider/runtime changes.
+- `codex-fast-toggle` depends on session custom entries, session/tree lifecycle events, the `before_provider_request` lifecycle, and the provider-specific outgoing payload accepting `service_tier`. Verify session restoration and the real request shape after provider/runtime changes.
 - `subagent` depends on Pi CLI flags, LF-delimited JSON-mode events, message shapes, executable discovery, and subprocess cancellation behavior. Re-copy the matching installed Pi version's upstream example when compatibility changes, then reapply only the local model frontmatter.
 - `extensions/herdr/` background monitoring depends on the official `herdr_agent` tool-result shape, Herdr's public `agent get` JSON response and lifecycle states, Pi session IDs, cancellable `pi.exec`, and `agent_settled` follow-up delivery. It must remain separate from the Herdr-managed Pi state extension and cannot provide prompt-level attribution when multiple Pi sessions share one target pane.
 - `questionnaire` depends on TUI component, key handling, autocomplete, theming, and invalidation contracts.
@@ -107,11 +106,11 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - Existing managed paths are backed up under `backups/my-pi-config-<timestamp>/` before copying.
 - The installer preserves Pi-managed `settings.json.lastChangelogVersion` instead of tracking it in this repository.
 - It merges credential-free `model-overrides.json` entries into the target `models.json`, preserving unrelated local providers and settings.
-- It removes obsolete extension paths, including the former standalone Preset extension and skill, the previously customized `extensions/subagent/`, `subagent-settings.json`, and the retired `explore-and-gather` prompt before copying the current settings, presets, Fast state, local extensions, upstream subagent-owned agents/prompts, and refreshed Herdr-owned skills.
+- It removes obsolete extension paths and state, including the former standalone Preset extension and skill, the previously customized `extensions/subagent/`, `subagent-settings.json`, the retired `explore-and-gather` prompt, and the former global `codex-fast.json` state before copying the current settings, presets, local extensions, upstream subagent-owned agents/prompts, and refreshed Herdr-owned skills.
 - It preserves an existing target `resource-settings.json`; when absent, it migrates the disabled Skills list from legacy `skill-settings.json` before falling back to repository defaults.
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
 
-`codex-fast.json` is both a repository default and mutable runtime state. Installing the repository seeds/replaces the target value; the extension later updates the target file atomically.
+`codex-fast-toggle` stores mutable state only in Pi session custom entries. The installer backs up and removes the former global `codex-fast.json`; do not reintroduce cross-session mutable state.
 
 Never commit credentials or machine-local Pi state. In particular, keep `auth.json`, `models.json`, `mcp.json`, `trust.json`, sessions, caches, logs, backups, package installation directories, and environment files out of version control. Check `.gitignore` before adding any file copied from `~/.pi/agent`.
 
@@ -123,7 +122,7 @@ Basic repository checks:
 
 ```bash
 bash -n install.sh
-node -e 'for (const f of ["settings.json", "presets.json", "resource-settings.json", "model-overrides.json", "codex-fast.json"]) JSON.parse(require("node:fs").readFileSync(f, "utf8"))'
+node -e 'for (const f of ["settings.json", "presets.json", "resource-settings.json", "model-overrides.json"]) JSON.parse(require("node:fs").readFileSync(f, "utf8"))'
 git diff --check
 ```
 
@@ -153,7 +152,7 @@ Perform applicable interactive checks:
 - Extension changes are staged, saved through Pi settings, and applied only after confirmed reload.
 - `/plan` blocks writes, preserves unrelated tools through a transient manager layer, extracts a plan, and removes the layer before execution.
 - `questionnaire` handles single, multiple, custom-text, cancellation, narrow-terminal, and non-TUI cases.
-- `/fast on|off` persists state, appears only for `openai-codex`, updates status, and changes only the intended outgoing request field.
+- `/fast on|off` persists only in the current session/branch, defaults Off in unrelated sessions and subagents, appears only for `openai-codex`, updates status, and changes only the intended outgoing request field.
 - `subagent` handles the upstream single, parallel, and chained modes, cancellation, failures, output limits, and project-agent confirmation; verify the four local agent files still select the intended OpenAI Codex models.
 - `extensions/herdr/` background monitoring is a no-op outside Herdr; tracks only successful explicit `herdr_agent prompt` calls with `wait: false`; delivers grouped, bounded follow-ups to the owning session after `done`, post-working `idle`, or `blocked`; and cancels cleanly on session replacement, reload, and shutdown.
 - terminal notifications do not corrupt terminal output on supported terminals.

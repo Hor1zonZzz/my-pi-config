@@ -28,12 +28,23 @@ License and upstream README are retained in `extensions/codex-fast-toggle/`.
 `extensions/codex-server-compaction/` is a Codex-only adaptation of
 `pi-openai-server-compaction` by Alexis Gallagher. It retains the upstream
 Remote Compaction V2 protocol, parallel Pi/native compaction, persisted-history,
-and replay design while removing direct OpenAI, Azure, and custom transport support and
-porting the result to the installed Pi extension API.
+and replay design while removing direct OpenAI and Azure support and porting
+the result to the installed Pi extension API.
 
-Upstream project: <https://github.com/algal/pi-openai-server-compaction>
+The cached `openai-codex` WebSocket/SSE provider, canonical session continuity,
+and raw V2 output handling under `vendor/howaboua/` are adapted from
+`@howaboua/pi-codex-conversion` by Igor Warzocha and contributors. Tool, prompt,
+voice, Code Mode, Responses Lite, UI, and cache-keepalive features are excluded.
 
-License: see `extensions/codex-server-compaction/LICENSE`.
+Upstream projects:
+
+- <https://github.com/algal/pi-openai-server-compaction>
+- <https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-codex-conversion>
+
+Licenses:
+
+- `extensions/codex-server-compaction/LICENSE`
+- `extensions/codex-server-compaction/vendor/howaboua/LICENSE`
 
 ## Herdr skill
 

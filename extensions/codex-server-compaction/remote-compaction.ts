@@ -25,7 +25,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 export type JsonRecord = Record<string, unknown>;
-export type ResponseItem = JsonRecord & { type: string };
+export type ResponseItem = JsonRecord & { type?: string };
 export type ResponsesReasoningConfig = Record<string, unknown>;
 export type ResponsesTextConfig = Record<string, unknown>;
 export type RemoteCompactionUsageSnapshot = Usage;
@@ -54,7 +54,7 @@ export type RemoteCompactionResult = {
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const OPENAI_CODEX_API = "openai-codex-responses";
 const REMOTE_COMPACTION_V2_FEATURE = "remote_compaction_v2";
-const RETAINED_MESSAGE_TOKEN_BUDGET = 20_000;
+const RETAINED_MESSAGE_TOKEN_BUDGET = 64_000;
 const IMAGE_CONTENT_OMITTED_PLACEHOLDER =
 	"image content omitted because you do not support image input";
 const UUID_RE =
@@ -270,9 +270,9 @@ function baseMessageToResponseItems(
 				}
 			}
 		}
-		return content.length > 0
-			? [{ type: "message", role: "user", content }]
-			: [];
+		// Match Pi's canonical Responses Easy Input shape. The omitted `type`
+		// matters to the cached WebSocket continuation prefix comparison.
+		return content.length > 0 ? [{ role: "user", content }] : [];
 	}
 
 	if (message.role === "assistant") {
@@ -364,7 +364,7 @@ function responseItemCallId(item: ResponseItem): string | undefined {
 	return typeof item.call_id === "string" && item.call_id ? item.call_id : undefined;
 }
 
-function outputTypeForCallType(type: string): string | undefined {
+function outputTypeForCallType(type: string | undefined): string | undefined {
 	if (type === "function_call" || type === "local_shell_call") {
 		return "function_call_output";
 	}
@@ -477,7 +477,7 @@ export function normalizeResponseItemsForPrompt(
 }
 
 function isRealUserMessage(item: ResponseItem): boolean {
-	if (item.type !== "message" || item.role !== "user") return false;
+	if ((item.type !== undefined && item.type !== "message") || item.role !== "user") return false;
 	if (typeof item.content === "string") return item.content.trim().length > 0;
 	return Array.isArray(item.content) && item.content.length > 0;
 }

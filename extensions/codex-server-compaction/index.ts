@@ -1,7 +1,9 @@
-// Adapted from pi-openai-server-compaction by Alexis Gallagher (MIT).
+// Adapted from pi-openai-server-compaction by Alexis Gallagher (MIT) and
+// @howaboua/pi-codex-conversion by Igor Warzocha and contributors (MIT).
 // This local variant intentionally supports only OpenAI Codex Responses.
+import { randomUUID } from "node:crypto";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
+import { calculateCost, type Model, type ProviderHeaders, type Usage } from "@earendil-works/pi-ai";
 import {
 	compact,
 	sessionEntryToContextMessages,
@@ -12,8 +14,8 @@ import {
 	applyRemoteHistoryPayloadPatch,
 	buildCompactionSummaryText,
 	buildRemoteCompactionDetails,
+	buildRemoteCompactionV2History,
 	buildToolsPayload,
-	callRemoteCompactionEndpoint,
 	combineUsage,
 	isOpenAICodexResponsesModel,
 	isRecord,
@@ -24,6 +26,15 @@ import {
 	type ResponsesReasoningConfig,
 	type ResponsesTextConfig,
 } from "./remote-compaction.ts";
+import { executeRemoteCompactionV2 } from "./vendor/howaboua/adapter/compaction/remote-v2-client.ts";
+import {
+	closeOpenAICodexWebSocketSessions,
+	registerOpenAICodexCustomProvider,
+} from "./vendor/howaboua/providers/openai-codex-custom-provider.ts";
+import {
+	canonicalCompactionPromptInput,
+} from "./vendor/howaboua/providers/openai-codex/session-continuity.ts";
+import { extractAccountId, resolveCodexWebSocketUrl } from "./vendor/howaboua/providers/openai-codex/headers.ts";
 
 const FAST_STATE_ENTRY_TYPE = "codex-fast";
 
@@ -141,6 +152,33 @@ function extractRequestShape(payload: JsonRecord): ResponsesRequestShapeState {
 	};
 }
 
+function toRemoteUsage(model: Model<any>, value: {
+	inputTokens: number;
+	cachedInputTokens: number;
+	cacheWriteInputTokens: number;
+	outputTokens: number;
+} | undefined, serviceTier?: string): Usage | undefined {
+	if (!value) return undefined;
+	const usage: Usage = {
+		input: Math.max(0, value.inputTokens - value.cachedInputTokens - value.cacheWriteInputTokens),
+		output: value.outputTokens,
+		cacheRead: value.cachedInputTokens,
+		cacheWrite: value.cacheWriteInputTokens,
+		totalTokens: value.inputTokens + value.outputTokens,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+	calculateCost(model, usage);
+	if (serviceTier === "priority") {
+		const multiplier = model.id === "gpt-5.5" ? 2.5 : 2;
+		usage.cost.input *= multiplier;
+		usage.cost.output *= multiplier;
+		usage.cost.cacheRead *= multiplier;
+		usage.cost.cacheWrite *= multiplier;
+		usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+	}
+	return usage;
+}
+
 function mergeLocalDetails(
 	localDetails: unknown,
 	remoteCompaction: JsonRecord,
@@ -155,19 +193,45 @@ function mergeLocalDetails(
 }
 
 export default function codexServerCompactionExtension(pi: ExtensionAPI) {
+	registerOpenAICodexCustomProvider(pi, {
+		getConfig: () => ({
+			executionMode: "normal",
+			openai: {
+				fast: false,
+				verbosity: "low",
+				forceCachedWebSockets: true,
+				cacheKeepalive: false,
+				lunaCacheKeepaliveMinutes: 0,
+				proxyResponsesLite: false,
+				cacheDiagnostics: "off",
+				harnessIdentifierHeader: false,
+				webSearchModel: "gpt-5.6-luna",
+			},
+			compaction: { responsesCompaction: true, v2UserMessageRetention: 64 },
+		} as never),
+		useResponsesLite: () => false,
+	});
+
 	pi.on("session_start", (_event, ctx) => {
-		requestShapeBySessionId.delete(getSessionId(ctx));
+		const sessionId = getSessionId(ctx);
+		requestShapeBySessionId.delete(sessionId);
+		closeOpenAICodexWebSocketSessions(sessionId);
 	});
 
 	pi.on("session_tree", (_event, ctx) => {
-		requestShapeBySessionId.delete(getSessionId(ctx));
+		const sessionId = getSessionId(ctx);
+		requestShapeBySessionId.delete(sessionId);
+		closeOpenAICodexWebSocketSessions(sessionId);
 	});
 	pi.on("model_select", (_event, ctx) => {
-		requestShapeBySessionId.delete(getSessionId(ctx));
+		const sessionId = getSessionId(ctx);
+		requestShapeBySessionId.delete(sessionId);
+		closeOpenAICodexWebSocketSessions(sessionId);
 	});
 
 	pi.on("session_shutdown", () => {
 		requestShapeBySessionId.clear();
+		closeOpenAICodexWebSocketSessions();
 	});
 
 	pi.on("session_before_compact", async (event, ctx) => {
@@ -221,22 +285,59 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 			auth.env,
 			undefined,
 			undefined,
-			sessionId,
+			`${sessionId}:pi-summary:${randomUUID()}`,
 		);
-		const remotePromise = callRemoteCompactionEndpoint({
-			model,
-			resolvedBaseUrl: auth.baseUrl,
-			apiKey: auth.apiKey,
-			headers: auth.headers,
+		const canonicalInput = canonicalCompactionPromptInput(
 			sessionId,
-			input: promptResponseItems,
-			instructions: ctx.getSystemPrompt(),
-			tools,
-			parallelToolCalls: observedShape?.parallelToolCalls ?? true,
-			reasoning,
-			text: observedShape?.text,
-			serviceTier,
+			model.id,
+			{
+				url: resolveCodexWebSocketUrl(auth.baseUrl ?? model.baseUrl),
+				accountId: extractAccountId(auth.apiKey),
+			},
+			promptResponseItems,
+		);
+		const remotePromise = executeRemoteCompactionV2({
+			runtime: {
+				provider: model.provider,
+				api: model.api,
+				apiFamily: model.api,
+				codexTransport: true,
+				model: model.id,
+				baseUrl: auth.baseUrl ?? model.baseUrl,
+				apiKey: auth.apiKey,
+				headers: auth.headers,
+				currentModel: model,
+			},
+			modelRegistry: ctx.modelRegistry,
+			context: {
+				systemPrompt: ctx.getSystemPrompt(),
+				messages: [],
+				tools: pi.getAllTools().filter((tool) => pi.getActiveTools().includes(tool.name)) as never,
+			},
+			promptInput: (canonicalInput ?? promptResponseItems) as never,
+			promptInputSource: canonicalInput ? "canonical" : "reconstructed",
+			compactionDiagnostic: {
+				inputSource: canonicalInput ? "canonical" : "reconstructed",
+				canonicalReplay: canonicalInput ? "validated" : "no_state",
+				checkpointReused: Boolean(remoteState),
+			},
+			requestOptions: {
+				parallel_tool_calls: observedShape?.parallelToolCalls ?? true,
+				prompt_cache_key: sessionId,
+				...(reasoning ? { reasoning } : {}),
+				...(observedShape?.text ? { text: observedShape.text as { verbosity: string } } : {}),
+				...(serviceTier ? { service_tier: serviceTier } : {}),
+			},
+			tokensBefore: event.preparation.tokensBefore,
+			sessionId,
 			signal: event.signal,
+		}).then((result) => {
+			if (!result.ok) throw new Error(result.errorMessage);
+			const usage = toRemoteUsage(model, result.usage, serviceTier);
+			return {
+				output: buildRemoteCompactionV2History(promptResponseItems, result.compaction as never),
+				usage,
+			};
 		});
 
 		const [localResult, remoteResult] = await Promise.allSettled([

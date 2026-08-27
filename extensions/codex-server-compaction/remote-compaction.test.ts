@@ -149,6 +149,21 @@ test("message conversion keeps one real output per tool call", () => {
 	assert.doesNotMatch(JSON.stringify(outputs), /aborted/);
 });
 
+test("user conversion matches Pi's canonical Easy Input shape", () => {
+	assert.deepEqual(
+		messagesToResponseItems(
+			[{ role: "user", content: "hello", timestamp: Date.now() } as AgentMessage],
+			model,
+		),
+		[
+			{
+				role: "user",
+				content: [{ type: "input_text", text: "hello" }],
+			},
+		],
+	);
+});
+
 test("assistant conversion preserves Responses identities for cached continuation", () => {
 	const assistant = {
 		role: "assistant",
@@ -346,6 +361,24 @@ test("a foreign assistant turn invalidates the older exact-model artifact", () =
 			undefined,
 		);
 	}
+});
+
+test("v2 retention keeps a complete user message below the official 64K budget", () => {
+	const text = "x".repeat(100_000);
+	const history = buildRemoteCompactionV2History(
+		[
+			{
+				type: "message",
+				role: "user",
+				content: [{ type: "input_text", text }],
+			},
+		],
+		{ type: "compaction", encrypted_content: "encrypted" },
+	);
+	assert.equal(
+		((history[0].content as Array<{ text: string }>)[0]?.text ?? "").length,
+		text.length,
+	);
 });
 
 test("a stalled remote request is aborted independently of the Pi compaction signal", async () => {

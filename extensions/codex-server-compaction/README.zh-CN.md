@@ -2,17 +2,21 @@
 
 为 Pi 内置 `openai-codex/*` 模型提供 Codex Remote Compaction V2 的本地扩展。
 它是 [`pi-openai-server-compaction`](https://github.com/algal/pi-openai-server-compaction)
-的 Codex-only 适配版，不覆盖 Pi provider 或 transport。
+的 Codex-only 适配版，并仅覆盖内置 `openai-codex` stream transport，使普通请求与 V2 压缩共享同一 cached WebSocket continuation lane。
 
 ## 行为
 
 Pi 进行手动或自动压缩时，扩展会并行启动两个请求：
 
-1. 执行 Pi 内置文本压缩；
-2. 请求 `POST /backend-api/codex/responses`，并在 input 末尾追加
+1. 在独立临时 session lane 执行 Pi 内置文本压缩；
+2. 通过主 cached WebSocket lane 请求 Codex V2，并在 input 末尾追加
    `{ "type": "compaction_trigger" }`。
 
-V2 成功后会返回一个 opaque `compaction` item。扩展将最近用户消息和该
+自定义 transport 会保存 canonical request/response items。live prefix 匹配时，
+压缩在线路上缩减为 `previous_response_id` 加 trigger；重连或 SSE fallback 则发送
+经过校验的完整历史。
+
+V2 成功后会返回一个 opaque `compaction` item。扩展按官方 64K 预算保留最近用户消息，并与该
 item 一起保存到 `CompactionEntry.details.remoteCompaction`。扩展向完全相同的
 Codex provider/API/model 提供精确原生历史，并删除压缩前可能残留的旧
 `previous_response_id`。Pi 的 cached WebSocket transport 在扩展 hook 之后运行：
@@ -55,12 +59,13 @@ Pi session 统计恰好计入两个请求各一次；远程 usage 也保留在 d
 
 - direct `openai/*` 与 Azure；
 - provider override；
-- 自定义 HTTP/WebSocket streaming；
-- 自行实现 `previous_response_id`、`store: true` 或 `context_management` patch；
-  live continuation 委托给 Pi；
+- 参考 adapter 的 direct `openai/*`、Azure、工具、prompt、voice、Code Mode 或 Responses Lite 功能；
+- `store: true` 或 `context_management` patch；
 - 外部运行时依赖。
 
 ## 署名
 
-基于 Alexis Gallagher 的 `pi-openai-server-compaction`（MIT）适配。参见
-`LICENSE` 与仓库根目录 `THIRD_PARTY_NOTICES.md`。
+基于 Alexis Gallagher 的 `pi-openai-server-compaction`，并移植 Igor Warzocha
+及贡献者的 `@howaboua/pi-codex-conversion` cached Codex provider/compaction
+实现；二者均为 MIT。参见 `LICENSE`、`vendor/howaboua/LICENSE` 与仓库根目录
+`THIRD_PARTY_NOTICES.md`。

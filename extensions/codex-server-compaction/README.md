@@ -3,19 +3,24 @@
 Local Pi extension that adds Codex Remote Compaction V2 to built-in
 `openai-codex/*` models. It is a Codex-only adaptation of
 [`pi-openai-server-compaction`](https://github.com/algal/pi-openai-server-compaction)
-and does not override Pi's provider or transport.
+and overrides only the built-in `openai-codex` stream transport so ordinary turns and V2 compaction share one cached WebSocket continuation lane.
 
 ## Behavior
 
 When Pi runs manual or automatic compaction, the extension starts two requests
 in parallel:
 
-1. Pi's built-in text compaction;
-2. a Codex V2 request to `POST /backend-api/codex/responses` whose final input
+1. Pi's built-in text compaction on an isolated temporary session lane;
+2. a Codex V2 request through the main cached WebSocket lane whose final input
    item is `{ "type": "compaction_trigger" }`.
 
+The custom transport records canonical request/response items. When the live
+prefix matches, the compaction wire request is reduced to
+`previous_response_id` plus the trigger; reconnects and SSE fallback send the
+validated full history instead.
+
 A successful V2 response contributes one opaque `compaction` item. The
-extension retains recent user messages with that item and persists the result
+extension retains up to the official 64K budget of recent user messages with that item and persists the result
 in `CompactionEntry.details.remoteCompaction`. The extension supplies this
 exact native history to the matching Codex provider/API/model and removes any
 stale pre-compaction `previous_response_id`. Pi's cached WebSocket transport runs
@@ -66,12 +71,14 @@ Intentionally excluded:
 
 - direct `openai/*` and Azure models;
 - provider overrides;
-- custom HTTP/WebSocket streaming;
-- a custom `previous_response_id` implementation, `store: true`, or
-  `context_management` patching; live continuation is delegated to Pi;
+- direct `openai/*`, Azure, tools, prompt, voice, Code Mode, or Responses Lite features from the reference adapter;
+- `store: true` or `context_management` patching;
 - external runtime dependencies.
 
 ## Attribution
 
-Adapted from `pi-openai-server-compaction` by Alexis Gallagher under the MIT
-License. See `LICENSE` and the repository's `THIRD_PARTY_NOTICES.md`.
+Adapted from `pi-openai-server-compaction` by Alexis Gallagher and the
+cached Codex provider/compaction implementation in
+`@howaboua/pi-codex-conversion` by Igor Warzocha and contributors, both under
+the MIT License. See `LICENSE`, `vendor/howaboua/LICENSE`, and the repository's
+`THIRD_PARTY_NOTICES.md`.

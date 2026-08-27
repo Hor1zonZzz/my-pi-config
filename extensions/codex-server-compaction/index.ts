@@ -17,14 +17,10 @@ import {
 	combineUsage,
 	isOpenAICodexResponsesModel,
 	isRecord,
-	messageMatchesModel,
-	messageToResponseItems,
 	messagesToResponseItems,
-	modelKey,
 	normalizeResponseItemsForPrompt,
 	reconstructRemoteCompactionStateFromBranch,
 	type JsonRecord,
-	type RemoteCompactionSessionState,
 	type ResponsesReasoningConfig,
 	type ResponsesTextConfig,
 } from "./remote-compaction.ts";
@@ -56,10 +52,6 @@ type ResolvedAuth = {
 	env?: Record<string, string>;
 };
 
-const remoteCompactionBySessionId = new Map<
-	string,
-	RemoteCompactionSessionState
->();
 const requestShapeBySessionId = new Map<string, ResponsesRequestShapeState>();
 
 function getSessionId(ctx: ExtensionContext): string {
@@ -149,51 +141,6 @@ function extractRequestShape(payload: JsonRecord): ResponsesRequestShapeState {
 	};
 }
 
-function syncRemoteState(ctx: ExtensionContext): void {
-	const sessionId = getSessionId(ctx);
-	const model = ctx.model;
-	if (!model || !isOpenAICodexResponsesModel(model)) {
-		remoteCompactionBySessionId.delete(sessionId);
-		return;
-	}
-	const state = reconstructRemoteCompactionStateFromBranch({
-		branchEntries: getBranchEntries(ctx),
-		model,
-	});
-	if (state) remoteCompactionBySessionId.set(sessionId, state);
-	else remoteCompactionBySessionId.delete(sessionId);
-}
-
-function getMatchingRemoteState(
-	sessionId: string,
-	model: Model<any> | undefined,
-): RemoteCompactionSessionState | undefined {
-	if (!model || !isOpenAICodexResponsesModel(model)) return undefined;
-	const state = remoteCompactionBySessionId.get(sessionId);
-	return state?.modelKey === modelKey(model) ? state : undefined;
-}
-
-function extendRemoteHistoryIfCompatible(params: {
-	sessionId: string;
-	model: Model<any> | undefined;
-	message: AgentMessage;
-}): void {
-	const state = getMatchingRemoteState(params.sessionId, params.model);
-	if (!state || !params.model) return;
-	if (
-		params.message.role === "assistant" &&
-		!messageMatchesModel(params.message, params.model)
-	) {
-		return;
-	}
-	const items = messageToResponseItems(params.message, params.model);
-	if (items.length === 0) return;
-	remoteCompactionBySessionId.set(params.sessionId, {
-		...state,
-		explicitHistory: [...state.explicitHistory, ...items],
-	});
-}
-
 function mergeLocalDetails(
 	localDetails: unknown,
 	remoteCompaction: JsonRecord,
@@ -209,28 +156,17 @@ function mergeLocalDetails(
 
 export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
-		const sessionId = getSessionId(ctx);
-		requestShapeBySessionId.delete(sessionId);
-		syncRemoteState(ctx);
+		requestShapeBySessionId.delete(getSessionId(ctx));
 	});
 
 	pi.on("session_tree", (_event, ctx) => {
 		requestShapeBySessionId.delete(getSessionId(ctx));
-		syncRemoteState(ctx);
-	});
-	pi.on("session_compact", (_event, ctx) => {
-		syncRemoteState(ctx);
 	});
 	pi.on("model_select", (_event, ctx) => {
-		const sessionId = getSessionId(ctx);
-		requestShapeBySessionId.delete(sessionId);
-		// Re-evaluate both the persisted artifact and any cross-model turns that
-		// may have invalidated it.
-		syncRemoteState(ctx);
+		requestShapeBySessionId.delete(getSessionId(ctx));
 	});
 
 	pi.on("session_shutdown", () => {
-		remoteCompactionBySessionId.clear();
 		requestShapeBySessionId.clear();
 	});
 
@@ -249,10 +185,10 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 
 		const sessionId = getSessionId(ctx);
 		const branchEntries = event.branchEntries as BranchEntry[];
-		// Compaction can be invoked immediately after a model switch, before the
-		// next provider request has reconciled the branch.
-		syncRemoteState(ctx);
-		const remoteState = getMatchingRemoteState(sessionId, model);
+		const remoteState = reconstructRemoteCompactionStateFromBranch({
+			branchEntries,
+			model,
+		});
 		const observedShape = requestShapeBySessionId.get(sessionId);
 		const responseItems = remoteState
 			? remoteState.explicitHistory
@@ -345,14 +281,6 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 		};
 	});
 
-	pi.on("message_end", (event, ctx) => {
-		extendRemoteHistoryIfCompatible({
-			sessionId: getSessionId(ctx),
-			model: ctx.model,
-			message: event.message,
-		});
-	});
-
 	pi.on("before_provider_request", (event, ctx) => {
 		const model = ctx.model;
 		if (
@@ -364,11 +292,12 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 		}
 		const sessionId = getSessionId(ctx);
 		requestShapeBySessionId.set(sessionId, extractRequestShape(event.payload));
-		// Reconcile from the persisted branch before every Codex request so
-		// custom messages and branch summaries (which do not emit message_end)
-		// join native replay immediately.
-		syncRemoteState(ctx);
-		const remoteState = getMatchingRemoteState(sessionId, model);
+		// Pi already keeps the session branch in memory. Reconstruct on demand so
+		// every entry type participates without a second history cache.
+		const remoteState = reconstructRemoteCompactionStateFromBranch({
+			branchEntries: getBranchEntries(ctx),
+			model,
+		});
 		if (!remoteState) return undefined;
 		return applyRemoteHistoryPayloadPatch({
 			payload: event.payload,

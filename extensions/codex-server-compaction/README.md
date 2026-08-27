@@ -18,12 +18,14 @@ A successful V2 response contributes one opaque `compaction` item. The
 extension retains recent user messages with that item and persists the result
 in `CompactionEntry.details.remoteCompaction`. Later requests from the exact
 Codex provider/API/model replay this native history. Other models use Pi's text
-summary and retained messages normally; returning to the original Codex model
-reconstructs its native state from the session branch.
+summary and retained messages normally.
 
-Cross-model assistant turns are not inserted into Codex-native replay history.
-This prevents foreign reasoning and tool-call identifiers from contaminating
-the artifact. They remain available through Pi's normal text-summary path.
+A model switch alone does not invalidate the artifact. Once an assistant turn
+from a different provider/API/model appears after it, however, the extension
+stops replaying that artifact on the branch; otherwise returning to the original
+model would omit the intervening turn. Pi's normal text-summary context remains
+active until the exact model completes another manual or automatic V2
+compaction. Returning to it does not trigger an extra compaction request.
 
 If V2 fails or exceeds its independent five-minute request limit, the already-running Pi compaction becomes the result. If Pi compaction fails while V2 succeeds, the extension keeps the artifact with a minimal textual marker. The extension restores only the current V2 details shape and provides no migration path for legacy V1 or other older artifact formats; those sessions continue through their saved Pi text summary.
 

@@ -182,7 +182,7 @@ test("v2 stream parsing retains recent user input plus one opaque artifact", () 
 	assert.equal(history[0].role, "user");
 });
 
-test("locally persisted v2 details reconstruct with model-safe branch isolation", () => {
+test("exact-model details survive model switches that produce no foreign reply", () => {
 	const details = buildRemoteCompactionDetails(
 		model,
 		[{ type: "compaction", encrypted_content: "encrypted" }],
@@ -202,41 +202,39 @@ test("locally persisted v2 details reconstruct with model-safe branch isolation"
 		stopReason: "stop",
 		timestamp: Date.now(),
 	} as AgentMessage;
-	const foreignAssistant = {
-		...targetAssistant,
-		provider: "anthropic",
-		api: "anthropic-messages",
-		model: "claude-sonnet-4-6",
-		content: [{ type: "text", text: "DROP_REPLY" }],
-	} as AgentMessage;
-	const wrongApiAssistant = {
-		...targetAssistant,
-		api: "openai-responses",
-		content: [{ type: "text", text: "DROP_WRONG_API" }],
-	} as AgentMessage;
 	const user = (text: string) =>
 		({ role: "user", content: text, timestamp: Date.now() }) as AgentMessage;
+	const compactionEntry = {
+		type: "compaction",
+		id: "cmp-1",
+		details: { remoteCompaction: details },
+	};
 
+	assert.equal(
+		reconstructRemoteCompactionStateFromBranch({
+			model: { ...model, id: "gpt-5.6-luna" },
+			branchEntries: [compactionEntry],
+		}),
+		undefined,
+	);
 	const state = reconstructRemoteCompactionStateFromBranch({
 		model,
 		branchEntries: [
-			{ type: "compaction", id: "cmp-1", details: { remoteCompaction: details } },
+			compactionEntry,
+			{ type: "model_change", id: "switch-to-luna" },
+			{ type: "model_change", id: "switch-back-to-sol" },
 			{ type: "message", id: "user-1", message: user("KEEP_USER") },
 			{ type: "message", id: "assistant-1", message: targetAssistant },
-			{ type: "message", id: "user-2", message: user("DROP_USER") },
-			{ type: "message", id: "assistant-2", message: foreignAssistant },
-			{ type: "message", id: "user-3", message: user("DROP_WRONG_API_USER") },
-			{ type: "message", id: "assistant-3", message: wrongApiAssistant },
 			{
 				type: "custom_message",
 				id: "custom-1",
-				parentId: "assistant-3",
+				parentId: "assistant-1",
 				timestamp: new Date().toISOString(),
 				customType: "test",
 				content: "KEEP_CUSTOM_TAIL",
 				display: false,
 			} as never,
-			{ type: "message", id: "user-4", message: user("KEEP_PENDING_USER") },
+			{ type: "message", id: "user-2", message: user("KEEP_PENDING_USER") },
 		],
 	});
 	assert.ok(state);
@@ -245,10 +243,68 @@ test("locally persisted v2 details reconstruct with model-safe branch isolation"
 	assert.match(serialized, /KEEP_REPLY/);
 	assert.match(serialized, /KEEP_CUSTOM_TAIL/);
 	assert.match(serialized, /KEEP_PENDING_USER/);
-	assert.doesNotMatch(
-		serialized,
-		/DROP_USER|DROP_REPLY|DROP_WRONG_API_USER|DROP_WRONG_API/,
-	);
+});
+
+test("a foreign assistant turn invalidates the older exact-model artifact", () => {
+	const details = buildRemoteCompactionDetails(model, [
+		{ type: "compaction", encrypted_content: "encrypted" },
+	]);
+	const targetAssistant = {
+		role: "assistant",
+		provider: "openai-codex",
+		api: "openai-codex-responses",
+		model: "gpt-5.6-sol",
+		content: [{ type: "text", text: "SOL_REPLY" }],
+		usage: usage(0),
+		stopReason: "stop",
+		timestamp: Date.now(),
+	} as AgentMessage;
+	const user = {
+		role: "user",
+		content: "LUNA_USER",
+		timestamp: Date.now(),
+	} as AgentMessage;
+	const foreignAssistants = [
+		{
+			...targetAssistant,
+			model: "gpt-5.6-luna",
+			content: [{ type: "text", text: "LUNA_REPLY" }],
+		},
+		{
+			...targetAssistant,
+			api: "openai-responses",
+			content: [{ type: "text", text: "WRONG_API_REPLY" }],
+		},
+		{
+			...targetAssistant,
+			provider: "anthropic",
+			api: "anthropic-messages",
+			model: "claude-sonnet-4-6",
+			content: [{ type: "text", text: "CLAUDE_REPLY" }],
+		},
+	] as AgentMessage[];
+
+	for (const [index, foreignAssistant] of foreignAssistants.entries()) {
+		assert.equal(
+			reconstructRemoteCompactionStateFromBranch({
+				model,
+				branchEntries: [
+					{
+						type: "compaction",
+						id: "cmp-1",
+						details: { remoteCompaction: details },
+					},
+					{ type: "message", id: "user-1", message: user },
+					{
+						type: "message",
+						id: `assistant-${index}`,
+						message: foreignAssistant,
+					},
+				],
+			}),
+			undefined,
+		);
+	}
 });
 
 test("a stalled remote request is aborted independently of the Pi compaction signal", async () => {

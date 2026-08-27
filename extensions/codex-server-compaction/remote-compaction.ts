@@ -952,21 +952,29 @@ export function reconstructRemoteCompactionStateFromBranch(params: {
 	let pendingTurnItems: ResponseItem[] = [];
 	for (const entry of params.branchEntries.slice(latestCompactionIndex + 1)) {
 		for (const message of entryContextMessages(entry)) {
+			if (
+				message.role === "assistant" &&
+				!assistantMessageMatchesModelKey(message, latestDetails.modelKey)
+			) {
+				// Once another model completes a turn, replaying the older native
+				// artifact would omit that turn. Let Pi's text-summary path carry the
+				// complete cross-model context until this model compacts again.
+				return undefined;
+			}
 			const targetModel = params.model;
 			const items = targetModel
 				? messageToResponseItems(message, targetModel)
 				: convertToLlm([message]).flatMap((normalized) =>
 						baseMessageToResponseItems(normalized),
 					);
-			if (items.length === 0) continue;
 			if (message.role === "assistant") {
-				if (assistantMessageMatchesModelKey(message, latestDetails.modelKey)) {
+				if (items.length > 0) {
 					trailingMessages.push(...pendingTurnItems, ...items);
 				}
 				pendingTurnItems = [];
 				continue;
 			}
-			pendingTurnItems.push(...items);
+			if (items.length > 0) pendingTurnItems.push(...items);
 		}
 	}
 	trailingMessages.push(...pendingTurnItems);

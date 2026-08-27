@@ -7,7 +7,6 @@ import {
 	sessionEntryToContextMessages,
 	type ExtensionAPI,
 	type ExtensionContext,
-	type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import {
 	applyRemoteHistoryPayloadPatch,
@@ -71,14 +70,10 @@ function getBranchEntries(ctx: ExtensionContext): BranchEntry[] {
 	return ctx.sessionManager.getBranch() as BranchEntry[];
 }
 
-function getBranchMessages(branchEntries: BranchEntry[]): AgentMessage[] {
-	return branchEntries.flatMap((entry) => {
-		if (entry.type === "message" && entry.message) return [entry.message];
-		// Raw messages remain in Pi's branch across compactions, so do not add a
-		// prior textual compaction summary on top of that same history.
-		if (entry.type === "compaction") return [];
+function getPiContextMessages(ctx: ExtensionContext): AgentMessage[] {
+	return ctx.sessionManager.buildContextEntries().flatMap((entry) => {
 		try {
-			return sessionEntryToContextMessages(entry as SessionEntry);
+			return sessionEntryToContextMessages(entry);
 		} catch {
 			return [];
 		}
@@ -229,7 +224,8 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 	pi.on("model_select", (_event, ctx) => {
 		const sessionId = getSessionId(ctx);
 		requestShapeBySessionId.delete(sessionId);
-		// Rebuild from persisted details when returning from a non-Codex model.
+		// Re-evaluate both the persisted artifact and any cross-model turns that
+		// may have invalidated it.
 		syncRemoteState(ctx);
 	});
 
@@ -253,12 +249,14 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 
 		const sessionId = getSessionId(ctx);
 		const branchEntries = event.branchEntries as BranchEntry[];
-		const fullBranchMessages = getBranchMessages(branchEntries);
+		// Compaction can be invoked immediately after a model switch, before the
+		// next provider request has reconciled the branch.
+		syncRemoteState(ctx);
 		const remoteState = getMatchingRemoteState(sessionId, model);
 		const observedShape = requestShapeBySessionId.get(sessionId);
 		const responseItems = remoteState
 			? remoteState.explicitHistory
-			: messagesToResponseItems(fullBranchMessages, model);
+			: messagesToResponseItems(getPiContextMessages(ctx), model);
 		const promptResponseItems = normalizeResponseItemsForPrompt(
 			responseItems,
 			model,

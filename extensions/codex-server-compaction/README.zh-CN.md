@@ -15,10 +15,12 @@ Pi 进行手动或自动压缩时，扩展会并行启动两个请求：
 V2 成功后会返回一个 opaque `compaction` item。扩展将最近用户消息和该
 item 一起保存到 `CompactionEntry.details.remoteCompaction`。后续只有完全相同的
 Codex provider/API/model 才会重放这段原生历史；其他模型正常使用 Pi 文本摘要和
-保留消息。切回原 Codex 模型时，会从当前 session branch 恢复原生状态。
+保留消息。
 
-跨模型 assistant 回合不会写入 Codex-native replay，以免其他模型的 reasoning 和
-tool-call 标识污染 artifact；这些回合仍保留在 Pi 的正常文本摘要路径中。
+仅切换模型不会让 artifact 失效。但 artifact 之后一旦出现来自不同
+provider/API/model 的 assistant 回合，扩展就会停止在当前 branch 重放旧 artifact，
+避免切回原模型时丢弃中间回合。此后由 Pi 的正常文本摘要上下文承接，直到完全相同
+的模型再次完成手动或自动 V2 压缩；切回模型本身不会额外触发压缩请求。
 
 V2 失败或超过独立的五分钟请求上限时，已经并行运行的 Pi 内置压缩会直接成为结果。Pi 压缩失败而 V2 成功时，扩展会保留 artifact 并使用最小文本标记。扩展只恢复当前 V2 details shape，不为 legacy V1 或其他旧 artifact 格式提供迁移；这些 session 继续使用已保存的 Pi 文本摘要。
 

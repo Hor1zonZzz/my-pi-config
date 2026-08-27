@@ -46,16 +46,6 @@ The request follows Codex CLI's installation identity convention:
 This UUID is client metadata, not a credential. It is sent as
 `x-codex-installation-id`.
 
-## Disable
-
-The extension is enabled by default. Set the following before starting Pi to
-bypass both native replay and V2 compaction while leaving normal Pi compaction
-available:
-
-```bash
-PI_CODEX_SERVER_COMPACTION_ENABLED=0 pi
-```
-
 ## Data and accounting
 
 Conversation context is sent to the ChatGPT Codex Responses backend. Opaque

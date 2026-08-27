@@ -63,12 +63,6 @@ const remoteCompactionBySessionId = new Map<
 >();
 const requestShapeBySessionId = new Map<string, ResponsesRequestShapeState>();
 
-function extensionEnabled(): boolean {
-	const value = process.env.PI_CODEX_SERVER_COMPACTION_ENABLED;
-	if (value === undefined) return true;
-	return !["0", "false", "no", "off"].includes(value.trim().toLowerCase());
-}
-
 function getSessionId(ctx: ExtensionContext): string {
 	return ctx.sessionManager.getSessionId();
 }
@@ -245,7 +239,6 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_before_compact", async (event, ctx) => {
-		if (!extensionEnabled()) return undefined;
 		const model = ctx.model;
 		if (!model || !isOpenAICodexResponsesModel(model)) return undefined;
 
@@ -355,7 +348,6 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("message_end", (event, ctx) => {
-		if (!extensionEnabled()) return;
 		extendRemoteHistoryIfCompatible({
 			sessionId: getSessionId(ctx),
 			model: ctx.model,
@@ -364,7 +356,6 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("before_provider_request", (event, ctx) => {
-		if (!extensionEnabled()) return undefined;
 		const model = ctx.model;
 		if (
 			!model ||

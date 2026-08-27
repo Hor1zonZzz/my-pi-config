@@ -38,15 +38,6 @@ V2 失败或超过独立的五分钟请求上限时，已经并行运行的 Pi �
 
 该 UUID 是客户端 metadata，不是凭据；请求通过 `x-codex-installation-id` 发送。
 
-## 禁用
-
-扩展默认启用。启动 Pi 前设置以下变量，可禁用 V2 压缩和原生 replay，同时保留
-普通 Pi 压缩：
-
-```bash
-PI_CODEX_SERVER_COMPACTION_ENABLED=0 pi
-```
-
 ## 数据与统计
 
 对话上下文会发送到 ChatGPT Codex Responses 后端，opaque artifact 会保存在 Pi

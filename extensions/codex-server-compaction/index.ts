@@ -299,6 +299,9 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 			model,
 		});
 		if (!remoteState) return undefined;
+		// Always provide the exact explicit artifact history here. Pi's cached
+		// WebSocket transport runs after this hook and converts a matching prefix
+		// into previous_response_id + delta when its live continuation is valid.
 		return applyRemoteHistoryPayloadPatch({
 			payload: event.payload,
 			explicitHistory: normalizeResponseItemsForPrompt(

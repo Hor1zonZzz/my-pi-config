@@ -141,10 +141,51 @@ test("message conversion keeps one real output per tool call", () => {
 		timestamp: Date.now(),
 	} as AgentMessage;
 	const items = messagesToResponseItems([assistant, result], model);
+	const call = items.find((item) => item.type === "function_call");
+	assert.equal(call?.id, "fc_1");
 	const outputs = items.filter((item) => item.type === "function_call_output");
 	assert.equal(outputs.length, 1);
 	assert.match(JSON.stringify(outputs[0]), /REAL_OUTPUT/);
 	assert.doesNotMatch(JSON.stringify(outputs), /aborted/);
+});
+
+test("assistant conversion preserves Responses identities for cached continuation", () => {
+	const assistant = {
+		role: "assistant",
+		provider: "openai-codex",
+		api: "openai-codex-responses",
+		model: "gpt-5.6-sol",
+		content: [
+			{
+				type: "text",
+				text: "continuation reply",
+				textSignature: JSON.stringify({
+					v: 1,
+					id: "msg_response_1",
+					phase: "final_answer",
+				}),
+			},
+		],
+		usage: usage(0),
+		stopReason: "stop",
+		timestamp: Date.now(),
+	} as AgentMessage;
+	assert.deepEqual(messagesToResponseItems([assistant], model), [
+		{
+			type: "message",
+			role: "assistant",
+			content: [
+				{
+					type: "output_text",
+					text: "continuation reply",
+					annotations: [],
+				},
+			],
+			status: "completed",
+			id: "msg_response_1",
+			phase: "final_answer",
+		},
+	]);
 });
 
 test("v2 stream parsing retains recent user input plus one opaque artifact", () => {

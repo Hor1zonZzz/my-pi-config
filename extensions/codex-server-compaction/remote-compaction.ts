@@ -221,21 +221,37 @@ function cloneResponseItem(item: ResponseItem): ResponseItem {
 	return JSON.parse(JSON.stringify(item)) as ResponseItem;
 }
 
-function parseTextSignaturePhase(
-	value: unknown,
-): "commentary" | "final_answer" | undefined {
+function parseTextSignature(value: unknown): {
+	id: string;
+	phase?: "commentary" | "final_answer";
+} | undefined {
 	if (typeof value !== "string" || !value.trim()) return undefined;
-	try {
-		const parsed = JSON.parse(value) as { phase?: unknown };
-		return parsed.phase === "commentary" || parsed.phase === "final_answer"
-			? parsed.phase
-			: undefined;
-	} catch {
-		return undefined;
+	if (value.startsWith("{")) {
+		try {
+			const parsed = JSON.parse(value) as {
+				v?: unknown;
+				id?: unknown;
+				phase?: unknown;
+			};
+			if (parsed.v === 1 && typeof parsed.id === "string") {
+				return {
+					id: parsed.id,
+					...(parsed.phase === "commentary" || parsed.phase === "final_answer"
+						? { phase: parsed.phase }
+						: {}),
+				};
+			}
+		} catch {
+			// Fall through to the legacy plain-string ID.
+		}
 	}
+	return { id: value };
 }
 
-function baseMessageToResponseItems(message: AgentMessage): ResponseItem[] {
+function baseMessageToResponseItems(
+	message: AgentMessage,
+	messageIndex = 0,
+): ResponseItem[] {
 	if (message.role === "user") {
 		const content: JsonRecord[] = [];
 		if (typeof message.content === "string") {
@@ -261,27 +277,28 @@ function baseMessageToResponseItems(message: AgentMessage): ResponseItem[] {
 
 	if (message.role === "assistant") {
 		const items: ResponseItem[] = [];
-		let phase: "commentary" | "final_answer" | undefined;
-		let text = "";
-		const flushText = () => {
-			if (!text) return;
-			items.push({
-				type: "message",
-				role: "assistant",
-				content: [{ type: "output_text", text }],
-				...(phase ? { phase } : {}),
-			});
-			text = "";
-		};
-
+		let textBlockIndex = 0;
 		for (const block of message.content) {
 			if (block.type === "text") {
-				phase ??= parseTextSignaturePhase(block.textSignature);
-				text += block.text;
+				const signature = parseTextSignature(block.textSignature);
+				const fallbackId =
+					textBlockIndex === 0
+						? `msg_pi_${messageIndex}`
+						: `msg_pi_${messageIndex}_${textBlockIndex}`;
+				textBlockIndex++;
+				items.push({
+					type: "message",
+					role: "assistant",
+					content: [
+						{ type: "output_text", text: block.text, annotations: [] },
+					],
+					status: "completed",
+					id: signature?.id ?? fallbackId,
+					...(signature?.phase ? { phase: signature.phase } : {}),
+				});
 				continue;
 			}
 			if (block.type === "thinking") {
-				flushText();
 				if (!block.thinkingSignature) continue;
 				try {
 					const parsed = JSON.parse(block.thinkingSignature);
@@ -294,10 +311,10 @@ function baseMessageToResponseItems(message: AgentMessage): ResponseItem[] {
 				continue;
 			}
 			if (block.type === "toolCall") {
-				flushText();
-				const [callId] = block.id.split("|", 1);
+				const [callId, itemId] = block.id.split("|");
 				items.push({
 					type: "function_call",
+					...(itemId?.startsWith("fc_") ? { id: itemId } : {}),
 					name: block.name,
 					call_id: callId,
 					arguments: JSON.stringify(block.arguments ?? {}),
@@ -305,7 +322,6 @@ function baseMessageToResponseItems(message: AgentMessage): ResponseItem[] {
 				});
 			}
 		}
-		flushText();
 		return items;
 	}
 
@@ -330,8 +346,8 @@ export function messageToResponseItems(
 	message: AgentMessage,
 	_model: Model<any>,
 ): ResponseItem[] {
-	return convertToLlm([message]).flatMap((normalized) =>
-		baseMessageToResponseItems(normalized),
+	return convertToLlm([message]).flatMap((normalized, index) =>
+		baseMessageToResponseItems(normalized, index),
 	);
 }
 
@@ -339,8 +355,8 @@ export function messagesToResponseItems(
 	messages: AgentMessage[],
 	_model: Model<any>,
 ): ResponseItem[] {
-	return convertToLlm(messages).flatMap((message) =>
-		baseMessageToResponseItems(message),
+	return convertToLlm(messages).flatMap((message, index) =>
+		baseMessageToResponseItems(message, index),
 	);
 }
 

@@ -13,9 +13,12 @@ Pi 进行手动或自动压缩时，扩展会并行启动两个请求：
    `{ "type": "compaction_trigger" }`。
 
 V2 成功后会返回一个 opaque `compaction` item。扩展将最近用户消息和该
-item 一起保存到 `CompactionEntry.details.remoteCompaction`。后续只有完全相同的
-Codex provider/API/model 才会重放这段原生历史；其他模型正常使用 Pi 文本摘要和
-保留消息。
+item 一起保存到 `CompactionEntry.details.remoteCompaction`。扩展向完全相同的
+Codex provider/API/model 提供精确原生历史，并删除压缩前可能残留的旧
+`previous_response_id`。Pi 的 cached WebSocket transport 在扩展 hook 之后运行：
+第一次请求或重连时在线路上发送显式 artifact history；live prefix 完全匹配后，
+Pi 会在线路上自动缩减为原生 `previous_response_id` 加新增 delta。其他模型正常
+使用 Pi 文本摘要和保留消息。
 
 仅切换模型不会让 artifact 失效。但 artifact 之后一旦出现来自不同
 provider/API/model 的 assistant 回合，扩展就会停止在当前 branch 重放旧 artifact，
@@ -53,7 +56,8 @@ Pi session 统计恰好计入两个请求各一次；远程 usage 也保留在 d
 - direct `openai/*` 与 Azure；
 - provider override；
 - 自定义 HTTP/WebSocket streaming；
-- `previous_response_id`、`store: true` 与 `context_management` patch；
+- 自行实现 `previous_response_id`、`store: true` 或 `context_management` patch；
+  live continuation 委托给 Pi；
 - 外部运行时依赖。
 
 ## 署名

@@ -16,8 +16,12 @@ in parallel:
 
 A successful V2 response contributes one opaque `compaction` item. The
 extension retains recent user messages with that item and persists the result
-in `CompactionEntry.details.remoteCompaction`. Later requests from the exact
-Codex provider/API/model replay this native history. Other models use Pi's text
+in `CompactionEntry.details.remoteCompaction`. The extension supplies this
+exact native history to the matching Codex provider/API/model and removes any
+stale pre-compaction `previous_response_id`. Pi's cached WebSocket transport runs
+after the extension hook: the first request or a reconnect sends the explicit
+artifact history, while a matching live prefix is reduced on the wire to Pi's
+native `previous_response_id` plus the new delta. Other models use Pi's text
 summary and retained messages normally.
 
 A model switch alone does not invalidate the artifact. Once an assistant turn
@@ -63,7 +67,8 @@ Intentionally excluded:
 - direct `openai/*` and Azure models;
 - provider overrides;
 - custom HTTP/WebSocket streaming;
-- `previous_response_id`, `store: true`, and `context_management` patching;
+- a custom `previous_response_id` implementation, `store: true`, or
+  `context_management` patching; live continuation is delegated to Pi;
 - external runtime dependencies.
 
 ## Attribution

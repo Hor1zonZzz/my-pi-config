@@ -205,7 +205,7 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 		const serviceTier = resolveServiceTier(branchEntries, observedShape);
 		const tools =
 			observedShape?.tools ??
-			buildToolsPayload(pi.getAllTools(), pi.getActiveTools(), model);
+			buildToolsPayload(pi.getAllTools(), pi.getActiveTools());
 
 		const localPromise = compact(
 			event.preparation,

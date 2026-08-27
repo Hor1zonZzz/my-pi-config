@@ -15,10 +15,8 @@ import {
 	calculateCost,
 	type Model,
 	type ProviderHeaders,
-	type Tool,
 	type Usage,
 } from "@earendil-works/pi-ai";
-import { convertResponsesTools } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import {
 	convertToLlm,
 	sessionEntryToContextMessages,
@@ -547,29 +545,16 @@ export function buildRemoteCompactionV2History(
 export function buildToolsPayload(
 	allTools: ToolInfo[],
 	activeToolNames: string[],
-	model: Model<any>,
 ): JsonRecord[] {
 	const active = new Set(activeToolNames);
-	const tools = allTools.filter((tool) => active.has(tool.name));
-	const compat = isRecord(model.compat) ? model.compat : {};
-	try {
-		return convertResponsesTools(tools as Tool[], {
-			strict: null,
-			supportsStrictMode:
-				typeof compat.supportsStrictMode === "boolean"
-					? compat.supportsStrictMode
-					: true,
-			supportsOpenAIGrammarTools:
-				compat.supportsOpenAIGrammarTools === true,
-		}) as unknown as JsonRecord[];
-	} catch {
-		return tools.map((tool) => ({
+	return allTools
+		.filter((tool) => active.has(tool.name))
+		.map((tool) => ({
 			type: "function",
 			name: tool.name,
 			description: tool.description,
 			parameters: tool.parameters,
 		}));
-	}
 }
 
 export function buildRemoteCompactionRequestBody(params: {

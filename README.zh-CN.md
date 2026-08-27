@@ -6,7 +6,7 @@
 
 ## 包含内容
 
-- `settings.json` — 模型默认值与可安装的 Pi 包，包括最新的 [Pi Config Manager](https://github.com/Hor1zonZzz/pi-config-manager)、Pi Lens、MCP 适配器、Herdr 工具集成以及服务端压缩（compaction）支持
+- `settings.json` — 模型默认值与可安装的 Pi 包，包括最新的 [Pi Config Manager](https://github.com/Hor1zonZzz/pi-config-manager)、Pi Lens、MCP 适配器与 Herdr 工具集成
 - `presets.json` — `quick`、`explore`、`orchestrator` 与 `deep-code` 预设
 - `resource-settings.json` — 针对 Pi 发现的工具、技能（skills）与上下文文件的默认启用/禁用策略
 - `model-overrides.json` — 受管理的、不含凭据的内置模型覆盖项
@@ -25,6 +25,7 @@ Preset 选择、模型/思考/资源配置、编辑器边框标签和 `preset-se
 - `herdr/` — 统一持有本地 Herdr 集成检查器、异步 `herdr_agent prompt` 监控器和 `herdr-pi-reference` 技能源码；它让显式 `wait: false` 调用保持非阻塞，并注入会话级完成 follow-up
 - `subagent/` — 基于 Pi 官方 subagent 示例适配，包含本地模型默认值，以及用于选择用户级 agent 可用模型与 thinking level 的 `/subagent` TUI
 - `codex-fast-toggle/` — `/fast on|off` 为当前 Pi session 切换 Codex 优先级服务层级（service tier），同时保持提供方标识为 `openai-codex`
+- `codex-server-compaction/` — 并行执行 Pi 内置文本压缩与 Codex Remote Compaction V2，持久化 opaque 原生历史，继承当前 Fast service tier，并在远程失败时使用 Pi 结果
 
 ## 安装
 
@@ -36,7 +37,7 @@ cd my-pi-config
 ./install.sh
 ```
 
-安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，并把 Herdr 扩展持有的 `herdr-pi-reference` 技能安装到 `~/.pi/agent/skills/herdr-pi-reference/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。`preset-settings` 技能由 Pi Config Manager 包自行提供。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。已有的 `resource-settings.json` 状态会被保留；首次迁移时，安装程序会从旧的 `skill-settings.json` 导入被禁用的技能列表。迁移期间还会先备份、再删除旧的全局 `codex-fast.json` 状态文件。重启 Pi 或运行：
+安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，并把 Herdr 扩展持有的 `herdr-pi-reference` 技能安装到 `~/.pi/agent/skills/herdr-pi-reference/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。`preset-settings` 技能由 Pi Config Manager 包自行提供。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。已有的 `resource-settings.json` 状态会被保留；首次迁移时，安装程序会从旧的 `skill-settings.json` 导入被禁用的技能列表。迁移期间还会先备份、再删除旧的全局 `codex-fast.json` 状态文件以及已退役的外部 `pi-openai-server-compaction` Git 包 checkout；仓库管理的 Codex-only 扩展会完全取代该依赖。重启 Pi 或运行：
 
 ```text
 /reload
@@ -78,4 +79,6 @@ cd my-pi-config
 
 部分扩展与子代理工作流改编自 Pi 的官方示例。Pi 的许可证包含在 `licenses/pi-LICENSE` 中。
 
-`codex-fast-toggle` 的流式处理方式源自 `pi-openai-codex-fast`；其上游 MIT 许可证与 README 包含在该目录中。参见 `THIRD_PARTY_NOTICES.md`。
+`codex-fast-toggle` 的流式处理方式源自 `pi-openai-codex-fast`；其上游 MIT 许可证与 README 包含在该目录中。
+
+`codex-server-compaction` 基于 Alexis Gallagher 的 `pi-openai-server-compaction`（MIT）适配，保留 Codex V2 endpoint、并行 Pi/native 压缩、持久化与 replay 路径；许可证与派生说明包含在该目录中。参见 `THIRD_PARTY_NOTICES.md`。

@@ -23,6 +23,18 @@ Upstream project: <https://github.com/2h2d-co/pi-openai-codex-fast>
 
 License and upstream README are retained in `extensions/codex-fast-toggle/`.
 
+## pi-openai-server-compaction
+
+`extensions/codex-server-compaction/` is a Codex-only adaptation of
+`pi-openai-server-compaction` by Alexis Gallagher. It retains the upstream
+Remote Compaction V2 protocol, parallel Pi/native compaction, persisted-history,
+and replay design while removing direct OpenAI, Azure, and custom transport support and
+porting the result to the installed Pi extension API.
+
+Upstream project: <https://github.com/algal/pi-openai-server-compaction>
+
+License: see `extensions/codex-server-compaction/LICENSE`.
+
 ## Herdr skill
 
 `install.sh` downloads the Herdr `SKILL.md` from the upstream repository at

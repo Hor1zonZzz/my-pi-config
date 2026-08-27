@@ -8,7 +8,6 @@
     "npm:pi-lens",
     "npm:pi-annotate",
     "npm:pi-config-manager",
-    "npm:@ogulcancelik/pi-herdr",
-    "git:github.com/algal/pi-openai-server-compaction"
+    "npm:@ogulcancelik/pi-herdr"
   ]
 }

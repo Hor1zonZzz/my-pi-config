@@ -27,6 +27,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
     - `agents/` — user-level subagent definitions.
     - `prompts/` — the upstream slash-command workflow templates.
   - `codex-fast-toggle/` — implements `/fast on|off` and modifies Codex request payloads to select the priority service tier.
+  - `codex-server-compaction/` — runs Pi's built-in text compaction alongside Codex-only Remote Compaction V2, persists provider-native replacement history in compaction details, inherits the session Fast tier, and uses the Pi result when the remote request fails.
 - `licenses/`, `LICENSE`, and `THIRD_PARTY_NOTICES.md` — project and upstream licensing information.
 
 ## Important Relationships
@@ -37,7 +38,7 @@ Some files must be maintained together:
 - `extensions/subagent/index.ts`, `extensions/subagent/agents.ts`, `extensions/subagent/README.md`, `extensions/subagent/agents/*.md`, and `extensions/subagent/prompts/*.md` form the upstream-derived subagent workflow. Agent names referenced by a prompt must exist in `extensions/subagent/agents/`; the `/subagent` command and frontmatter parser must agree on `model` and `thinkingLevel`.
 - Model identifiers appear in `settings.json`, `presets.json`, `extensions/subagent/agents/*.md`, and `model-overrides.json`. When models are renamed or removed, inspect all four locations.
 - `extensions/plan-mode/index.ts` and `extensions/plan-mode/utils.ts` must agree on state, plan markers, and the bash safety policy. If a question tool is renamed, update `PLAN_MODE_TOOLS` and the injected instructions.
-- `extensions/codex-fast-toggle/index.ts`, its English and Chinese READMEs, and `install.sh` define the session-scoped Fast behavior and migration from the former global state file.
+- `extensions/codex-fast-toggle/index.ts`, `extensions/codex-server-compaction/`, `settings.json`, `install.sh`, and their English/Chinese documentation define session-scoped Fast behavior and Codex remote compaction. The compaction extension reads the latest `codex-fast` custom entry so V2 requests inherit `service_tier: "priority"`, while the installer removes both the former global Fast state and the retired external compaction package checkout.
 - `extensions/herdr/` owns `integration-check.ts`, the background-monitor modules, and `skills/herdr-pi-reference/`; `install.sh` must install that skill into the target skills directory and remove the former standalone extension paths. `herdr-agent-state.ts` is installed and overwritten by Herdr. The local extension may use documented Herdr CLI behavior but must not vendor, import, modify, install, or update the Herdr-managed integration. The background monitor is session-scoped and must not deliver a completion to a replacement Pi session.
 
 ## Upstream-Derived Code
@@ -58,7 +59,8 @@ Local behavior that must be preserved during an upstream refresh includes:
 - strict confirmation before running project-local agents, even in trusted projects;
 - the `/subagent` user-agent model/thinking TUI and its available/scoped-model filtering;
 - any local tool choices or instructions in `presets.json` and plan mode;
-- the custom Codex Fast implementation and its retained upstream attribution.
+- the custom Codex Fast implementation and its retained upstream attribution;
+- the Codex-only compaction scope, parallel Pi/native requests, V2 `/codex/responses` plus `compaction_trigger` protocol, exact-model replay isolation, text fallback, installation-id behavior, and retained upstream MIT attribution.
 
 When importing or substantially adapting more upstream code, keep the relevant license, update `THIRD_PARTY_NOTICES.md`, and document the derivation in the nearest README when appropriate.
 
@@ -82,6 +84,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 ### High-Risk Compatibility Areas
 
 - `codex-fast-toggle` depends on session custom entries, session/tree lifecycle events, the `before_provider_request` lifecycle, and the provider-specific outgoing payload accepting `service_tier`. Verify session restoration and the real request shape after provider/runtime changes.
+- `codex-server-compaction` depends on compaction/session/tree lifecycle events, `before_provider_request` transform chaining with Fast, Codex OAuth token/header shape, the Responses V2 `compaction_trigger` SSE protocol, public Responses message/tool conversion helpers, compaction usage accounting, and exact-model session reconstruction. It creates or reuses `$CODEX_HOME/installation_id` (normally `~/.codex/installation_id`) at runtime but must never copy that machine identity into this repository.
 - `subagent` depends on Pi CLI flags, LF-delimited JSON-mode events, message shapes, executable discovery, subprocess cancellation, model availability/scoping, TUI selection contracts, and mutable user-agent frontmatter. Re-copy the matching installed Pi version's upstream example when compatibility changes, then reapply the documented local behavior.
 - `extensions/herdr/` background monitoring depends on the official `herdr_agent` tool-result shape, Herdr's public `agent get` JSON response and lifecycle states, Pi session IDs, cancellable `pi.exec`, and `agent_settled` follow-up delivery. It must remain separate from the Herdr-managed Pi state extension and cannot provide prompt-level attribution when multiple Pi sessions share one target pane.
 - `questionnaire` depends on TUI component, key handling, autocomplete, theming, and invalidation contracts.
@@ -109,7 +112,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - Existing managed paths are backed up under `backups/my-pi-config-<timestamp>/` before copying.
 - The installer preserves Pi-managed `settings.json.lastChangelogVersion` instead of tracking it in this repository.
 - It merges credential-free `model-overrides.json` entries into the target `models.json`, preserving unrelated local providers and settings.
-- It removes obsolete extension paths and state, including the former standalone Preset extension and skill, the previously customized `extensions/subagent/`, `subagent-settings.json`, the retired `explore-and-gather` prompt, and the former global `codex-fast.json` state before copying the current settings, presets, local extensions, local general-purpose prompts, upstream subagent-owned agents/prompts, and refreshed Herdr-owned skills.
+- It removes obsolete extension paths and state, including the former standalone Preset extension and skill, the previously customized `extensions/subagent/`, `subagent-settings.json`, the retired `explore-and-gather` prompt, the former global `codex-fast.json` state, and the retired `git/github.com/algal/pi-openai-server-compaction` package checkout before copying the current settings, presets, local extensions, local general-purpose prompts, upstream subagent-owned agents/prompts, and refreshed Herdr-owned skills.
 - It preserves an existing target `resource-settings.json`; when absent, it migrates the disabled Skills list from legacy `skill-settings.json` before falling back to repository defaults.
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
 - It backs up and then replaces installed user-agent Markdown files with repository copies, so `/subagent` runtime edits must be moved into this repository before reinstalling if they should become reproducible defaults.
@@ -157,6 +160,7 @@ Perform applicable interactive checks:
 - `/plan` blocks writes, preserves unrelated tools through a transient manager layer, extracts a plan, and removes the layer before execution.
 - `questionnaire` handles single, multiple, custom-text, cancellation, narrow-terminal, and non-TUI cases.
 - `/fast on|off` persists only in the current session/branch, defaults Off in unrelated sessions and subagents, appears only for `openai-codex`, updates status, and changes only the intended outgoing request field.
+- Codex server compaction is a no-op for non-Codex models; runs Pi's built-in text compaction and the V2 native request in parallel; follows the active Fast tier; stores bounded native history and combined usage; replays only for the exact originating model; restores the current V2 details shape across resume/tree/model round-trips without importing foreign-model assistant turns; provides no legacy V1 or older-format migration; and uses the Pi result when V2 fails.
 - `/subagent` lists only user agents, offers only models currently available within the session's model scope, filters thinking levels by model capability, updates frontmatter without reload, and preserves cancellation without partial writes.
 - `subagent` handles the upstream single, parallel, and chained modes, inherited dispatch defaults, cancellation, failures, output limits, and strict project-agent confirmation; verify the four local agent files retain their intended model defaults.
 - `extensions/herdr/` background monitoring is a no-op outside Herdr; tracks only successful explicit `herdr_agent prompt` calls with `wait: false`; delivers grouped, bounded follow-ups to the owning session after `done`, post-working `idle`, or `blocked`; and cancels cleanly on session replacement, reload, and shutdown.

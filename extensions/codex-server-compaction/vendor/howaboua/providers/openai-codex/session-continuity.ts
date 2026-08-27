@@ -31,19 +31,11 @@ function materializedInput(state: CanonicalSessionState): unknown[] {
 	return [...state.requestBody.input, ...state.responseItems];
 }
 
-function responsesLiteRequestPrefixLength(input: readonly unknown[]): number {
-	const first = input[0];
-	if (!first || typeof first !== "object" || (first as { type?: unknown }).type !== "additional_tools") return 0;
-	const second = input[1];
-	return second && typeof second === "object" && (second as { role?: unknown }).role === "developer" ? 2 : 1;
-}
-
 function replayCanonicalInput(
 	state: CanonicalSessionState,
 	preparedInput: readonly unknown[],
-	requestPrefixLength = 0,
 ): { input?: unknown[] | undefined; decision: CanonicalHistoryDecision } {
-	const reconstructedRequestInput = state.reconstructedRequestInput.slice(requestPrefixLength);
+	const reconstructedRequestInput = state.reconstructedRequestInput;
 	const minimumInputLength = reconstructedRequestInput.length + state.responseItems.length;
 	if (preparedInput.length < minimumInputLength) {
 		return { decision: "input_shorter_than_baseline" };
@@ -141,11 +133,7 @@ export function resolveCanonicalCompactionPromptInput(
 	if (state.requestBody.model !== model) return { decision: "model_mismatch" };
 	if (identity && (state.url !== identity.url || state.accountId !== identity.accountId)) return { decision: "identity_mismatch" };
 	if (!reconstructedInput) return { input: structuredClone(materializedInput(state)), decision: "validated" };
-	const replay = replayCanonicalInput(
-		state,
-		reconstructedInput,
-		responsesLiteRequestPrefixLength(state.reconstructedRequestInput),
-	);
+	const replay = replayCanonicalInput(state, reconstructedInput);
 	return {
 		...(replay.input ? { input: replay.input } : {}),
 		decision: replay.decision === "compaction" ? "validated" : replay.decision,

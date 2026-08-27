@@ -59,7 +59,7 @@ Pi session 统计恰好计入两个请求各一次；远程 usage 也保留在 d
 
 - direct `openai/*` 与 Azure；
 - provider override；
-- 参考 adapter 的 direct `openai/*`、Azure、工具、prompt、voice、Code Mode 或 Responses Lite 功能；
+- 参考 adapter 的 direct `openai/*`、Azure、工具、prompt、voice、Code Mode、Notebook 或 Responses Lite 功能；对应 vendor 实现路径已删除；
 - `store: true` 或 `context_management` patch；
 - 外部运行时依赖。
 

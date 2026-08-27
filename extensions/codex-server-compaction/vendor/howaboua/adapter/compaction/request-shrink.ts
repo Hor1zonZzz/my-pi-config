@@ -1,5 +1,4 @@
 import type { NativeCompactionRequestBody, ResponsesInputItem } from "./serializer.ts";
-import { supportsResponsesLiteModel } from "../../providers/openai-codex/responses-lite-model.ts";
 
 export const COMPACTION_TRUNCATED_TOOL_OUTPUT_MESSAGE = "Output exceeded the available model context and was truncated";
 export const OPENAI_CODEX_COMPACTION_ENDPOINT_BUDGET_TOKENS = 872_000;
@@ -44,8 +43,13 @@ function rewriteToolOutputItem(item: ResponsesInputItem): { recognized: boolean;
 	return { recognized: false, item };
 }
 
+function usesLargeCodexCompactionEndpoint(model: string): boolean {
+	const id = model.includes("/") ? (model.split("/").pop() ?? model) : model;
+	return /^(?:gpt-5\.6-(?:luna|terra|sol)|gpt-daybreak-(?:blue|red)-latest)$/.test(id.toLowerCase());
+}
+
 export function resolveNativeCompactionRequestBudget(options: NativeCompactionBudgetOptions): number | undefined {
-	if (options.codexTransport && supportsResponsesLiteModel(options.model)) {
+	if (options.codexTransport && usesLargeCodexCompactionEndpoint(options.model)) {
 		return OPENAI_CODEX_COMPACTION_ENDPOINT_BUDGET_TOKENS;
 	}
 	const contextWindow = options.contextWindow;

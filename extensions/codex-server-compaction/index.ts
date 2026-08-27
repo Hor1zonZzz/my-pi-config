@@ -15,7 +15,6 @@ import {
 	buildCompactionSummaryText,
 	buildRemoteCompactionDetails,
 	buildRemoteCompactionV2History,
-	buildToolsPayload,
 	combineUsage,
 	isOpenAICodexResponsesModel,
 	isRecord,
@@ -52,7 +51,6 @@ type ResponsesRequestShapeState = {
 	reasoning?: ResponsesReasoningConfig;
 	text?: ResponsesTextConfig;
 	serviceTier?: string;
-	tools?: JsonRecord[];
 	parallelToolCalls?: boolean;
 };
 
@@ -143,9 +141,6 @@ function extractRequestShape(payload: JsonRecord): ResponsesRequestShapeState {
 		...(typeof payload.service_tier === "string"
 			? { serviceTier: payload.service_tier }
 			: {}),
-		...(Array.isArray(payload.tools)
-			? { tools: payload.tools.filter(isRecord) }
-			: {}),
 		...(typeof payload.parallel_tool_calls === "boolean"
 			? { parallelToolCalls: payload.parallel_tool_calls }
 			: {}),
@@ -195,21 +190,9 @@ function mergeLocalDetails(
 export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 	registerOpenAICodexCustomProvider(pi, {
 		getConfig: () => ({
-			executionMode: "normal",
-			openai: {
-				fast: false,
-				verbosity: "low",
-				forceCachedWebSockets: true,
-				cacheKeepalive: false,
-				lunaCacheKeepaliveMinutes: 0,
-				proxyResponsesLite: false,
-				cacheDiagnostics: "off",
-				harnessIdentifierHeader: false,
-				webSearchModel: "gpt-5.6-luna",
-			},
-			compaction: { responsesCompaction: true, v2UserMessageRetention: 64 },
-		} as never),
-		useResponsesLite: () => false,
+			openai: { forceCachedWebSockets: true },
+			compaction: { responsesCompaction: true },
+		}),
 	});
 
 	pi.on("session_start", (_event, ctx) => {
@@ -267,9 +250,6 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 			observedShape?.reasoning ??
 			thinkingLevelToResponsesReasoning(model, thinkingLevel);
 		const serviceTier = resolveServiceTier(branchEntries, observedShape);
-		const tools =
-			observedShape?.tools ??
-			buildToolsPayload(pi.getAllTools(), pi.getActiveTools());
 
 		const localPromise = compact(
 			event.preparation,

@@ -4,8 +4,7 @@ export function requestBodyForWebSocketContinuationComparison(body: ResponsesBod
 	const {
 		input: _input,
 		previous_response_id: _previousResponseId,
-		// Request metadata may carry per-turn transport fields such as the
-		// Responses Lite marker. It does not change conversation continuity.
+		// Per-turn request metadata does not change conversation continuity.
 		client_metadata: _clientMetadata,
 		...rest
 	} = body;

@@ -71,7 +71,7 @@ Intentionally excluded:
 
 - direct `openai/*` and Azure models;
 - provider overrides;
-- direct `openai/*`, Azure, tools, prompt, voice, Code Mode, or Responses Lite features from the reference adapter;
+- direct `openai/*`, Azure, tools, prompt, voice, Code Mode, Notebook, or Responses Lite features from the reference adapter; their vendored implementation paths are removed;
 - `store: true` or `context_management` patching;
 - external runtime dependencies.
 

@@ -1,7 +1,8 @@
 import type { AssistantMessage, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import type { CodexCompactionDiagnostic } from "../../adapter/compaction/diagnostics.ts";
-import type { CodexCacheKeepaliveStrategy } from "../../adapter/activation/cache-keepalive.ts";
+
+export type CodexCacheKeepaliveStrategy = "generated-current";
 
 export interface WebSocketLike {
 	readyState?: number | undefined;
@@ -166,7 +167,6 @@ export type CodexProviderStreamOptions = SimpleStreamOptions & {
 export type CodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type OpenAICodexStreamOptions = CodexProviderStreamOptions & {
 	reasoningEffort?: CodexReasoningEffort | undefined;
-	responsesLite?: boolean | undefined;
 	grammarToolInputProperties?: ReadonlyMap<string, string> | undefined;
 	onOutputItemDone?: ((item: unknown) => void) | undefined;
 	websocketConnectTimeoutMs?: number | undefined;

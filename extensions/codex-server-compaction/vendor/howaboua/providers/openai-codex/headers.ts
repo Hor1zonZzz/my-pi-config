@@ -1,6 +1,5 @@
 import { DEFAULT_CODEX_BASE_URL, JWT_CLAIM_PATH, OPENAI_BETA_RESPONSES_WEBSOCKETS } from "./constants.ts";
 import { osInfo } from "./node-runtime.ts";
-import { RESPONSES_LITE_HEADER } from "./responses-lite.ts";
 import { resolveCodexInstallationId } from "../../../../remote-compaction.ts";
 export { headersToRecord } from "./header-record.ts";
 
@@ -135,7 +134,6 @@ export function buildSSEHeaders(
 	accountId: string,
 	token: string,
 	sessionId: string | undefined,
-	responsesLite = false,
 	originator = "pi",
 	routingHint?: string | undefined,
 ): Headers {
@@ -143,7 +141,6 @@ export function buildSSEHeaders(
 	headers.set("OpenAI-Beta", "responses=experimental");
 	headers.set("accept", "text/event-stream");
 	headers.set("content-type", "application/json");
-	if (responsesLite) headers.set(RESPONSES_LITE_HEADER, "true");
 
 	if (sessionId) {
 		headers.set("session-id", sessionId);

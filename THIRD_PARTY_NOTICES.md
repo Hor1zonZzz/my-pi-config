@@ -34,7 +34,8 @@ the result to the installed Pi extension API.
 The cached `openai-codex` WebSocket/SSE provider, canonical session continuity,
 and raw V2 output handling under `vendor/howaboua/` are adapted from
 `@howaboua/pi-codex-conversion` by Igor Warzocha and contributors. Tool, prompt,
-voice, Code Mode, Responses Lite, UI, and cache-keepalive features are excluded.
+voice, Code Mode, Notebook, Responses Lite, UI, and cache-keepalive features are
+excluded, and their vendor-only implementation paths are not retained.
 
 Upstream projects:
 

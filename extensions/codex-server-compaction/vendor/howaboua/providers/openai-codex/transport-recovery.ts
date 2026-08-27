@@ -9,14 +9,10 @@ import {
 	type Model,
 	type Transport,
 } from "@earendil-works/pi-ai";
-import type { CodexConversionConfig } from "../../adapter/activation/config.ts";
-import { createGrammarToolInputProperties } from "../constrained-sampling.ts";
 import { DEFAULT_MAX_RETRY_DELAY_MS, DEFAULT_SSE_HEADER_TIMEOUT_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS, DEFAULT_STREAM_MAX_RETRIES, INITIAL_STREAM_RETRY_DELAY_MS, MAX_SSE_REQUEST_RETRIES, MAX_STREAM_MAX_RETRIES } from "./constants.ts";
 import { createErrorMessage, isRetryableRequestStatus, isRetryableStreamStatus, NonRetryableProviderError, parseErrorResponse } from "./errors.ts";
 import { buildSSEHeaders, buildWebSocketHeaders, createCodexRequestId, extractAccountId, headersToRecord, PI_CODEX_CONVERSION_ORIGINATOR, resolveCodexRequestRouting, resolveCodexUrl, resolveCodexWebSocketUrl } from "./headers.ts";
 import { codexDiagnosticsFailure, noThrowCodexDiagnosticsSink } from "./diagnostic-failure.ts";
-import { supportsResponsesLiteModel } from "./responses-lite-model.ts";
-import { applyResponsesLiteWebSocketMetadata } from "./responses-lite.ts";
 import { combineAbortSignals, compressRequestBodyZstd, createSSEHeaderTimeout, normalizeTimeoutMs, parseSSE, sleep } from "./sse.ts";
 import { assertSuccessfulCodexOutput, CodexProtocolError, codexOverloadRetryDelay, codexRateLimitRetryDelay, codexStreamRetryDelay, createCodexHttpError, isCodexApiError, isCodexOverloadError, isCodexRateLimitError, isRetryableCodexStreamError, processCodexResponsesStream } from "./stream-events.ts";
 import { CODEX_TURN_STATE_HEADER, type CodexTurnState, withCodexTurnState, withCodexTurnStateHeader } from "./turn-state.ts";
@@ -29,11 +25,22 @@ import { processWebSocketStream } from "./websocket-stream.ts";
 import { withRemoteCompactionV2Feature } from "../openai-responses/compaction-v2-feature.ts";
 import { captureCanonicalSessionToken, recordCanonicalSessionResponse, validateCanonicalSessionRequest } from "./session-continuity.ts";
 
-export type CodexProviderRuntimeConfig = Pick<CodexConversionConfig, "openai" | "executionMode"> & Partial<Pick<CodexConversionConfig, "compaction">>;
+type CodexTransportConfig = {
+	forceCachedWebSockets?: boolean | undefined;
+};
+
+export type CodexProviderRuntimeConfig = {
+	openai: CodexTransportConfig & {
+		fast?: boolean | undefined;
+		harnessIdentifierHeader?: boolean | undefined;
+	};
+	compaction?: {
+		responsesCompaction?: boolean | undefined;
+	};
+};
 
 export interface CodexTransportRecoveryDependencies {
 	getConfig?: () => CodexProviderRuntimeConfig | undefined;
-	useResponsesLite?: (model: Model<Api>) => boolean;
 	turnState?: CodexTurnState | undefined;
 	onPreparedPayload?: ((payload: ResponsesBody) => void) | undefined;
 	onStreamSettled?: () => void | undefined;
@@ -42,7 +49,6 @@ export interface CodexTransportRecoveryDependencies {
 		model: Model<TApi>,
 		context: Context,
 		options: OpenAICodexStreamOptions | undefined,
-		responsesLite: boolean,
 	) => Promise<ResponsesBody>;
 }
 
@@ -91,7 +97,7 @@ function rateLimitRecoveryBudgetError(error: unknown): NonRetryableProviderError
 
 export function getEffectiveCodexTransport(
 	transport: Transport | undefined,
-	config: Pick<CodexConversionConfig["openai"], "forceCachedWebSockets"> | undefined,
+	config: CodexTransportConfig | undefined,
 	sessionId?: string | undefined,
 ): Transport {
 	const configuredTransport = transport ?? "auto";
@@ -169,20 +175,15 @@ export function createCodexTransportStream<TApi extends Api>(
 	deps: CodexTransportRecoveryDependencies,
 ): AssistantMessageEventStream {
 	const runtimeConfig = deps.getConfig?.();
-	const responsesLite = deps.useResponsesLite?.(model)
-		?? ((runtimeConfig?.executionMode === "code" || runtimeConfig?.executionMode === "notebook")
-			&& supportsResponsesLiteModel(model.id));
-	const grammarToolInputProperties = createGrammarToolInputProperties(context.tools, responsesLite);
 	const preferredTransport = getEffectiveCodexTransport(options?.transport, runtimeConfig?.openai);
 	const effectiveTransport = getEffectiveCodexTransport(options?.transport, runtimeConfig?.openai, options?.sessionId);
 	const effectiveOptions: OpenAICodexStreamOptions | undefined = options
 		? {
 			...options,
 			transport: effectiveTransport,
-			grammarToolInputProperties,
 			...(runtimeConfig?.compaction?.responsesCompaction ? { headers: withRemoteCompactionV2Feature(options.headers) } : {}),
 		}
-		: { transport: effectiveTransport, grammarToolInputProperties };
+		: { transport: effectiveTransport };
 	const stream = createAssistantMessageEventStream();
 
 	(async () => {
@@ -203,7 +204,7 @@ export function createCodexTransportStream<TApi extends Api>(
 
 			const accountId = extractAccountId(apiKey);
 			const canonicalSessionToken = captureCanonicalSessionToken(effectiveOptions?.sessionId);
-			const reconstructedBody = await deps.prepareRequestBody(model, context, effectiveOptions, responsesLite);
+			const reconstructedBody = await deps.prepareRequestBody(model, context, effectiveOptions);
 			const body = reconstructedBody;
 			const canonicalHistory: CanonicalHistoryDecision | undefined = effectiveOptions?.canonicalCompaction
 				? "compaction"
@@ -218,14 +219,14 @@ export function createCodexTransportStream<TApi extends Api>(
 			const websocketRequestId = effectiveOptions?.sessionId || createCodexRequestId();
 			const routing = resolveCodexRequestRouting({
 				model: body.model,
-				fast: runtimeConfig?.openai.fast === true,
+				fast: runtimeConfig?.openai?.fast === true,
 				serviceTier: body.service_tier,
-				normalOriginator: runtimeConfig?.openai.harnessIdentifierHeader ? PI_CODEX_CONVERSION_ORIGINATOR : "pi",
+				normalOriginator: runtimeConfig?.openai?.harnessIdentifierHeader ? PI_CODEX_CONVERSION_ORIGINATOR : "pi",
 			});
-			const baseSseHeaders = buildSSEHeaders(model.headers, effectiveOptions?.headers, accountId, apiKey, effectiveOptions?.sessionId, responsesLite, routing.originator, routing.routingHint);
+			const baseSseHeaders = buildSSEHeaders(model.headers, effectiveOptions?.headers, accountId, apiKey, effectiveOptions?.sessionId, routing.originator, routing.routingHint);
 			const websocketHeaders = buildWebSocketHeaders(model.headers, effectiveOptions?.headers, accountId, apiKey, websocketRequestId, routing.originator, routing.routingHint);
 			const bodyJson = JSON.stringify(body);
-			const websocketBody = responsesLite ? applyResponsesLiteWebSocketMetadata(body) : body;
+			const websocketBody = body;
 			const compressedBody = compressRequestBodyZstd(bodyJson);
 			if (compressedBody) baseSseHeaders.set("content-encoding", "zstd");
 			const sseBody = compressedBody ?? bodyJson;

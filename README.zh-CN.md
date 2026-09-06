@@ -19,7 +19,7 @@
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
 - `notify.ts` — 代理回合结束时的终端通知
 - `herdr/` — 统一持有本地 Herdr 集成检查器、异步 `herdr_agent prompt` 监控器和 `herdr-pi-reference` 技能源码；它让显式 `wait: false` 调用保持非阻塞，并注入会话级完成 follow-up
-- `subagent/` — 基于 Pi 官方 subagent 示例适配，包含本地模型默认值，以及用于选择用户级 agent 可用模型与 thinking level 的 `/subagent` TUI
+- `subagent/` — 基于 Pi 官方示例，保留本地模型默认值和 `/subagent` 模型/思考级别配置；支持 `async: true` 后台执行，完成时通过 steer 回传并唤醒空闲主代理，`/subagent-jobs` 查看或取消任务（[详细说明](extensions/subagent/README.md#background-execution)）
 - `codex-fast-toggle/` — `/fast on|off` 为当前 Pi session 切换 Codex 优先级服务层级（service tier），同时保持提供方标识为 `openai-codex`
 - `codex-server-compaction/` — 并行执行 Pi 内置文本压缩与 Codex Remote Compaction V2，持久化 opaque 原生历史，继承当前 Fast service tier，并在远程失败时使用 Pi 结果
 

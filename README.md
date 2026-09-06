@@ -20,7 +20,7 @@ English | [中文文档](README.zh-CN.md)
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
-- `subagent/` — Pi's official subagent example adapted with local model defaults and a `/subagent` TUI for selecting a user agent's available model and thinking level
+- `subagent/` — Pi's official subagent example adapted with local model defaults, a `/subagent` model/thinking TUI, and optional `async: true` execution with steer completion; `/subagent-jobs` lists or cancels background work (see [details](extensions/subagent/README.md#background-execution))
 - `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier for the current Pi session while keeping the provider identity as `openai-codex`
 - `codex-server-compaction/` — runs Pi's built-in text compaction and Codex Remote Compaction V2 in parallel, persists opaque native history, follows the current Fast service tier, and uses the Pi result on remote failure
 

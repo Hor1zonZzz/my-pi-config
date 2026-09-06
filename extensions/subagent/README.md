@@ -9,7 +9,8 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Parallel streaming**: All parallel tasks stream updates simultaneously
 - **Markdown rendering**: Final output rendered with proper formatting (expanded view)
 - **Usage tracking**: Shows turns, tokens, cost, and context usage per agent
-- **Abort support**: Ctrl+C propagates to kill subagent processes
+- **Async dispatch**: `async: true` returns a job ID immediately; completion steers the parent and wakes it if idle
+- **Abort support**: Foreground cancellation kills subagent processes; `/subagent-jobs cancel <id|all>` cancels background jobs
 - **Interactive configuration**: `/subagent` selects a user agent, an available model, and a supported thinking level
 
 ## Structure
@@ -80,6 +81,60 @@ Re-running this repository's installer backs up and then replaces installed user
 ### Single agent
 ```
 Use scout to find all authentication code
+```
+
+### Background execution
+
+Add `async: true` to any of the three tool modes (default: `false`):
+
+```json
+{
+  "agent": "scout",
+  "task": "Find authentication entry points and summarize their call relationships.",
+  "async": true
+}
+```
+
+The call returns a job ID after validation and any project-agent confirmation.
+The delegated task belongs to the subagent: the parent should only continue
+independent work. If none remains, it should end its turn without polling or
+repeating the task. Completion arrives automatically as a custom message through
+`pi.sendMessage(..., { deliverAs: "steer", triggerTurn: true })`: while busy, Pi
+receives it after the current assistant turn's tools finish, before the next
+model call; while idle, Pi starts a new response. No extra wait tool is needed.
+This is a coordination instruction, not a lock on files or a guarantee against
+model duplication.
+
+For `tasks`, the batch reports once all tasks finish (including individual
+failures). For `chain`, steps still run sequentially with `{previous}` and the
+chain reports at completion or the first failure. The status bar counts active
+background jobs; final messages can be expanded to inspect full agent output.
+Background jobs do not keep updating a tool call that has already returned.
+
+```text
+/subagent-jobs
+/subagent-jobs cancel subagent-<id>
+/subagent-jobs cancel all
+```
+
+The list shows active IDs and delegated tasks. Cancellation is reported to the
+parent; changes already made by a cancelled worker are not rolled back.
+Cancelling the parent turn does not cancel a background job. Session replacement,
+reload, shutdown, and tree navigation cancel background jobs and suppress their
+late results. Jobs are in memory and do not resume after a restart.
+
+Async execution requires a long-lived TUI or RPC session. Single-shot print/JSON
+mode rejects `async: true` because it exits when the parent finishes. This also
+prevents a single-shot child from starting background work it cannot collect.
+At most 4 background jobs are active at once; each parallel job retains the
+existing 8-task / 4-concurrent-child limits. Completion text is capped at 32 KB
+and 1,000 lines; full agent results remain in message details for expanded display.
+
+Compatibility checked against Pi **0.85.0**. Run the deterministic lifecycle and
+subprocess tests with Node 24 and Pi 0.85.0 dependencies resolvable from this repo:
+
+```bash
+node --test extensions/subagent/async.test.ts
 ```
 
 ### Parallel execution

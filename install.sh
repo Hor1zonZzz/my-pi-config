@@ -80,7 +80,7 @@ install_herdr_pi_reference_skill() {
 
 sync_herdr_skill
 
-for path in settings.json presets.json resource-settings.json subagent-settings.json skill-settings.json models.json codex-fast.json extensions agents prompts skills; do
+for path in settings.json subagent-settings.json models.json codex-fast.json extensions agents prompts skills; do
 	backup_path "$path"
 done
 backup_path "git/github.com/algal/pi-openai-server-compaction"
@@ -170,28 +170,6 @@ fs.writeFileSync(
 	"utf8",
 );
 fs.renameSync(temporaryPath, targetPath);
-NODE
-cp "$ROOT_DIR/presets.json" "$AGENT_DIR/presets.json"
-node - "$ROOT_DIR/resource-settings.json" "$AGENT_DIR/resource-settings.json" "$AGENT_DIR/skill-settings.json" <<'NODE'
-const fs = require("node:fs");
-
-const [, , sourcePath, targetPath, legacyPath] = process.argv;
-if (!fs.existsSync(targetPath)) {
-	const defaults = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
-	try {
-		const legacy = JSON.parse(fs.readFileSync(legacyPath, "utf8"));
-		if (Array.isArray(legacy.disabledSkills)) {
-			defaults.disabledSkills = [...new Set(
-				legacy.disabledSkills.filter((name) => typeof name === "string"),
-			)].sort();
-		}
-	} catch (error) {
-		if (error.code !== "ENOENT") throw error;
-	}
-	const temporaryPath = `${targetPath}.${process.pid}.tmp`;
-	fs.writeFileSync(temporaryPath, `${JSON.stringify(defaults, null, 2)}\n`, "utf8");
-	fs.renameSync(temporaryPath, targetPath);
-}
 NODE
 cp -R "$ROOT_DIR/extensions/." "$AGENT_DIR/extensions/"
 cp -R "$SUBAGENT_DIR/agents/." "$AGENT_DIR/agents/"

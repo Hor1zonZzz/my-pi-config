@@ -6,9 +6,7 @@ English | [中文文档](README.zh-CN.md)
 
 ## Included
 
-- `settings.json` — model defaults and installable Pi packages, including the latest [Pi Config Manager](https://github.com/Hor1zonZzz/pi-config-manager), Pi Lens, the MCP adapter, and the Herdr tool integration
-- `presets.json` — `quick`, `explore`, `orchestrator`, and `deep-code` presets
-- `resource-settings.json` — default enable/disable policy for Pi-discovered tools, skills, and context files
+- `settings.json` — model defaults and installable Pi packages, including Pi Lens, the MCP adapter, and the Herdr tool integration
 - `model-overrides.json` — managed, credential-free overrides for built-in models
 - `extensions/` — local extensions; `extensions/subagent/` also owns its agent definitions and workflow prompts
 - `prompts/` — local general-purpose prompt templates, including `/understand` and `/explore-understand` for manually controlled requirement alignment
@@ -18,9 +16,7 @@ English | [中文文档](README.zh-CN.md)
 
 ## Local extensions
 
-Preset selection, model/thinking/resource profiles, editor-border labels, and the `preset-settings` skill are provided by the installed `pi-config-manager` package.
-
-- `plan-mode/` — read-only planning mode integrated through the installed `pi-config-manager` package's transient tool-policy layer
+- `plan-mode/` — read-only planning mode with guarded write-tool calls, a Bash allowlist, plan extraction, and execution progress tracking
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification when an agent turn ends
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
@@ -44,13 +40,13 @@ replacing managed files. It merges `model-overrides.json` into the target
 settings. It also refreshes the Herdr skill from upstream `master`, installs it
 to `~/.pi/agent/skills/herdr/`, and installs the Herdr-owned `herdr-pi-reference`
 skill to `~/.pi/agent/skills/herdr-pi-reference/`; an existing Herdr cache is
-used when the remote is temporarily unavailable. Pi Config Manager supplies its
-own `preset-settings` skill. When Pi starts
-inside Herdr, the local integration checker warns if Herdr's Pi integration is
-missing or outdated; it never installs or updates the Herdr-managed integration
-automatically. Existing `resource-settings.json` state is preserved; on first
-migration, the installer imports disabled Skills
-from the legacy `skill-settings.json`. During migration it also backs up and removes the former global `codex-fast.json` state file and the retired external `pi-openai-server-compaction` Git package checkout; the repository-managed Codex-only extension replaces that dependency. Restart Pi or run:
+used when the remote is temporarily unavailable. When Pi starts inside Herdr,
+the local integration checker warns if Herdr's Pi integration is missing or
+outdated; it never installs or updates the Herdr-managed integration
+automatically. During migration the installer also backs up and removes the
+former global `codex-fast.json` state file and the retired external
+`pi-openai-server-compaction` Git package checkout; the repository-managed
+Codex-only extension replaces that dependency. Restart Pi or run:
 
 ```text
 /reload
@@ -61,12 +57,6 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 ## Useful commands
 
 ```text
-/config-manager
-/preset
-/tools
-/skills
-/contexts
-/extensions
 /plan
 /fast
 /subagent
@@ -89,12 +79,6 @@ files. Never commit `~/.pi/agent/auth.json` or the raw local `models.json`.
 `model-overrides.json` is managed configuration, not a copy of `models.json`; it
 contains only credential-free model overrides that the installer merges into the
 local file.
-
-`resource-settings.json` is managed configuration, not a secret. The installed
-`pi-config-manager` package hides disabled Skills and Context Files from the
-model prompt and blocks disabled `/skill:<name>` expansion; it intentionally
-does not block direct
-`read` access to known paths.
 
 ## Attribution and licenses
 

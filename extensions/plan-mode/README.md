@@ -6,7 +6,7 @@ English | [中文文档](README.zh-CN.md)
 
 ## Features
 
-- **Built-in write tools disabled**: Uses the installed `pi-config-manager` package's transient policy layer to disable edit/write while preserving other active tools
+- **Built-in write calls blocked**: Rejects edit/write tool calls while plan mode is active
 - **Bash allowlist**: Only read-only bash commands are allowed
 - **Plan extraction**: Extracts numbered steps from `Plan:` sections
 - **Progress tracking**: Widget shows completion status during execution
@@ -40,14 +40,14 @@ Plan:
 
 ### Plan Mode (Read-Only)
 
-- Built-in edit/write tools disabled
+- Built-in edit/write tool calls blocked
 - Other active tools remain available
 - Bash commands filtered through allowlist
 - Agent creates a plan without making changes
 
 ### Execution Mode
 
-- The transient Plan Mode layer is removed, restoring the manager's effective tool policy
+- Plan Mode's local tool-call restrictions are removed
 - Agent executes steps in order
 - `[DONE:n]` markers track completion
 - Widget shows progress

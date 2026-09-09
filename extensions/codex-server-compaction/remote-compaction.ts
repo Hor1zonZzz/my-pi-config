@@ -35,6 +35,7 @@ export type RemoteCompactionDetails = {
 	provider: "openai-responses-compaction";
 	implementation: "responses_compaction_v2";
 	modelKey: string;
+	accountKey?: string;
 	replacementHistory: ResponseItem[];
 	usage?: RemoteCompactionUsageSnapshot;
 };
@@ -801,12 +802,14 @@ export function buildRemoteCompactionDetails(
 	model: Model<any>,
 	replacementHistory: ResponseItem[],
 	usage?: RemoteCompactionUsageSnapshot,
+	accountKey?: string,
 ): RemoteCompactionDetails {
 	return {
 		version: 2,
 		provider: "openai-responses-compaction",
 		implementation: "responses_compaction_v2",
 		modelKey: modelKey(model),
+		...(accountKey ? { accountKey } : {}),
 		replacementHistory,
 		...(usage ? { usage } : {}),
 	};
@@ -894,6 +897,7 @@ export function extractRemoteCompactionDetails(
 		provider: "openai-responses-compaction",
 		implementation: "responses_compaction_v2",
 		modelKey: typeof remote.modelKey === "string" ? remote.modelKey : "",
+		...(typeof remote.accountKey === "string" ? { accountKey: remote.accountKey } : {}),
 		replacementHistory,
 		...(parseUsage(remote.usage) ? { usage: parseUsage(remote.usage) } : {}),
 	};
@@ -932,8 +936,11 @@ export function reconstructRemoteCompactionStateFromBranch(params: {
 		id: string;
 		details?: unknown;
 		message?: AgentMessage;
+		customType?: unknown;
+		data?: unknown;
 	}>;
 	model?: Model<any>;
+	accountKey?: string;
 }): RemoteCompactionSessionState | undefined {
 	let latestCompactionIndex = -1;
 	let latestCompactionEntryId = "";
@@ -945,6 +952,8 @@ export function reconstructRemoteCompactionStateFromBranch(params: {
 		latestDetails = extractRemoteCompactionDetails(entry.details);
 	});
 	if (!latestDetails || latestCompactionIndex < 0) return undefined;
+	// Unknown legacy ownership also falls back to the saved Pi text summary.
+	if (params.accountKey && latestDetails.accountKey !== params.accountKey) return undefined;
 	if (params.model && latestDetails.modelKey !== modelKey(params.model)) {
 		return undefined;
 	}
@@ -952,6 +961,8 @@ export function reconstructRemoteCompactionStateFromBranch(params: {
 	const trailingMessages: ResponseItem[] = [];
 	let pendingTurnItems: ResponseItem[] = [];
 	for (const entry of params.branchEntries.slice(latestCompactionIndex + 1)) {
+		if (params.accountKey && entry.type === "custom" && entry.customType === "codex-account-context"
+			&& (!isRecord(entry.data) || entry.data.accountKey !== params.accountKey)) return undefined;
 		for (const message of entryContextMessages(entry)) {
 			if (
 				message.role === "assistant" &&

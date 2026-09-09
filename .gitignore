@@ -1,5 +1,9 @@
 # Secrets and local Pi state
 auth.json
+auth.json.lock/
+auth.json.*.tmp
+codex-accounts.json
+codex-accounts.json.*.tmp
 models.json
 mcp.json
 trust.json

@@ -42,7 +42,13 @@ function harness(t: TestContext) {
 			else statuses.set(key, value);
 		} },
 	};
-	codexStatusline({ on: (name: string, handler: (event: any, ctx: any) => void) => handlers.set(name, handler) } as unknown as ExtensionAPI);
+	codexStatusline({
+		on: (name: string, handler: (event: any, ctx: any) => void) => handlers.set(name, handler),
+		events: { on: (name: string, handler: () => void) => {
+			handlers.set(name, handler);
+			return () => { handlers.delete(name); };
+		} },
+	} as unknown as ExtensionAPI);
 	const emit = (name: string) => handlers.get(name)?.({}, ctx);
 	t.after(() => { emit("session_shutdown"); });
 	return { ctx, emit, statuses, setAccount: (account: string) => { access = token(account); },
@@ -106,7 +112,7 @@ test("account change aborts old request and its late result cannot overwrite the
 	h.emit("session_start");
 	await until(() => !!finishOld);
 	h.setAccount("second");
-	h.emit("agent_start");
+	h.emit("codex-accounts:changed");
 	await until(() => h.status === "second@example.com · weekly 40% left");
 	assert.equal(oldSignal?.aborted, true);
 	finishOld!();

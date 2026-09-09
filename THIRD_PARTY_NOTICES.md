@@ -23,6 +23,15 @@ Upstream project: <https://github.com/2h2d-co/pi-openai-codex-fast>
 
 License and upstream README are retained in `extensions/codex-fast-toggle/`.
 
+## pi-codex-account (design reference)
+
+The global credential-snapshot workflow in `extensions/codex-accounts/` was
+informed by [`pi-codex-account`](https://github.com/fadilsflow/pi-codex-account)
+(MIT, reviewed at `35b77b8`). Its source is not vendored; this repository's
+implementation uses native Pi OAuth, shared auth locking, and atomic commits.
+The lock implementation is supplied by Pi's existing `proper-lockfile` runtime
+dependency rather than copied into this repository.
+
 ## pi-openai-server-compaction
 
 `extensions/codex-server-compaction/` is a Codex-only adaptation of

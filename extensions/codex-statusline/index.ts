@@ -100,11 +100,13 @@ export default function codexStatusline(pi: ExtensionAPI) {
 		checkNow();
 	}
 
+	const unsubscribeAccounts = pi.events.on("codex-accounts:changed", () => { checkNow(); });
 	pi.on("session_start", (_event, ctx) => { start(ctx); });
 	pi.on("model_select", (_event, ctx) => { start(ctx); });
 	pi.on("agent_start", () => { checkNow(); });
 	pi.on("agent_settled", () => { checkNow(); });
 	pi.on("session_shutdown", () => {
+		unsubscribeAccounts();
 		stop();
 		stop = () => {};
 		checkNow = () => {};

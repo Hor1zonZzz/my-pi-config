@@ -22,9 +22,10 @@ validated full history instead.
 A successful V2 response contributes one opaque `compaction` item. The
 extension retains up to the official 64K budget of recent user messages with that item and persists the result
 in `CompactionEntry.details.remoteCompaction`. The extension supplies this
-exact native history to the matching Codex provider/API/model and removes any
-stale pre-compaction `previous_response_id`. Pi's cached WebSocket transport runs
-after the extension hook: the first request or a reconnect sends the explicit
+exact native history to the matching Codex provider/API/model/account and removes any
+stale pre-compaction `previous_response_id`. Replay is applied after Pi's payload
+hooks, at the custom transport boundary with the actual bound request token,
+before cached WebSocket reduction: the first request or a reconnect sends the explicit
 artifact history, while a matching live prefix is reduced on the wire to Pi's
 native `previous_response_id` plus the new delta. Other models use Pi's text
 summary and retained messages normally.
@@ -50,6 +51,20 @@ identity unchanged. The existing WebSocket cache includes routing headers in
 its connection identity, so a tier change cannot reuse a mismatched handshake.
 The backend may still serve the request on its default tier, and Fast can
 consume credits at a higher rate.
+
+## Global account switching
+
+With `/codex-accounts`, the provider identity remains `openai-codex`. New V2
+artifacts include an `accountKey` fingerprint; ordinary main-lane requests record
+`codex-account-context` provenance (no credentials or selection preference). A
+foreign-account turn prevents A/B/A from reviving A's earlier opaque artifact.
+Legacy V2 artifacts without account ownership use their saved Pi text fallback.
+Foreign or unattributed opaque reasoning/compaction items and response references
+are removed from the fallback request, preserving visible messages/tool results.
+The account comparison uses the token bound to the request, not a second global
+auth lookup that could race another process's switch. Account changes reset the
+cached session lane; compaction checks ownership before using canonical history.
+The pure identity decoder is shared with `codex-statusline/quota.ts`.
 
 ## Installation identity
 

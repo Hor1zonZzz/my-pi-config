@@ -18,8 +18,9 @@ Pi 进行手动或自动压缩时，扩展会并行启动两个请求：
 
 V2 成功后会返回一个 opaque `compaction` item。扩展按官方 64K 预算保留最近用户消息，并与该
 item 一起保存到 `CompactionEntry.details.remoteCompaction`。扩展向完全相同的
-Codex provider/API/model 提供精确原生历史，并删除压缩前可能残留的旧
-`previous_response_id`。Pi 的 cached WebSocket transport 在扩展 hook 之后运行：
+Codex provider/API/model/账号提供精确原生历史，并删除压缩前可能残留的旧
+`previous_response_id`。重放在 Pi payload hook 之后、自定义 transport 的实际请求 token
+边界处完成，再交给 cached WebSocket 缩减：
 第一次请求或重连时在线路上发送显式 artifact history；live prefix 完全匹配后，
 Pi 会在线路上自动缩减为原生 `previous_response_id` 加新增 delta。其他模型正常
 使用 Pi 文本摘要和保留消息。
@@ -40,6 +41,17 @@ V2 失败或超过独立的五分钟请求上限时，已经并行运行的 Pi �
 路由的独立 Fast 标志，保持 Pi 客户端身份不变。现有 WebSocket 缓存将路由请求头
 计入连接身份，因此 tier 切换不会复用握手信息不匹配的连接。
 后端仍可能按默认层级执行，且 Fast 可能消耗更多 credits。
+
+## 全局账号切换
+
+`/codex-accounts` 保留 `openai-codex` provider 身份。新 V2 artifact 保存 `accountKey`
+指纹，普通主 lane 请求记录 `codex-account-context` 历史归属（不含凭据或账号选择偏好）。
+出现其他账号回合后，A/B/A 不会重新启用 A 的旧 opaque artifact。
+没有账号归属的旧 V2 artifact 使用已保存的 Pi 文本回退；回退请求移除外来或无法确认归属的
+opaque reasoning/compaction 和 response 引用，保留可见消息及工具结果。
+校验使用该请求实际绑定的 token，不会另查一次可能已被其他进程切换的全局认证。
+账号变化会重置缓存 lane，压缩使用 canonical history 前也校验归属。
+账号指纹的纯解析函数复用 `codex-statusline/quota.ts`。
 
 ## 安装标识
 

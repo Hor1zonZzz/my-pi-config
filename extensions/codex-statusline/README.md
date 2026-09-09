@@ -29,6 +29,11 @@ this status. Existing Fast and other footer entries remain unchanged.
 This percentage describes the server's rolling window; it is not a calendar-week
 budget, five-hour limit, reset countdown, or promise that the next request is allowed.
 
+The separate [`codex-accounts`](../codex-accounts/README.md) extension can switch
+the global login. This statusline receives its local change event; other Pi
+processes detect the new identity on their normal auth checks. Neither path
+bypasses the new account's existing five-minute quota cache.
+
 ## Shared refresh
 
 The cache lives at `<Pi agent directory>/cache/codex-statusline/`, using Pi's

@@ -30,6 +30,10 @@ person@example.com · weekly 82% left
 这里显示服务器周窗口的剩余比例，不是自然周预算、五小时额度、重置倒计时，
 也不保证下一次模型请求一定被允许。
 
+独立的 [`codex-accounts`](../codex-accounts/README.zh-CN.md) 扩展可以切换全局登录。
+本状态栏接收同进程的账号变更事件；其他 Pi 进程通过正常认证检查发现新账号。
+两种方式都不会绕过新账号已有的五分钟额度缓存。
+
 ## 跨 session 共享查询
 
 缓存位于 `<Pi agent 目录>/cache/codex-statusline/`，使用 Pi 公开的 `getAgentDir()`

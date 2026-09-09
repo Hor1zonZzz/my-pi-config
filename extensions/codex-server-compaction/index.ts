@@ -34,6 +34,9 @@ import {
 	canonicalCompactionPromptInput,
 } from "./vendor/howaboua/providers/openai-codex/session-continuity.ts";
 import { extractAccountId, resolveCodexWebSocketUrl } from "./vendor/howaboua/providers/openai-codex/headers.ts";
+import { accountFromToken } from "../codex-statusline/quota.ts";
+import { ACCOUNT_CONTEXT_ENTRY, hasForeignAccountHistory, latestHistoryAccount, stripOpaqueAccountInput } from "./account-history.ts";
+import type { ResponsesBody } from "./vendor/howaboua/providers/openai-codex/types.ts";
 
 const FAST_STATE_ENTRY_TYPE = "codex-fast";
 
@@ -188,7 +191,42 @@ function mergeLocalDetails(
 }
 
 export default function codexServerCompactionExtension(pi: ExtensionAPI) {
+	let activeContext: ExtensionContext | undefined;
+	const requestAccounts = new Map<string, string>();
 	registerOpenAICodexCustomProvider(pi, {
+		transformPayload(body, model, options) {
+			// V2 supplies explicit history already checked against its bound auth below.
+			if (options?.canonicalCompaction) return body;
+			const ctx = activeContext;
+			if (!ctx || options?.sessionId !== getSessionId(ctx)) {
+				// Isolated Pi text-summary lanes need visible text, not opaque items.
+				return stripOpaqueAccountInput(body as unknown as JsonRecord) as unknown as ResponsesBody;
+			}
+			const accountKey = options.apiKey ? accountFromToken(options.apiKey)?.key : undefined;
+			if (!accountKey) throw new Error("Cannot identify the Codex request account.");
+			const sessionId = getSessionId(ctx);
+			if (requestAccounts.has(sessionId) && requestAccounts.get(sessionId) !== accountKey) {
+				closeOpenAICodexWebSocketSessions(sessionId);
+				requestShapeBySessionId.delete(sessionId);
+			}
+			requestAccounts.set(sessionId, accountKey);
+			requestShapeBySessionId.set(sessionId, extractRequestShape(body as unknown as JsonRecord));
+			const branchEntries = getBranchEntries(ctx);
+			const remoteState = reconstructRemoteCompactionStateFromBranch({ branchEntries, model, accountKey });
+			let payload = body as unknown as JsonRecord;
+			if (remoteState) {
+				payload = applyRemoteHistoryPayloadPatch({ payload,
+					explicitHistory: normalizeResponseItemsForPrompt(remoteState.explicitHistory, model) });
+			} else if (hasForeignAccountHistory(branchEntries, accountKey)) {
+				payload = stripOpaqueAccountInput(payload);
+			}
+			if (latestHistoryAccount(branchEntries) !== accountKey) {
+				// Provenance only, not account selection or credentials. Old sessions
+				// still follow the global login; this prevents A -> B -> A opaque replay.
+				pi.appendEntry(ACCOUNT_CONTEXT_ENTRY, { accountKey });
+			}
+			return payload as unknown as ResponsesBody;
+		},
 		getConfig: () => ({
 			openai: { forceCachedWebSockets: true },
 			compaction: { responsesCompaction: true },
@@ -196,23 +234,31 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", (_event, ctx) => {
+		activeContext = ctx;
+		requestAccounts.clear();
 		const sessionId = getSessionId(ctx);
 		requestShapeBySessionId.delete(sessionId);
 		closeOpenAICodexWebSocketSessions(sessionId);
 	});
 
 	pi.on("session_tree", (_event, ctx) => {
+		activeContext = ctx;
+		requestAccounts.clear();
 		const sessionId = getSessionId(ctx);
 		requestShapeBySessionId.delete(sessionId);
 		closeOpenAICodexWebSocketSessions(sessionId);
 	});
 	pi.on("model_select", (_event, ctx) => {
+		activeContext = ctx;
+		requestAccounts.clear();
 		const sessionId = getSessionId(ctx);
 		requestShapeBySessionId.delete(sessionId);
 		closeOpenAICodexWebSocketSessions(sessionId);
 	});
 
 	pi.on("session_shutdown", () => {
+		activeContext = undefined;
+		requestAccounts.clear();
 		requestShapeBySessionId.clear();
 		closeOpenAICodexWebSocketSessions();
 	});
@@ -230,16 +276,28 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 			env: resolvedAuth.env,
 		};
 
+		const accountKey = accountFromToken(auth.apiKey)?.key;
+		if (!accountKey) return undefined;
 		const sessionId = getSessionId(ctx);
 		const branchEntries = event.branchEntries as BranchEntry[];
+		if (latestHistoryAccount(branchEntries) !== accountKey
+			|| (requestAccounts.has(sessionId) && requestAccounts.get(sessionId) !== accountKey)) {
+			closeOpenAICodexWebSocketSessions(sessionId);
+			requestShapeBySessionId.delete(sessionId);
+		}
+		requestAccounts.set(sessionId, accountKey);
 		const remoteState = reconstructRemoteCompactionStateFromBranch({
 			branchEntries,
 			model,
+			accountKey,
 		});
 		const observedShape = requestShapeBySessionId.get(sessionId);
-		const responseItems = remoteState
+		let responseItems = remoteState
 			? remoteState.explicitHistory
 			: messagesToResponseItems(getPiContextMessages(ctx), model);
+		if (!remoteState && hasForeignAccountHistory(branchEntries, accountKey)) {
+			responseItems = stripOpaqueAccountInput({ input: responseItems }).input as typeof responseItems;
+		}
 		const promptResponseItems = normalizeResponseItemsForPrompt(
 			responseItems,
 			model,
@@ -335,6 +393,7 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 			model,
 			remoteResult.value.output,
 			remoteResult.value.usage,
+			accountKey,
 		);
 		const localSummary =
 			localResult.status === "fulfilled"
@@ -360,35 +419,5 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 				),
 			},
 		};
-	});
-
-	pi.on("before_provider_request", (event, ctx) => {
-		const model = ctx.model;
-		if (
-			!model ||
-			!isOpenAICodexResponsesModel(model) ||
-			!isRecord(event.payload)
-		) {
-			return undefined;
-		}
-		const sessionId = getSessionId(ctx);
-		requestShapeBySessionId.set(sessionId, extractRequestShape(event.payload));
-		// Pi already keeps the session branch in memory. Reconstruct on demand so
-		// every entry type participates without a second history cache.
-		const remoteState = reconstructRemoteCompactionStateFromBranch({
-			branchEntries: getBranchEntries(ctx),
-			model,
-		});
-		if (!remoteState) return undefined;
-		// Always provide the exact explicit artifact history here. Pi's cached
-		// WebSocket transport runs after this hook and converts a matching prefix
-		// into previous_response_id + delta when its live continuation is valid.
-		return applyRemoteHistoryPayloadPatch({
-			payload: event.payload,
-			explicitHistory: normalizeResponseItemsForPrompt(
-				remoteState.explicitHistory,
-				model,
-			),
-		});
 	});
 }

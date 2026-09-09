@@ -99,12 +99,18 @@ export function registerOpenAICodexCustomProvider(pi: ExtensionAPI, options: {
 	getConfig?: () => CodexProviderRuntimeConfig | undefined;
 	turnState?: CodexTurnState | undefined;
 	onPreparedPayload?: ((payload: ResponsesBody) => void) | undefined;
+	// Local account-bound replay must see the token actually bound to this request,
+	// not re-resolve a possibly changed global login from a payload-only Pi hook.
+	transformPayload?: (body: ResponsesBody, model: Model<Api>, options: OpenAICodexStreamOptions | undefined) => ResponsesBody;
 	getDiagnostics?: (() => CodexDiagnosticsSink | undefined) | undefined;
 }): void {
 	pi.registerProvider("openai-codex", {
 		api: "openai-codex-responses",
 		streamSimple: (model, context, streamOptions) => createCodexTransportStream(model, context, streamOptions, {
-			prepareRequestBody: prepareCodexRequestBody,
+			prepareRequestBody: async (model, context, streamOptions) => {
+				const body = await prepareCodexRequestBody(model, context, streamOptions);
+				return options.transformPayload?.(body, model, streamOptions) ?? body;
+			},
 			...(options.getConfig ? { getConfig: options.getConfig } : {}),
 			...(options.turnState ? { turnState: options.turnState } : {}),
 			...(options.onPreparedPayload ? { onPreparedPayload: options.onPreparedPayload } : {}),

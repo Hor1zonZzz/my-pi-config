@@ -33,8 +33,12 @@ V2 失败或超过独立的五分钟请求上限时，已经并行运行的 Pi �
 
 ## Fast 模式
 
-远程压缩请求继承当前 Codex service tier。本仓库 `/fast on` 生效时，请求携带
-`service_tier: "priority"` 和对应 routing hint，与当前 Codex CLI 行为一致。
+远程压缩请求继承当前 Codex service tier。普通 SSE/WebSocket 请求、预热和远程压缩
+均从最终请求 tier 生成 routing hint，与 Codex CLI 一致。`/fast on` 时请求携带
+`service_tier: "priority"` 和 `x-codex-routing-hint: model=<model>;tier=priority`；
+`/fast off` 时省略请求体 tier，hint 为 `model=<model>`。本地适配移除了上游仅用于
+路由的独立 Fast 标志，保持 Pi 客户端身份不变。现有 WebSocket 缓存将路由请求头
+计入连接身份，因此 tier 切换不会复用握手信息不匹配的连接。
 后端仍可能按默认层级执行，且 Fast 可能消耗更多 credits。
 
 ## 安装标识

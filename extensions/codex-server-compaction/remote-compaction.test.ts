@@ -6,6 +6,11 @@ import test from "node:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Model, Usage } from "@earendil-works/pi-ai";
 import {
+	buildSSEHeaders,
+	buildWebSocketHeaders,
+	resolveCodexRequestRouting,
+} from "./vendor/howaboua/providers/openai-codex/headers.ts";
+import {
 	buildRemoteCompactionDetails,
 	buildRemoteCompactionHeaders,
 	buildRemoteCompactionRequestBody,
@@ -101,6 +106,34 @@ test("Codex v2 endpoint, request shape, and installation identity", () => {
 			headers["x-codex-routing-hint"],
 			"model=gpt-5.6-sol;tier=priority",
 		);
+
+		// Ordinary SSE, WebSocket (including prewarm), and V2 compaction must
+		// route from the same final tier without switching the client identity.
+		for (const serviceTier of [undefined, "priority", "flex"]) {
+			const routing = resolveCodexRequestRouting({ model: model.id, serviceTier });
+			const expectedHint = `model=${model.id}${serviceTier ? `;tier=${serviceTier}` : ""}`;
+			assert.equal(routing.originator, "pi");
+			assert.equal(routing.routingHint, expectedHint);
+			const staleHeaders = { "x-codex-routing-hint": "model=stale;tier=priority" };
+			const sse = buildSSEHeaders(undefined, staleHeaders, "account-123", "token", "session-123", routing.originator, routing.routingHint);
+			const ws = buildWebSocketHeaders(undefined, staleHeaders, "account-123", "token", "session-123", routing.originator, routing.routingHint);
+			const remote = buildRemoteCompactionHeaders({
+				model, apiKey: fakeCodexToken("account-123"), sessionId: "session-123",
+				serviceTier, headers: staleHeaders,
+			});
+			for (const headers of [sse, ws, new Headers(remote)]) {
+				assert.equal(headers.get("x-codex-routing-hint"), expectedHint);
+				assert.equal(headers.get("originator"), "pi");
+			}
+			const body = buildRemoteCompactionRequestBody({
+				model, input: [], instructions: "system", tools: [],
+				parallelToolCalls: true, sessionId: "session-123", serviceTier,
+			});
+			assert.equal(body.service_tier, serviceTier);
+		}
+		assert.equal(resolveCodexRequestRouting({
+			model: model.id, serviceTier: "priority", normalOriginator: "custom-harness",
+		}).originator, "custom-harness");
 
 		writeFileSync(join(codexHome, "installation_id"), "invalid");
 		const replacementId = resolveCodexInstallationId();

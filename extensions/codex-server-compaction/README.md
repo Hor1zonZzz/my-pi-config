@@ -40,11 +40,16 @@ If V2 fails or exceeds its independent five-minute request limit, the already-ru
 
 ## Fast mode
 
-The remote compaction request inherits the current Codex service tier. With the
-repository's `/fast on`, it sends `service_tier: "priority"` and the matching
-routing hint, following current Codex CLI behavior. The backend may still
-serve the request on its default tier, and Fast can consume credits at a higher
-rate.
+The remote compaction request inherits the current Codex service tier. Ordinary
+SSE/WebSocket requests, prewarm, and remote compaction derive their routing hint
+from the final request tier, following Codex CLI behavior. `/fast on` sends
+`service_tier: "priority"` and `x-codex-routing-hint: model=<model>;tier=priority`;
+`/fast off` omits the body tier and sends `model=<model>` as the hint. This local
+adaptation removes the upstream routing-only Fast flag and keeps the Pi client
+identity unchanged. The existing WebSocket cache includes routing headers in
+its connection identity, so a tier change cannot reuse a mismatched handshake.
+The backend may still serve the request on its default tier, and Fast can
+consume credits at a higher rate.
 
 ## Installation identity
 

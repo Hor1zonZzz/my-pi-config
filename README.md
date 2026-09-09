@@ -21,7 +21,7 @@ English | [中文文档](README.zh-CN.md)
 - `notify.ts` — terminal notification when an agent turn ends
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
 - `subagent/` — Pi's official subagent example adapted with local model defaults, a `/subagent` model/thinking TUI, and optional `async: true` execution with steer completion; `/subagent-jobs` lists or cancels background work (see [details](extensions/subagent/README.md#background-execution))
-- `codex-fast-toggle/` — `/fast on|off` toggles Codex priority service tier for the current Pi session while keeping the provider identity as `openai-codex`
+- `codex-fast-toggle/` — native Pi `/fast on|off` command with Codex-only autocomplete and session-scoped priority tier; the Codex transport keeps ordinary and compaction routing hints aligned with the final tier without changing provider identity
 - `codex-server-compaction/` — runs Pi's built-in text compaction and Codex Remote Compaction V2 in parallel, persists opaque native history, follows the current Fast service tier, and uses the Pi result on remote failure
 
 ## Install
@@ -84,6 +84,6 @@ local file.
 
 Several extensions and the subagent workflow are adapted from Pi's official examples. Pi's license is included at `licenses/pi-LICENSE`.
 
-`codex-fast-toggle` derives its streaming approach from `pi-openai-codex-fast`; its upstream MIT license and README are included in that directory.
+`codex-fast-toggle` originally derived its Fast behavior from `pi-openai-codex-fast` and now uses Pi's native command and request hooks; its upstream MIT license and README are included in that directory.
 
 `codex-server-compaction` is adapted from `pi-openai-server-compaction` by Alexis Gallagher under the MIT License. It retains the Codex V2 endpoint, parallel Pi/native compaction, persistence, and replay paths; its license and derivation notes are included in that directory. See `THIRD_PARTY_NOTICES.md`.

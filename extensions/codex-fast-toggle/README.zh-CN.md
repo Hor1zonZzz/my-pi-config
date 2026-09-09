@@ -24,7 +24,19 @@
 /fast off
 ```
 
-该扩展使用输入拦截而非 `registerCommand()`，以便在非 Codex 模型下隐藏斜杠补全。
+`/fast` 保留 On/Off 选择框，取消不改变状态。命令使用 Pi 官方的
+`registerCommand()` 和参数补全 API；仅保留一个小型补全过滤层，在非 Codex
+模型下隐藏命令及参数，手动执行则提示不可用。非法参数在本地处理，不会发送给模型。
+命令拼写遵循 Pi 标准的小写 `/fast` 分发。
+
+配合本仓库的 `codex-server-compaction` transport，普通 SSE/WebSocket 请求、
+预热与远程压缩都像 Codex CLI 一样，从最终请求 tier 生成
+`x-codex-routing-hint`：开启时为 `model=<model>;tier=priority`，关闭时为
+`model=<model>`，且请求体不携带 `service_tier`。不再依赖第二个 Fast 标志，也不改变
+客户端身份。单独使用 Fast 扩展时，它仍仅修改 payload。
+
+session 级持久化和按 provider 判断可用性仍是有意保留的 Pi 行为；不引入
+Codex CLI 的全局默认设置或模型 tier 目录。
 
 ## 署名
 

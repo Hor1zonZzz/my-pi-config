@@ -60,62 +60,17 @@ function createFastAutocompleteProvider(
 	isAvailable: () => boolean,
 ): AutocompleteProvider {
 	return {
-		triggerCharacters: [
-			...new Set([...(current.triggerCharacters ?? []), "/"]),
-		],
+		triggerCharacters: current.triggerCharacters,
 
 		async getSuggestions(lines, cursorLine, cursorCol, options) {
-			if (!isAvailable()) {
-				return current.getSuggestions(lines, cursorLine, cursorCol, options);
-			}
-
-			const currentLine = lines[cursorLine] ?? "";
-			const beforeCursor = currentLine.slice(0, cursorCol);
-			const commandMatch = beforeCursor.match(/^\/([^\s]*)$/);
-			if (commandMatch) {
-				const base = await current.getSuggestions(
-					lines,
-					cursorLine,
-					cursorCol,
-					options,
-				);
-				const query = commandMatch[1].toLowerCase();
-				if (!"fast".startsWith(query)) {
-					return base;
-				}
-				const fastItem = {
-					value: "fast",
-					label: "fast",
-					description: "Toggle OpenAI Codex priority service tier",
-				};
-				return {
-					prefix: beforeCursor,
-					items: [
-						fastItem,
-						...(base?.items.filter((item) => item.value !== "fast") ?? []),
-					],
-				};
-			}
-
-			const argumentMatch = beforeCursor.match(/^\/fast\s+([^\s]*)$/);
-			if (argumentMatch) {
-				const query = argumentMatch[1].toLowerCase();
-				const items = [
-					{
-						value: "on",
-						label: "on",
-						description: "Use priority service tier",
-					},
-					{
-						value: "off",
-						label: "off",
-						description: "Use default service tier",
-					},
-				].filter((item) => item.value.startsWith(query));
-				return items.length > 0 ? { items, prefix: argumentMatch[1] } : null;
-			}
-
-			return current.getSuggestions(lines, cursorLine, cursorCol, options);
+			const beforeCursor = (lines[cursorLine] ?? "").slice(0, cursorCol);
+			// Pi owns command discovery and completion. Only filter visibility;
+			// registerCommand currently has no model-dependent visibility option.
+			if (!isAvailable() && /^\/fast\s/.test(beforeCursor)) return null;
+			const result = await current.getSuggestions(lines, cursorLine, cursorCol, options);
+			if (isAvailable() || !result || !/^\/[^\s]*$/.test(beforeCursor)) return result;
+			const items = result.items.filter((item) => item.value !== "fast");
+			return items.length > 0 ? { ...result, items } : null;
 		},
 
 		applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
@@ -171,11 +126,13 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", (_event, ctx) => {
-		ctx.ui.addAutocompleteProvider((current) =>
-			createFastAutocompleteProvider(current, () =>
-				isCodexProvider(ctx.model?.provider),
-			),
-		);
+		if (ctx.mode === "tui") {
+			ctx.ui.addAutocompleteProvider((current) =>
+				createFastAutocompleteProvider(current, () =>
+					isCodexProvider(ctx.model?.provider),
+				),
+			);
+		}
 		restoreFastState(ctx);
 	});
 
@@ -187,42 +144,40 @@ export default function (pi: ExtensionAPI) {
 		updateStatus(ctx);
 	});
 
-	pi.on("input", async (event, ctx) => {
-		const match = event.text.trim().match(/^\/fast(?:\s+(\S+))?$/i);
-		if (!match) {
-			return { action: "continue" as const };
-		}
+	pi.registerCommand("fast", {
+		description: "Toggle OpenAI Codex priority service tier",
+		getArgumentCompletions(prefix) {
+			const items = [
+				{ value: "on", label: "on", description: "Use priority service tier" },
+				{ value: "off", label: "off", description: "Use default service tier" },
+			].filter((item) => item.value.startsWith(prefix.toLowerCase()));
+			return items.length > 0 ? items : null;
+		},
+		async handler(args, ctx) {
+			if (!isCodexProvider(ctx.model?.provider)) {
+				ctx.ui.notify("/fast is only available for OpenAI Codex models", "warning");
+				return;
+			}
 
-		if (!isCodexProvider(ctx.model?.provider)) {
-			ctx.ui.notify(
-				"/fast is only available for OpenAI Codex models",
-				"warning",
-			);
-			return { action: "handled" as const };
-		}
+			let requested = args.trim().toLowerCase();
+			if (!requested) {
+				if (!ctx.hasUI) {
+					ctx.ui.notify("Usage: /fast on|off", "error");
+					return;
+				}
+				const selection = await ctx.ui.select("Codex Fast", [
+					"On — priority service tier",
+					"Off — default service tier",
+				]);
+				if (!selection) return;
+				requested = selection.startsWith("On") ? "on" : "off";
+			}
 
-		let requested = match[1]?.toLowerCase();
-		if (!requested) {
-			if (!ctx.hasUI) {
+			if (requested !== "on" && requested !== "off") {
 				ctx.ui.notify("Usage: /fast on|off", "error");
-				return { action: "handled" as const };
+				return;
 			}
-			const selection = await ctx.ui.select("Codex Fast", [
-				"On — priority service tier",
-				"Off — default service tier",
-			]);
-			if (!selection) {
-				return { action: "handled" as const };
-			}
-			requested = selection.startsWith("On") ? "on" : "off";
-		}
-
-		if (requested !== "on" && requested !== "off") {
-			ctx.ui.notify("Usage: /fast on|off", "error");
-			return { action: "handled" as const };
-		}
-
-		setFastMode(requested === "on", ctx);
-		return { action: "handled" as const };
+			setFastMode(requested === "on", ctx);
+		},
 	});
 }

@@ -24,7 +24,22 @@ English | [中文文档](README.zh-CN.md)
 /fast off
 ```
 
-The extension uses input interception rather than `registerCommand()` so slash completion can be hidden for non-Codex models.
+`/fast` opens the existing On/Off selector; cancellation leaves state unchanged.
+The command uses Pi's official `registerCommand()` and argument completion API.
+A small autocomplete filter hides the command and its arguments for non-Codex
+models; manually invoking it there reports that it is unavailable. Invalid
+arguments are handled locally rather than sent to the model. Command spelling
+follows Pi's standard lowercase `/fast` dispatch.
+
+With the repository's `codex-server-compaction` transport installed, ordinary
+SSE/WebSocket requests, prewarm, and remote compaction derive
+`x-codex-routing-hint` from the final request tier, like Codex CLI: On sends
+`model=<model>;tier=priority`, Off sends `model=<model>` without `service_tier`
+in the body. No second Fast flag or client identity change is needed. The Fast
+extension alone remains a payload-only toggle.
+
+Session-local persistence and provider-based availability remain intentional Pi
+behavior; this does not import Codex CLI's global defaults or model-tier catalog.
 
 ## Attribution
 

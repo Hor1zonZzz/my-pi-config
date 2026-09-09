@@ -31,7 +31,6 @@ type CodexTransportConfig = {
 
 export type CodexProviderRuntimeConfig = {
 	openai: CodexTransportConfig & {
-		fast?: boolean | undefined;
 		harnessIdentifierHeader?: boolean | undefined;
 	};
 	compaction?: {
@@ -219,7 +218,6 @@ export function createCodexTransportStream<TApi extends Api>(
 			const websocketRequestId = effectiveOptions?.sessionId || createCodexRequestId();
 			const routing = resolveCodexRequestRouting({
 				model: body.model,
-				fast: runtimeConfig?.openai?.fast === true,
 				serviceTier: body.service_tier,
 				normalOriginator: runtimeConfig?.openai?.harnessIdentifierHeader ? PI_CODEX_CONVERSION_ORIGINATOR : "pi",
 			});

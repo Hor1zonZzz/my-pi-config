@@ -20,7 +20,7 @@
 - `notify.ts` — 代理回合结束时的终端通知
 - `herdr/` — 统一持有本地 Herdr 集成检查器、异步 `herdr_agent prompt` 监控器和 `herdr-pi-reference` 技能源码；它让显式 `wait: false` 调用保持非阻塞，并注入会话级完成 follow-up
 - `subagent/` — 基于 Pi 官方示例，保留本地模型默认值和 `/subagent` 模型/思考级别配置；支持 `async: true` 后台执行，完成时通过 steer 回传并唤醒空闲主代理，`/subagent-jobs` 查看或取消任务（[详细说明](extensions/subagent/README.md#background-execution)）
-- `codex-fast-toggle/` — `/fast on|off` 为当前 Pi session 切换 Codex 优先级服务层级（service tier），同时保持提供方标识为 `openai-codex`
+- `codex-fast-toggle/` — 使用 Pi 原生命令 `/fast on|off`，仅在 Codex 下显示补全，按 session 切换优先级；Codex transport 让普通请求和压缩请求的路由提示与最终 tier 一致，不改变提供方身份
 - `codex-server-compaction/` — 并行执行 Pi 内置文本压缩与 Codex Remote Compaction V2，持久化 opaque 原生历史，继承当前 Fast service tier，并在远程失败时使用 Pi 结果
 
 ## 安装
@@ -67,6 +67,6 @@ cd my-pi-config
 
 部分扩展与子代理工作流改编自 Pi 的官方示例。Pi 的许可证包含在 `licenses/pi-LICENSE` 中。
 
-`codex-fast-toggle` 的流式处理方式源自 `pi-openai-codex-fast`；其上游 MIT 许可证与 README 包含在该目录中。
+`codex-fast-toggle` 的 Fast 行为最初源自 `pi-openai-codex-fast`，现使用 Pi 原生命令与请求 hook；其上游 MIT 许可证与 README 包含在该目录中。
 
 `codex-server-compaction` 基于 Alexis Gallagher 的 `pi-openai-server-compaction`（MIT）适配，保留 Codex V2 endpoint、并行 Pi/native 压缩、持久化与 replay 路径；许可证与派生说明包含在该目录中。参见 `THIRD_PARTY_NOTICES.md`。

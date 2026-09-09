@@ -8,20 +8,17 @@ import {
 	readFileSync,
 	writeFileSync,
 } from "node:fs";
-import { arch, homedir, platform, release } from "node:os";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
-	calculateCost,
 	type Model,
-	type ProviderHeaders,
 	type Usage,
 } from "@earendil-works/pi-ai";
 import {
 	convertToLlm,
 	sessionEntryToContextMessages,
 	type SessionEntry,
-	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 
 export type JsonRecord = Record<string, unknown>;
@@ -47,20 +44,13 @@ export type RemoteCompactionSessionState = {
 	explicitHistory: ResponseItem[];
 };
 
-export type RemoteCompactionResult = {
-	output: ResponseItem[];
-	usage?: RemoteCompactionUsageSnapshot;
-};
-
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const OPENAI_CODEX_API = "openai-codex-responses";
-const REMOTE_COMPACTION_V2_FEATURE = "remote_compaction_v2";
 const RETAINED_MESSAGE_TOKEN_BUDGET = 64_000;
 const IMAGE_CONTENT_OMITTED_PLACEHOLDER =
 	"image content omitted because you do not support image input";
 const UUID_RE =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const DEFAULT_REMOTE_COMPACTION_TIMEOUT_MS = 5 * 60 * 1_000;
 
 export function isRecord(value: unknown): value is JsonRecord {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -92,24 +82,6 @@ export function messageMatchesModel(
 	);
 }
 
-function normalizeBaseUrl(baseUrl: string | undefined): string {
-	const trimmed = baseUrl?.trim();
-	return (trimmed || "https://chatgpt.com/backend-api").replace(/\/+$/, "");
-}
-
-export function remoteCompactionV2EndpointUrl(
-	model: Model<any>,
-	resolvedBaseUrl?: string,
-): string {
-	if (!isOpenAICodexResponsesModel(model)) {
-		throw new Error("Codex remote compaction v2 requires an openai-codex model.");
-	}
-	const baseUrl = normalizeBaseUrl(resolvedBaseUrl || model.baseUrl);
-	if (baseUrl.endsWith("/codex/responses")) return baseUrl;
-	if (baseUrl.endsWith("/codex")) return `${baseUrl}/responses`;
-	return `${baseUrl}/codex/responses`;
-}
-
 function resolveCodexHome(): string {
 	const configured = process.env.CODEX_HOME?.trim();
 	return configured || join(homedir(), ".codex");
@@ -139,79 +111,6 @@ export function resolveCodexInstallationId(): string {
 		// The installation id is a parity hint, not a reason to fail compaction.
 	}
 	return installationId;
-}
-
-function extractCodexAccountId(token: string): string {
-	const parts = token.split(".");
-	if (parts.length !== 3) {
-		throw new Error("Failed to extract accountId from Codex token");
-	}
-	const payload = JSON.parse(
-		Buffer.from(parts[1], "base64url").toString("utf8"),
-	) as JsonRecord;
-	const auth = isRecord(payload["https://api.openai.com/auth"])
-		? payload["https://api.openai.com/auth"]
-		: undefined;
-	const accountId = auth?.chatgpt_account_id;
-	if (typeof accountId !== "string" || !accountId) {
-		throw new Error("Failed to extract accountId from Codex token");
-	}
-	return accountId;
-}
-
-function applyProviderHeaders(
-	headers: Headers,
-	providerHeaders: ProviderHeaders | undefined,
-): void {
-	for (const [name, value] of Object.entries(providerHeaders ?? {})) {
-		if (value === null) headers.delete(name);
-		else headers.set(name, value);
-	}
-}
-
-export function buildRemoteCompactionHeaders(params: {
-	model: Model<any>;
-	apiKey: string;
-	headers?: ProviderHeaders;
-	sessionId: string;
-	serviceTier?: string;
-}): Record<string, string> {
-	if (!isOpenAICodexResponsesModel(params.model)) {
-		throw new Error("Codex remote compaction headers require an openai-codex model.");
-	}
-
-	const headers = new Headers();
-	applyProviderHeaders(headers, params.headers);
-	headers.set("authorization", `Bearer ${params.apiKey}`);
-	headers.set("chatgpt-account-id", extractCodexAccountId(params.apiKey));
-	headers.set("x-codex-installation-id", resolveCodexInstallationId());
-	headers.set("x-codex-window-id", `${params.sessionId}:0`);
-	headers.set("session-id", params.sessionId);
-	headers.set("x-client-request-id", params.sessionId);
-	headers.set("originator", "pi");
-	headers.set(
-		"user-agent",
-		`pi-codex-server-compaction (${platform()} ${release()}; ${arch()})`,
-	);
-	headers.set("OpenAI-Beta", "responses=experimental");
-	headers.set("accept", "text/event-stream");
-	headers.set("content-type", "application/json");
-
-	const features = (headers.get("x-codex-beta-features") ?? "")
-		.split(",")
-		.map((feature) => feature.trim())
-		.filter(Boolean);
-	headers.set(
-		"x-codex-beta-features",
-		[...new Set([...features, REMOTE_COMPACTION_V2_FEATURE])].join(","),
-	);
-
-	const routingHint = params.serviceTier
-		? `model=${params.model.id};tier=${params.serviceTier}`
-		: `model=${params.model.id}`;
-	headers.set("x-codex-routing-hint", routingHint);
-
-	return Object.fromEntries(headers.entries());
 }
 
 function isResponseItem(value: unknown): value is ResponseItem {
@@ -559,243 +458,8 @@ export function buildRemoteCompactionV2History(
 	];
 }
 
-export function buildToolsPayload(
-	allTools: ToolInfo[],
-	activeToolNames: string[],
-): JsonRecord[] {
-	const active = new Set(activeToolNames);
-	return allTools
-		.filter((tool) => active.has(tool.name))
-		.map((tool) => ({
-			type: "function",
-			name: tool.name,
-			description: tool.description,
-			parameters: tool.parameters,
-		}));
-}
-
-export function buildRemoteCompactionRequestBody(params: {
-	model: Model<any>;
-	input: ResponseItem[];
-	instructions?: string;
-	tools: JsonRecord[];
-	parallelToolCalls: boolean;
-	reasoning?: ResponsesReasoningConfig;
-	text?: ResponsesTextConfig;
-	serviceTier?: string;
-	sessionId: string;
-}): JsonRecord {
-	return {
-		model: params.model.id,
-		input: [...params.input, { type: "compaction_trigger" }],
-		instructions: params.instructions,
-		tools: params.tools,
-		parallel_tool_calls: params.parallelToolCalls,
-		tool_choice: "auto",
-		stream: true,
-		store: false,
-		include: ["reasoning.encrypted_content"],
-		prompt_cache_key: params.sessionId,
-		...(params.reasoning ? { reasoning: params.reasoning } : {}),
-		...(params.text ? { text: params.text } : {}),
-		...(params.serviceTier ? { service_tier: params.serviceTier } : {}),
-	};
-}
-
-export function parseSseData(text: string): unknown[] {
-	return text
-		.replace(/\r\n/g, "\n")
-		.split("\n\n")
-		.flatMap((block) => {
-			const data = block
-				.split("\n")
-				.filter((line) => line.startsWith("data:"))
-				.map((line) => line.slice(5).trimStart())
-				.join("\n")
-				.trim();
-			if (!data || data === "[DONE]") return [];
-			try {
-				return [JSON.parse(data) as unknown];
-			} catch {
-				return [];
-			}
-		});
-}
-
-export function parseRemoteCompactionV2Events(events: unknown[]): {
-	compactionItem: ResponseItem;
-	usage?: unknown;
-} {
-	let completed = false;
-	let usage: unknown;
-	const compactionItems: ResponseItem[] = [];
-	for (const event of events) {
-		if (!isRecord(event)) continue;
-		if (event.type === "error") {
-			const message =
-				typeof event.message === "string"
-					? event.message
-					: "Unknown Responses API error";
-			throw new Error(`Codex remote compaction v2 failed: ${message}`);
-		}
-		if (event.type === "response.failed") {
-			const response = isRecord(event.response) ? event.response : undefined;
-			const error = response && isRecord(response.error) ? response.error : undefined;
-			const message =
-				typeof error?.message === "string" ? error.message : "Response failed";
-			throw new Error(`Codex remote compaction v2 failed: ${message}`);
-		}
-		if (
-			event.type === "response.output_item.done" &&
-			isResponseItem(event.item) &&
-			event.item.type === "compaction"
-		) {
-			compactionItems.push(event.item);
-			continue;
-		}
-		if (event.type === "response.completed") {
-			completed = true;
-			const response = isRecord(event.response) ? event.response : undefined;
-			usage = response?.usage;
-		}
-	}
-	if (!completed) {
-		throw new Error(
-			"Codex remote compaction v2 stream ended before response.completed.",
-		);
-	}
-	if (compactionItems.length !== 1) {
-		throw new Error(
-			`Codex remote compaction v2 expected exactly one compaction item, got ${compactionItems.length}.`,
-		);
-	}
-	return { compactionItem: compactionItems[0], usage };
-}
-
 function finiteNumber(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function extractRemoteCompactionUsage(
-	model: Model<any>,
-	value: unknown,
-	serviceTier?: string,
-): RemoteCompactionUsageSnapshot | undefined {
-	if (!isRecord(value)) return undefined;
-	const inputTokens = finiteNumber(value.input_tokens);
-	const outputTokens = finiteNumber(value.output_tokens);
-	const totalTokens = finiteNumber(value.total_tokens) || inputTokens + outputTokens;
-	const inputDetails = isRecord(value.input_tokens_details)
-		? value.input_tokens_details
-		: undefined;
-	const cachedTokens = finiteNumber(inputDetails?.cached_tokens);
-	const cacheWriteTokens =
-		finiteNumber(inputDetails?.cache_creation_tokens) ||
-		finiteNumber(inputDetails?.cache_write_tokens);
-	const outputDetails = isRecord(value.output_tokens_details)
-		? value.output_tokens_details
-		: undefined;
-	const reasoningTokens = finiteNumber(outputDetails?.reasoning_tokens);
-
-	const usage: Usage = {
-		input: Math.max(0, inputTokens - cachedTokens - cacheWriteTokens),
-		output: outputTokens,
-		cacheRead: cachedTokens,
-		cacheWrite: cacheWriteTokens,
-		...(outputDetails && "reasoning_tokens" in outputDetails
-			? { reasoning: reasoningTokens }
-			: {}),
-		totalTokens,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	};
-	calculateCost(model, usage);
-	if (serviceTier === "priority") {
-		// Keep compaction accounting aligned with Pi 0.84.3's Codex stream pricing.
-		const multiplier = model.id === "gpt-5.5" ? 2.5 : 2;
-		usage.cost.input *= multiplier;
-		usage.cost.output *= multiplier;
-		usage.cost.cacheRead *= multiplier;
-		usage.cost.cacheWrite *= multiplier;
-		usage.cost.total =
-			usage.cost.input +
-			usage.cost.output +
-			usage.cost.cacheRead +
-			usage.cost.cacheWrite;
-	}
-	return usage;
-}
-
-export async function callRemoteCompactionEndpoint(params: {
-	model: Model<any>;
-	resolvedBaseUrl?: string;
-	apiKey: string;
-	headers?: ProviderHeaders;
-	sessionId: string;
-	input: ResponseItem[];
-	instructions?: string;
-	tools: JsonRecord[];
-	parallelToolCalls: boolean;
-	reasoning?: ResponsesReasoningConfig;
-	text?: ResponsesTextConfig;
-	serviceTier?: string;
-	signal?: AbortSignal;
-	timeoutMs?: number;
-	fetchFn?: typeof fetch;
-}): Promise<RemoteCompactionResult> {
-	if (!isOpenAICodexResponsesModel(params.model)) {
-		throw new Error("Codex remote compaction v2 requires an openai-codex model.");
-	}
-	const timeoutSignal = AbortSignal.timeout(
-		params.timeoutMs ?? DEFAULT_REMOTE_COMPACTION_TIMEOUT_MS,
-	);
-	const signal = params.signal
-		? AbortSignal.any([params.signal, timeoutSignal])
-		: timeoutSignal;
-	const response = await (params.fetchFn ?? fetch)(
-		remoteCompactionV2EndpointUrl(params.model, params.resolvedBaseUrl),
-		{
-			method: "POST",
-			headers: buildRemoteCompactionHeaders({
-				model: params.model,
-				apiKey: params.apiKey,
-				headers: params.headers,
-				sessionId: params.sessionId,
-				serviceTier: params.serviceTier,
-			}),
-			body: JSON.stringify(
-				buildRemoteCompactionRequestBody({
-					model: params.model,
-					input: params.input,
-					instructions: params.instructions,
-					tools: params.tools,
-					parallelToolCalls: params.parallelToolCalls,
-					reasoning: params.reasoning,
-					text: params.text,
-					serviceTier: params.serviceTier,
-					sessionId: params.sessionId,
-				}),
-			),
-			signal,
-		},
-	);
-	if (!response.ok) {
-		const responseText = await response.text().catch(() => "");
-		const bounded = responseText.slice(0, 2_000);
-		throw new Error(
-			`Codex remote compaction v2 failed (${response.status}): ${bounded || response.statusText}`,
-		);
-	}
-	const parsed = parseRemoteCompactionV2Events(
-		parseSseData(await response.text()),
-	);
-	return {
-		output: buildRemoteCompactionV2History(params.input, parsed.compactionItem),
-		usage: extractRemoteCompactionUsage(
-			params.model,
-			parsed.usage,
-			params.serviceTier,
-		),
-	};
 }
 
 export function buildRemoteCompactionDetails(

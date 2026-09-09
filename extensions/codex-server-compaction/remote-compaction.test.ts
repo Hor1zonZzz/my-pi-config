@@ -9,19 +9,15 @@ import {
 	buildSSEHeaders,
 	buildWebSocketHeaders,
 	resolveCodexRequestRouting,
+	resolveCodexUrl,
 } from "./vendor/howaboua/providers/openai-codex/headers.ts";
 import {
 	buildRemoteCompactionDetails,
-	buildRemoteCompactionHeaders,
-	buildRemoteCompactionRequestBody,
 	buildRemoteCompactionV2History,
-	callRemoteCompactionEndpoint,
 	combineUsage,
 	extractRemoteCompactionDetails,
 	messagesToResponseItems,
-	parseRemoteCompactionV2Events,
 	reconstructRemoteCompactionStateFromBranch,
-	remoteCompactionV2EndpointUrl,
 	resolveCodexInstallationId,
 } from "./remote-compaction.ts";
 
@@ -37,15 +33,6 @@ const model: Model<"openai-codex-responses"> = {
 	contextWindow: 372_000,
 	maxTokens: 128_000,
 };
-
-function fakeCodexToken(accountId: string): string {
-	const payload = Buffer.from(
-		JSON.stringify({
-			"https://api.openai.com/auth": { chatgpt_account_id: accountId },
-		}),
-	).toString("base64url");
-	return `header.${payload}.signature`;
-}
 
 function usage(value: number): Usage {
 	return {
@@ -64,7 +51,7 @@ function usage(value: number): Usage {
 	};
 }
 
-test("Codex v2 endpoint, request shape, and installation identity", () => {
+test("Codex transport endpoint, routing, and installation identity", () => {
 	const oldCodexHome = process.env.CODEX_HOME;
 	const codexHome = mkdtempSync(join(tmpdir(), "pi-codex-compaction-test-"));
 	process.env.CODEX_HOME = codexHome;
@@ -74,38 +61,7 @@ test("Codex v2 endpoint, request shape, and installation identity", () => {
 		assert.equal(readFileSync(join(codexHome, "installation_id"), "utf8"), installationId);
 		assert.equal(resolveCodexInstallationId(), installationId);
 
-		const endpoint = remoteCompactionV2EndpointUrl(model);
-		assert.equal(endpoint, "https://chatgpt.com/backend-api/codex/responses");
-
-		const body = buildRemoteCompactionRequestBody({
-			model,
-			input: [{ type: "message", role: "user", content: "hello" }],
-			instructions: "system",
-			tools: [],
-			parallelToolCalls: true,
-			serviceTier: "priority",
-			sessionId: "session-123",
-		});
-		assert.equal(body.service_tier, "priority");
-		assert.equal(body.store, false);
-		assert.equal(body.stream, true);
-		assert.deepEqual((body.input as unknown[]).at(-1), {
-			type: "compaction_trigger",
-		});
-
-		const headers = buildRemoteCompactionHeaders({
-			model,
-			apiKey: fakeCodexToken("account-123"),
-			sessionId: "session-123",
-			serviceTier: "priority",
-		});
-		assert.equal(headers["chatgpt-account-id"], "account-123");
-		assert.equal(headers["x-codex-installation-id"], installationId);
-		assert.equal(headers["x-codex-beta-features"], "remote_compaction_v2");
-		assert.equal(
-			headers["x-codex-routing-hint"],
-			"model=gpt-5.6-sol;tier=priority",
-		);
+		assert.equal(resolveCodexUrl(model.baseUrl), "https://chatgpt.com/backend-api/codex/responses");
 
 		// Ordinary SSE, WebSocket (including prewarm), and V2 compaction must
 		// route from the same final tier without switching the client identity.
@@ -117,19 +73,12 @@ test("Codex v2 endpoint, request shape, and installation identity", () => {
 			const staleHeaders = { "x-codex-routing-hint": "model=stale;tier=priority" };
 			const sse = buildSSEHeaders(undefined, staleHeaders, "account-123", "token", "session-123", routing.originator, routing.routingHint);
 			const ws = buildWebSocketHeaders(undefined, staleHeaders, "account-123", "token", "session-123", routing.originator, routing.routingHint);
-			const remote = buildRemoteCompactionHeaders({
-				model, apiKey: fakeCodexToken("account-123"), sessionId: "session-123",
-				serviceTier, headers: staleHeaders,
-			});
-			for (const headers of [sse, ws, new Headers(remote)]) {
+			for (const headers of [sse, ws]) {
 				assert.equal(headers.get("x-codex-routing-hint"), expectedHint);
 				assert.equal(headers.get("originator"), "pi");
+				assert.equal(headers.get("chatgpt-account-id"), "account-123");
+				assert.equal(headers.get("x-codex-installation-id"), installationId);
 			}
-			const body = buildRemoteCompactionRequestBody({
-				model, input: [], instructions: "system", tools: [],
-				parallelToolCalls: true, sessionId: "session-123", serviceTier,
-			});
-			assert.equal(body.service_tier, serviceTier);
 		}
 		assert.equal(resolveCodexRequestRouting({
 			model: model.id, serviceTier: "priority", normalOriginator: "custom-harness",
@@ -236,19 +185,7 @@ test("assistant conversion preserves Responses identities for cached continuatio
 	]);
 });
 
-test("v2 stream parsing retains recent user input plus one opaque artifact", () => {
-	const parsed = parseRemoteCompactionV2Events([
-		{
-			type: "response.output_item.done",
-			item: { type: "compaction", encrypted_content: "encrypted" },
-		},
-		{
-			type: "response.completed",
-			response: {
-				usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 },
-			},
-		},
-	]);
+test("v2 history retains recent user input plus one opaque artifact", () => {
 	const history = buildRemoteCompactionV2History(
 		[
 			{
@@ -262,7 +199,7 @@ test("v2 stream parsing retains recent user input plus one opaque artifact", () 
 				content: [{ type: "output_text", text: "compact me" }],
 			},
 		],
-		parsed.compactionItem,
+		{ type: "compaction", encrypted_content: "encrypted" },
 	);
 	assert.deepEqual(
 		history.map((item) => item.type),
@@ -412,43 +349,6 @@ test("v2 retention keeps a complete user message below the official 64K budget",
 		((history[0].content as Array<{ text: string }>)[0]?.text ?? "").length,
 		text.length,
 	);
-});
-
-test("a stalled remote request is aborted independently of the Pi compaction signal", async () => {
-	const oldCodexHome = process.env.CODEX_HOME;
-	const codexHome = mkdtempSync(join(tmpdir(), "pi-codex-timeout-test-"));
-	process.env.CODEX_HOME = codexHome;
-	try {
-		const stalledFetch: typeof fetch = async (_input, init) =>
-			new Promise((_resolve, reject) => {
-				const signal = init?.signal;
-				if (!signal) return;
-				if (signal.aborted) reject(signal.reason);
-				else {
-					signal.addEventListener("abort", () => reject(signal.reason), {
-						once: true,
-					});
-				}
-			});
-		await assert.rejects(
-			callRemoteCompactionEndpoint({
-				model,
-				apiKey: fakeCodexToken("account-123"),
-				sessionId: "session-timeout",
-				input: [{ type: "message", role: "user", content: "hello" }],
-				tools: [],
-				parallelToolCalls: true,
-				timeoutMs: 10,
-				fetchFn: stalledFetch,
-			}),
-			(error: unknown) =>
-				error instanceof DOMException && error.name === "TimeoutError",
-		);
-	} finally {
-		if (oldCodexHome === undefined) delete process.env.CODEX_HOME;
-		else process.env.CODEX_HOME = oldCodexHome;
-		rmSync(codexHome, { recursive: true, force: true });
-	}
 });
 
 test("local and remote compaction usage is counted once as one combined result", () => {

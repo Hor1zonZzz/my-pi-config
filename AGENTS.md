@@ -4,7 +4,7 @@
 
 This repository is the source-controlled, reproducible version of a personal Pi Coding Agent configuration. It contains user-level settings, local extensions, subagent definitions, and reusable prompt templates that are installed into the Pi agent directory (normally `~/.pi/agent`).
 
-This is a configuration repository, not the Pi Coding Agent source tree and not a standalone npm package. There is currently no project-level `package.json`, build system, or automated test suite. Pi itself provides the runtime and the extension host dependencies.
+This is a configuration repository, not the Pi Coding Agent source tree and not a standalone npm package. There is no project-level `package.json`, build system, or unified test command; individual extensions have focused Node tests. Pi itself provides the runtime and the extension host dependencies.
 
 ## Repository Map
 
@@ -24,6 +24,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
     - `agents/` — user-level subagent definitions.
     - `prompts/` — the upstream slash-command workflow templates.
   - `codex-fast-toggle/` — implements `/fast on|off` and modifies Codex request payloads to select the priority service tier.
+  - `codex-statusline/` — displays the current Codex account and weekly quota in the TUI, with a credential-free five-minute cache and cross-process query lock shared within one Pi agent directory.
   - `codex-server-compaction/` — runs Pi's built-in text compaction alongside Codex-only Remote Compaction V2, persists provider-native replacement history in compaction details, inherits the session Fast tier, and uses the Pi result when the remote request fails.
 - `licenses/`, `LICENSE`, and `THIRD_PARTY_NOTICES.md` — project and upstream licensing information.
 
@@ -83,6 +84,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - `codex-server-compaction` overrides only the `openai-codex` stream provider and depends on compaction/session/tree lifecycle events, cached WebSocket/SSE recovery, canonical raw request/response continuity, `before_provider_request` transform chaining with Fast, V2 `compaction_trigger` output capture, Codex OAuth/header/proxy shape, compaction usage accounting, and exact-model persisted replay. It creates or reuses `$CODEX_HOME/installation_id` (normally `~/.codex/installation_id`) at runtime but must never copy that machine identity into this repository.
 - `subagent` depends on Pi CLI flags, LF-delimited JSON-mode events, message shapes, executable discovery, subprocess cancellation, model availability/scoping, TUI selection contracts, and mutable user-agent frontmatter. Re-copy the matching installed Pi version's upstream example when compatibility changes, then reapply the documented local behavior.
 - `extensions/herdr/` background monitoring depends on the official `herdr_agent` tool-result shape, Herdr's public `agent get` JSON response and lifecycle states, Pi session IDs, cancellable `pi.exec`, and `agent_settled` follow-up delivery. It must remain separate from the Herdr-managed Pi state extension and cannot provide prompt-level attribution when multiple Pi sessions share one target pane.
+- `codex-statusline` depends on public Pi auth resolution, Codex JWT account/profile claims, the `/wham/usage` response shape, session/model lifecycle events, and atomic local filesystem operations. Preserve account/user cache isolation, the shared five-minute failure cooldown, no polling outside Codex TUI sessions, and rejection of late account/session results. It is not an account manager.
 - `questionnaire` depends on TUI component, key handling, autocomplete, theming, and invalidation contracts.
 - `plan-mode` depends on tool names, lifecycle event ordering, session entries, its local tool-call guard, and its bash allowlist. Treat the allowlist as a convenience guard, not a security boundary.
 
@@ -110,7 +112,9 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
 - It backs up and then replaces installed user-agent Markdown files with repository copies, so `/subagent` runtime edits must be moved into this repository before reinstalling if they should become reproducible defaults.
 
-`codex-fast-toggle` stores mutable state only in Pi session custom entries. The installer backs up and removes the former global `codex-fast.json`; do not reintroduce cross-session mutable state.
+`codex-fast-toggle` stores mutable state only in Pi session custom entries. The installer backs up and removes the former global `codex-fast.json`; do not reintroduce cross-session mutable Fast state.
+
+`codex-statusline` intentionally shares quota snapshots and query coordination under `<agent-dir>/cache/codex-statusline/`. This cache is runtime-only, contains no credentials or email labels, and must not be installed from or committed to this repository.
 
 Never commit credentials or machine-local Pi state. In particular, keep `auth.json`, `models.json`, `mcp.json`, `trust.json`, sessions, caches, logs, backups, package installation directories, and environment files out of version control. Check `.gitignore` before adding any file copied from `~/.pi/agent`.
 
@@ -152,6 +156,7 @@ Perform applicable interactive checks:
 - `/subagent` lists only user agents, offers only models currently available within the session's model scope, filters thinking levels by model capability, updates frontmatter without reload, and preserves cancellation without partial writes.
 - `subagent` handles the upstream single, parallel, and chained modes, inherited dispatch defaults, cancellation, failures, output limits, and strict project-agent confirmation; verify the four local agent files retain their intended model defaults.
 - `extensions/herdr/` background monitoring is a no-op outside Herdr; tracks only successful explicit `herdr_agent prompt` calls with `wait: false`; delivers grouped, bounded follow-ups to the owning session after `done`, post-working `idle`, or `blocked`; and cancels cleanly on session replacement, reload, and shutdown.
+- `codex-statusline` displays full email (or a short account ID) and ordinary weekly remaining percentage only in Codex TUI sessions; multiple processes sharing an agent directory issue one quota attempt per identity per five minutes, including failures; dead query owners are recoverable; stale/absent data is not shown as fresh or fabricated; account changes and lifecycle cleanup reject late results; other footer statuses remain intact.
 - terminal notifications do not corrupt terminal output on supported terminals.
 
 After testing in isolation, install into the live agent directory only when the diff and generated backup location have been reviewed.

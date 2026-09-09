@@ -22,6 +22,7 @@
 - `subagent/` — 基于 Pi 官方示例，保留本地模型默认值和 `/subagent` 模型/思考级别配置；支持 `async: true` 后台执行，完成时通过 steer 回传并唤醒空闲主代理，`/subagent-jobs` 查看或取消任务（[详细说明](extensions/subagent/README.md#background-execution)）
 - `codex-fast-toggle/` — 使用 Pi 原生命令 `/fast on|off`，仅在 Codex 下显示补全，按 session 切换优先级；Codex transport 让普通请求和压缩请求的路由提示与最终 tier 一致，不改变提供方身份
 - `codex-server-compaction/` — 并行执行 Pi 内置文本压缩与 Codex Remote Compaction V2，持久化 opaque 原生历史，继承当前 Fast service tier，并在远程失败时使用 Pi 结果
+- `codex-statusline/` — 在 Codex TUI 中自动显示当前账号与周额度剩余比例；同一 agent 目录内的 session 共享五分钟账号/用户额度缓存（[详细说明](extensions/codex-statusline/README.zh-CN.md)）
 
 ## 安装
 

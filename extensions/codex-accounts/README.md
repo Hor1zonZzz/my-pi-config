@@ -16,8 +16,10 @@ an independently packaged replacement for the third-party switcher.
   asks for confirmation before saving its latest credentials.
 - **Add account / sign in again**: uses the current provider's public OAuth
   implementation (Pi's built-in Codex flow in this configuration). Open the
-  displayed authorization URL (or use the offered device flow). Cancelling saves
-  nothing. A new account is saved without switching; signing in again to the
+  displayed authorization URL (or use the offered device flow). During device
+  login, press **Esc** or select **Cancel login** to stop polling; the waiting
+  dialog closes automatically on completion or failure. Cancelling saves nothing
+  and lets you reopen the account menu. A new account is saved without switching; signing in again to the
   active identity updates that identity's active credentials.
 - **Select a saved account**: confirms the global scope, preserves the current
   login's latest tokens, refreshes the target if needed, then changes the login.

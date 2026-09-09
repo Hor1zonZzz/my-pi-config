@@ -1,5 +1,5 @@
 import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { AuthPrompt } from "@earendil-works/pi-ai";
+import type { AuthPrompt, OAuthAuth, OAuthCredential } from "@earendil-works/pi-ai";
 import { AccountStore } from "./store.ts";
 import { isSupportedCodexEndpoint } from "../codex-statusline/quota.ts";
 
@@ -18,6 +18,36 @@ async function promptLogin(ctx: ExtensionCommandContext, prompt: AuthPrompt, sig
 		if (value !== undefined) return value;
 	}
 	throw new Error("Login cancelled");
+}
+
+async function loginAccount(ctx: ExtensionCommandContext, oauth: OAuthAuth, controller: AbortController): Promise<OAuthCredential> {
+	const signal = controller.signal;
+	const dismiss = new AbortController();
+	let deviceDialog: Promise<void> | undefined;
+	try {
+		return await oauth.login({
+			signal,
+			prompt: (prompt) => promptLogin(ctx, prompt, signal),
+			notify: (event) => {
+				if (signal.aborted) return;
+				if (event.type === "auth_url") ctx.ui.notify(`Open this URL to sign in:\n${event.url}\n${event.instructions ?? ""}`, "info");
+				else if (event.type === "device_code") {
+					// Device OAuth polls without another prompt. Keep a native dialog
+					// focused so Esc can abort the same signal used by the poller.
+					deviceDialog = ctx.ui.select(
+						`Open ${event.verificationUri}\nCode: ${event.userCode}\nWaiting for sign-in — Esc to cancel`,
+						["Cancel login"], { signal: AbortSignal.any([signal, dismiss.signal]) },
+					).then(() => {
+						// Completion dismisses the dialog without cancelling valid credentials.
+						if (!dismiss.signal.aborted) controller.abort();
+					}, () => { controller.abort(); });
+				} else ctx.ui.notify(event.message, "info");
+			},
+		});
+	} finally {
+		dismiss.abort();
+		await deviceDialog;
+	}
 }
 
 export default function codexAccounts(pi: ExtensionAPI): void {
@@ -64,16 +94,7 @@ export default function codexAccounts(pi: ExtensionAPI): void {
 					ctx.ui.notify("Current login saved. Reopen /codex-accounts to select an account.", "info");
 				} else if (choice === ADD) {
 					try {
-						const result = await authFlow.login({
-							signal,
-							prompt: (prompt) => promptLogin(ctx, prompt, signal),
-							notify: (event) => {
-								if (signal.aborted) return;
-								if (event.type === "auth_url") ctx.ui.notify(`Open this URL to sign in:\n${event.url}\n${event.instructions ?? ""}`, "info");
-								else if (event.type === "device_code") ctx.ui.notify(`Open ${event.verificationUri}\nCode: ${event.userCode}`, "info");
-								else ctx.ui.notify(event.message, "info");
-							},
-						});
+						const result = await loginAccount(ctx, authFlow, controller);
 						signal.throwIfAborted();
 						if (!ctx.isIdle()) throw new Error("Pi became busy");
 						changed = await store.add(result, signal);

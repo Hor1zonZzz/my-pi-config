@@ -255,9 +255,16 @@ export function messagesToResponseItems(
 	messages: AgentMessage[],
 	_model: Model<any>,
 ): ResponseItem[] {
-	return convertToLlm(messages).flatMap((message, index) =>
-		baseMessageToResponseItems(message, index),
-	);
+	// Fallback message ids must match the provider's numbering, which skips the
+	// leading system message that Pi 0.86.0 puts at the head of every transcript.
+	const llmMessages = convertToLlm(messages);
+	const items: ResponseItem[] = [];
+	let messageIndex = 0;
+	for (const [index, message] of llmMessages.entries()) {
+		items.push(...baseMessageToResponseItems(message, messageIndex));
+		if (index !== 0 || message.role !== "system") messageIndex++;
+	}
+	return items;
 }
 
 function responseItemCallId(item: ResponseItem): string | undefined {

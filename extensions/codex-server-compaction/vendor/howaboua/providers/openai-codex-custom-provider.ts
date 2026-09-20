@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { Api, Context, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, TranscriptContext } from "@earendil-works/pi-ai";
 import { extractAccountId, buildWebSocketHeaders, PI_CODEX_CONVERSION_ORIGINATOR, resolveCodexRequestRouting, resolveCodexWebSocketUrl } from "./openai-codex/headers.ts";
 import { noThrowCodexDiagnosticsSink } from "./openai-codex/diagnostic-failure.ts";
 import { buildRequestBody } from "./openai-codex/request-body.ts";
@@ -28,7 +28,7 @@ export function closeOpenAICodexKeepaliveWebSocketSession(sessionId: string): vo
 
 async function prepareCodexRequestBody<TApi extends Api>(
 	model: Model<TApi>,
-	context: Context,
+	context: TranscriptContext,
 	options: OpenAICodexStreamOptions | undefined,
 ): Promise<ResponsesBody> {
 	let body = buildRequestBody(model, context, options);
@@ -43,7 +43,7 @@ async function prepareCodexRequestBody<TApi extends Api>(
 
 export async function prewarmOpenAICodexWebSocket<TApi extends Api>(
 	model: Model<TApi>,
-	context: Context,
+	context: TranscriptContext,
 	options: OpenAICodexStreamOptions,
 	deps: {
 		getConfig?: () => CodexProviderRuntimeConfig | undefined;

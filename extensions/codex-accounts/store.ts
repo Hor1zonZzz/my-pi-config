@@ -11,7 +11,7 @@ export interface SavedAccount { credential: OAuthCredential; savedAt: number }
 interface Vault { version: 1; accounts: Record<string, SavedAccount> }
 export interface AccountList { accounts: Account[]; current?: Account }
 
-// Pi 0.85.1 exposes no public auth-file transaction API. Use the host's own
+// Pi 0.86.0 exposes no public auth-file transaction API. Use the host's own
 // proper-lockfile dependency and auth.json.lock protocol, not private runtime
 // objects or an unrelated lock that would race Pi's OAuth refresh. Revisit this
 // dependency/protocol on Pi upgrades; do not independently force token expiry.

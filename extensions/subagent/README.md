@@ -130,8 +130,8 @@ At most 4 background jobs are active at once; each parallel job retains the
 existing 8-task / 4-concurrent-child limits. Completion text is capped at 32 KB
 and 1,000 lines; full agent results remain in message details for expanded display.
 
-Compatibility checked against Pi **0.85.0**. Run the deterministic lifecycle and
-subprocess tests with Node 24 and Pi 0.85.0 dependencies resolvable from this repo:
+Compatibility checked against Pi **0.86.0**. Run the deterministic lifecycle and
+subprocess tests with Node 24 and Pi 0.86.0 dependencies resolvable from this repo:
 
 ```bash
 node --test extensions/subagent/async.test.ts

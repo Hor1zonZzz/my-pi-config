@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { buildSessionContext, convertToLlm, getAgentDir, type SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { Api, ImageContent, Message, Model, TextContent, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
+import { normalizeContext, type Api, type ImageContent, type Message, type Model, type TextContent, type ToolResultMessage, type UserMessage } from "@earendil-works/pi-ai";
 import { CODEX_TOOL_CALL_PROVIDERS, convertResponsesMessages } from "../../providers/openai-responses/shared.ts";
 import { isCodexTransportModel } from "../prompt/codex-model.ts";
 import { isProviderContextExcludedMessage } from "../prompt/context-filter.ts";
@@ -164,10 +164,10 @@ export function serializeMessagesToResponsesInput<TApi extends Api>(
 		: CODEX_TOOL_CALL_PROVIDERS;
 	return convertResponsesMessages(
 		model,
-		{
+		normalizeContext({
 			messages: llmMessages,
 			...(options.includeInstructionsInInput && options.instructions ? { systemPrompt: options.instructions } : {}),
-		},
+		}),
 		allowedToolCallProviders,
 		{
 			includeSystemPrompt: options.includeInstructionsInInput ?? false,

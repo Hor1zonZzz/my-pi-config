@@ -1,4 +1,16 @@
-import type { Api, Context, Model, Tool, Usage } from "@earendil-works/pi-ai";
+import {
+	getSystemMessageText,
+	renderSystemMessageUpdate,
+	resolveTranscript,
+	resolveTranscriptTools,
+	type Api,
+	type Context,
+	type Model,
+	type SystemMessage,
+	type Tool,
+	type TranscriptContext,
+	type Usage,
+} from "@earendil-works/pi-ai";
 import type {
 	ResponseCreateParamsStreaming,
 	ResponseInput,
@@ -36,8 +48,10 @@ export interface OpenAIResponsesStreamOptions {
 interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean | undefined;
 	grammarToolInputProperties?: ReadonlyMap<string, string> | undefined;
-	deferredTools?: ReadonlyMap<string, Tool> | undefined;
-	deferredToolsMode?: "additional-tools" | "tool-search" | undefined;
+	/** Whether later system messages are sent in place instead of folded into the leading prompt. */
+	supportsMidConvoSystemMessages?: boolean | undefined;
+	supportsAdditionalTools?: boolean | undefined;
+	supportsToolSearch?: boolean | undefined;
 	toolOptions?: ConvertResponsesToolsOptions | undefined;
 }
 
@@ -45,38 +59,10 @@ interface ConvertResponsesToolsOptions {
 	strict?: boolean | null | undefined;
 	supportsStrictMode?: boolean | undefined;
 	supportsOpenAIGrammarTools?: boolean | undefined;
-	deferLoading?: boolean | undefined;
+	toolSearchResult?: boolean | undefined;
 }
 
 export const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
-
-export function splitDeferredTools(context: Context, enabled: boolean): { immediate: Tool[]; deferred: Map<string, Tool> } {
-	const uniqueTools = new Map<string, Tool>();
-	for (const tool of context.tools ?? []) uniqueTools.set(tool.name, tool);
-	if (!enabled) return { immediate: [...uniqueTools.values()], deferred: new Map() };
-
-	const deferredNames = new Set<string>();
-	const usedNames = new Set<string>();
-	for (const message of context.messages) {
-		if (message.role === "assistant") {
-			for (const block of message.content) {
-				if (block.type === "toolCall") usedNames.add(block.name);
-			}
-		} else if (message.role === "toolResult") {
-			for (const name of message.addedToolNames ?? []) {
-				if (!usedNames.has(name)) deferredNames.add(name);
-			}
-		}
-	}
-
-	const immediate: Tool[] = [];
-	const deferred = new Map<string, Tool>();
-	for (const [name, tool] of uniqueTools) {
-		if (deferredNames.has(name)) deferred.set(name, tool);
-		else immediate.push(tool);
-	}
-	return { immediate, deferred };
-}
 
 function sanitizeSurrogates(text: string): string {
 	return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
@@ -92,12 +78,12 @@ function parseResponsesThinkingSignature(signature: string): ResponseInput[numbe
 
 export function convertResponsesMessages<TApi extends Api>(
 	model: Model<TApi>,
-	context: Context,
+	context: TranscriptContext,
 	allowedToolCallProviders: ReadonlySet<string>,
 	options?: ConvertResponsesMessagesOptions,
 ): ResponseInput {
+	const normalizedContext = resolveTranscript(context, options?.supportsMidConvoSystemMessages);
 	const messages: ResponseInput = [];
-	const loadedToolNames = new Set<string>();
 	const normalizeIdPart = (part: string) => {
 		const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
 		const normalized = sanitized.length > 64 ? sanitized.slice(0, 64) : sanitized;
@@ -118,15 +104,58 @@ export function convertResponsesMessages<TApi extends Api>(
 		return `${normalizedCallId}|${normalizedItemId}`;
 	};
 
-	const transformedMessages = normalizeResponsesMessageHistory(context.messages, model as Model<Api>, normalizeToolCallId as never);
-	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
-	if (includeSystemPrompt && context.systemPrompt) {
-		messages.push({ role: model.reasoning ? "developer" : "system", content: sanitizeSurrogates(context.systemPrompt) });
-	}
+	const transformedMessages = normalizeResponsesMessageHistory(normalizedContext.messages, model as Model<Api>, normalizeToolCallId as never);
+	const transcriptTools = resolveTranscriptTools(
+		normalizedContext.messages,
+		(options?.supportsAdditionalTools ?? false) || (options?.supportsToolSearch ?? false),
+	);
+	// Tools declared after the leading system message are anchored where they appear,
+	// so a transport that supports it keeps the cached prompt/tool prefix intact.
+	const appendSystemToolAdditions = (message: SystemMessage, seed: string): void => {
+		const tools = transcriptTools.anchorsAdditions ? (message.toolsAdded ?? []) : [];
+		if (tools.length === 0) return;
+		if (options?.supportsAdditionalTools) {
+			messages.push({
+				type: "additional_tools",
+				role: "developer",
+				tools: convertResponsesTools(tools, options.toolOptions),
+			} as unknown as ResponseInputItem);
+			return;
+		}
+		if (!options?.supportsToolSearch) return;
+		const names = tools.map((tool) => tool.name);
+		const callId = `pi_tool_load_${shortHash(`${seed}:${names.join(",")}`)}`;
+		messages.push({
+			type: "tool_search_call",
+			call_id: callId,
+			execution: "client",
+			status: "completed",
+			arguments: { query: names.join(" "), limit: names.length },
+		} satisfies ResponseInputItem);
+		messages.push({
+			type: "tool_search_output",
+			call_id: callId,
+			execution: "client",
+			status: "completed",
+			tools: convertResponsesTools(tools, { ...options.toolOptions, toolSearchResult: true }),
+		} satisfies ResponseToolSearchOutputItemParam);
+	};
+	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
+	const instructionRole = model.reasoning ? "developer" : "system";
 
 	let msgIndex = 0;
+	let sourceIndex = 0;
 	for (const msg of transformedMessages) {
-		if (msg.role === "user") {
+		const isLeadingSystemMessage = sourceIndex++ === 0 && msg.role === "system";
+		if (msg.role === "system") {
+			if (!isLeadingSystemMessage) appendSystemToolAdditions(msg, `system:${msgIndex}`);
+			if (!isLeadingSystemMessage || includeInitialSystemMessage) {
+				const text = isLeadingSystemMessage ? getSystemMessageText(msg) : renderSystemMessageUpdate(msg);
+				if (text.length > 0) {
+					messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
+				}
+			}
+		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				messages.push({ role: "user", content: [{ type: "input_text", text: sanitizeSurrogates(msg.content) }] });
 			} else {
@@ -178,7 +207,6 @@ export function convertResponsesMessages<TApi extends Api>(
 						(isDifferentModel && itemId?.startsWith("fc_"))
 						|| (customInputProperty === undefined && !itemId?.startsWith("fc_"))
 					) itemId = undefined;
-					const canReplayNamespace = isSameModel || options?.deferredTools?.has(block.name) === true;
 					output.push(customInputProperty === undefined
 						? {
 								type: "function_call",
@@ -186,7 +214,7 @@ export function convertResponsesMessages<TApi extends Api>(
 								call_id: callId,
 								name: block.name,
 								arguments: JSON.stringify(block.arguments),
-								...(canReplayNamespace && block.namespace !== undefined ? { namespace: block.namespace } : {}),
+								...(isSameModel && block.namespace !== undefined ? { namespace: block.namespace } : {}),
 							} as ResponseInput[number]
 						: {
 								type: "custom_tool_call",
@@ -194,7 +222,7 @@ export function convertResponsesMessages<TApi extends Api>(
 								call_id: callId,
 								name: block.name,
 								input: sanitizeSurrogates(getGrammarToolInput(block.name, block.arguments, customInputProperty)),
-								...(canReplayNamespace && block.namespace !== undefined ? { namespace: block.namespace } : {}),
+								...(isSameModel && block.namespace !== undefined ? { namespace: block.namespace } : {}),
 							} as ResponseInput[number]);
 				}
 			}
@@ -226,43 +254,8 @@ export function convertResponsesMessages<TApi extends Api>(
 				call_id: callId!,
 				output: output as any,
 			} as ResponseInput[number]);
-
-			const deferredTools: Tool[] = [];
-			for (const name of msg.addedToolNames ?? []) {
-				const tool = options?.deferredTools?.get(name);
-				if (!tool || loadedToolNames.has(name)) continue;
-				loadedToolNames.add(name);
-				deferredTools.push(tool);
-			}
-			if (deferredTools.length > 0 && options?.deferredToolsMode === "additional-tools") {
-				messages.push({
-					type: "additional_tools",
-					role: "developer",
-					tools: convertResponsesTools(deferredTools, options.toolOptions),
-				} as unknown as ResponseInputItem);
-			} else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
-				const names = deferredTools.map((tool) => tool.name);
-				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
-				messages.push({
-					type: "tool_search_call",
-					call_id: searchCallId,
-					execution: "client",
-					status: "completed",
-					arguments: { query: names.join(" "), limit: names.length },
-				} satisfies ResponseInputItem);
-				messages.push({
-					type: "tool_search_output",
-					call_id: searchCallId,
-					execution: "client",
-					status: "completed",
-					tools: convertResponsesTools(deferredTools, {
-						...options.toolOptions,
-						deferLoading: true,
-					}),
-				} satisfies ResponseToolSearchOutputItemParam);
-			}
 		}
-		msgIndex++;
+		if (!isLeadingSystemMessage) msgIndex++;
 	}
 
 	return normalizeResponsesToolHistory(messages) as ResponseInput;
@@ -283,7 +276,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 				syntax: grammar.format,
 				definition: grammar.definition,
 			},
-			...(options?.deferLoading ? { defer_loading: true } : {}),
+			...(options?.toolSearchResult ? { defer_loading: true } : {}),
 		} as OpenAITool;
 		const constrainedStrict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
 		const strict = constrainedStrict ?? defaultStrict;
@@ -292,7 +285,7 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			name: tool.name,
 			description: tool.description,
 			parameters: getJsonSchemaToolParameters(tool, strict === true) as unknown as Record<string, unknown>,
-			...(options?.deferLoading ? { defer_loading: true } : {}),
+			...(options?.toolSearchResult ? { defer_loading: true } : {}),
 		} as Extract<OpenAITool, { type: "function" }>;
 		if (supportsStrictMode) functionTool.strict = strict;
 		return functionTool;

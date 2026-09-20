@@ -53,7 +53,13 @@ Intentionally excluded:
 
 The production remote path is `executeRemoteCompactionV2` through the registered Codex transport. The unused standalone fetch/SSE compaction implementation was removed; `v2-request.test.ts` exercises the actual V2 client and transport with a mock backend, including tier/header/trigger serialization, invalid output counts, incomplete/failed responses, and cancellation. No total-timeout guarantee is inferred from a test of an unused helper.
 
-Pi 0.85.1 publicly exports `processResponsesStream` from `@earendil-works/pi-ai/api/openai-responses-shared`. A raw-event tap can capture V2 artifacts before that parser, but it is not yet an equivalent replacement: the local callback reconstructs custom-tool input omitted from the final event, and the local parser retains native web-search history that Pi's parser drops. `parser-parity.test.ts` records these differences against the installed Pi version. Keep the existing parser/transport until these semantics can be preserved without reintroducing a second parser. Message/tool conversion and account isolation are unchanged by this cleanup.
+Pi 0.86.0 publicly exports `processResponsesStream` from `@earendil-works/pi-ai/api/openai-responses-shared`. A raw-event tap can capture V2 artifacts before that parser, but it is not yet an equivalent replacement: the local callback reconstructs custom-tool input omitted from the final event, and the local parser retains native web-search history that Pi's parser drops. `parser-parity.test.ts` records these differences against the installed Pi version. Keep the existing parser/transport until these semantics can be preserved without reintroducing a second parser. Message/tool conversion and account isolation are unchanged by this cleanup.
+
+### Transcript context (Pi 0.86.0)
+
+Pi 0.86.0 changed provider stream inputs from `Context` to a normalized `TranscriptContext`. The system prompt and tool declarations are carried by the transcript's system messages, so the vendored Codex provider resolves them with `resolveTranscript`, `getInitialSystemMessage`, `getSystemMessageText`, and `resolveTranscriptTools` instead of reading `context.systemPrompt` and `context.tools`. Reading the retired fields is silent: the request keeps a placeholder prompt and sends no tools. Codex does not accept mid-conversation system messages, so later prompt and tool changes are replayed into the leading system message before the body is built, and the reconstructed compaction history numbers messages the same way the provider does.
+
+`transcript-context.test.ts` compares the vendored request body against the installed Pi Codex provider's own body for the same transcript, covering tool calls, mid-conversation prompt and tool changes, tool removal, sessions with no leading system message, and the Off reasoning effort. Run it after every Pi upgrade.
 
 ## Attribution
 

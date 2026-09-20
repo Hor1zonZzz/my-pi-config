@@ -1,5 +1,14 @@
-import { clampThinkingLevel, type Api, type Context, type Model } from "@earendil-works/pi-ai";
-import { CODEX_TOOL_CALL_PROVIDERS, convertResponsesMessages, convertResponsesTools, splitDeferredTools } from "../openai-responses/shared.ts";
+import {
+	clampThinkingLevel,
+	getInitialSystemMessage,
+	getSystemMessageText,
+	resolveTranscript,
+	resolveTranscriptTools,
+	type Api,
+	type Model,
+	type TranscriptContext,
+} from "@earendil-works/pi-ai";
+import { CODEX_TOOL_CALL_PROVIDERS, convertResponsesMessages, convertResponsesTools } from "../openai-responses/shared.ts";
 import { OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH } from "./constants.ts";
 import type { OpenAICodexStreamOptions, ResponsesBody } from "./types.ts";
 
@@ -23,39 +32,46 @@ function clampReasoningEffort(modelId: string, effort: string): string {
 
 export function buildRequestBody<TApi extends Api>(
 	model: Model<TApi>,
-	context: Context,
+	context: TranscriptContext,
 	options?: OpenAICodexStreamOptions,
 ): ResponsesBody {
 	const compat = model.compat as {
 		supportsStrictMode?: boolean | undefined;
 		supportsAdditionalTools?: boolean | undefined;
 		supportsToolSearch?: boolean | undefined;
+		supportsMidConvoSystemMessages?: boolean | undefined;
 	} | undefined;
 	const supportsStrictMode = compat?.supportsStrictMode ?? true;
-	const deferredToolsMode = compat?.supportsAdditionalTools
-		? "additional-tools"
-		: compat?.supportsToolSearch
-			? "tool-search"
-			: undefined;
+	const supportsAdditionalTools = compat?.supportsAdditionalTools ?? false;
+	const supportsToolSearch = compat?.supportsToolSearch ?? false;
 	const grammarToolInputProperties = options?.grammarToolInputProperties ?? new Map<string, string>();
 	const supportsOpenAIGrammarTools = grammarToolInputProperties.size > 0;
 	const allowedToolCallProviders = supportsOpenAIGrammarTools && !CODEX_TOOL_CALL_PROVIDERS.has(model.provider)
 		? new Set([...CODEX_TOOL_CALL_PROVIDERS, model.provider])
 		: CODEX_TOOL_CALL_PROVIDERS;
-	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
-	const messages = convertResponsesMessages(model, context, allowedToolCallProviders, {
+	// Pi 0.86.0 carries the prompt and tool declarations in the transcript's system
+	// messages, so both are resolved from `context.messages`, not `context.systemPrompt`.
+	// Codex does not accept mid-conversation system messages, so later prompt updates
+	// are replayed into the leading one before the prompt and tools are read.
+	const supportsMidConvoSystemMessages = compat?.supportsMidConvoSystemMessages ?? false;
+	const transcript = resolveTranscript(context, supportsMidConvoSystemMessages);
+	const transcriptTools = resolveTranscriptTools(transcript.messages, supportsAdditionalTools || supportsToolSearch);
+	const messages = convertResponsesMessages(model, transcript, allowedToolCallProviders, {
 		includeSystemPrompt: false,
 		grammarToolInputProperties,
-		deferredTools: toolPlacement.deferred,
-		deferredToolsMode,
+		supportsMidConvoSystemMessages,
+		supportsAdditionalTools,
+		supportsToolSearch,
 		toolOptions: { supportsStrictMode, supportsOpenAIGrammarTools },
 	});
+	const initialSystemMessage = getInitialSystemMessage(transcript.messages);
+	const instructions = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 
 	const body: ResponsesBody = {
 		model: model.id,
 		store: false,
 		stream: true,
-		instructions: context.systemPrompt || "You are a helpful assistant.",
+		instructions: instructions || "You are a helpful assistant.",
 		input: messages,
 		text: { verbosity: ((options as { textVerbosity?: string | undefined } | undefined)?.textVerbosity ?? "low") as string },
 		include: ["reasoning.encrypted_content"],
@@ -79,8 +95,8 @@ export function buildRequestBody<TApi extends Api>(
 		body.service_tier = serviceTier;
 	}
 
-	if (toolPlacement.immediate.length > 0) {
-		body.tools = convertResponsesTools(toolPlacement.immediate, {
+	if (transcriptTools.requestTools.length > 0) {
+		body.tools = convertResponsesTools(transcriptTools.requestTools, {
 			strict: null,
 			supportsStrictMode,
 			supportsOpenAIGrammarTools,
@@ -89,14 +105,18 @@ export function buildRequestBody<TApi extends Api>(
 
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort = options?.reasoningEffort ?? (clampedReasoning === "off" ? undefined : clampedReasoning);
+	const thinkingLevelMap = model.thinkingLevelMap as Record<string, string | null | undefined> | undefined;
 	if (reasoningEffort !== undefined) {
-		const thinkingLevelMap = model.thinkingLevelMap as Record<string, string | null | undefined> | undefined;
-		const effort = reasoningEffort === "none" ? (thinkingLevelMap?.["off"] ?? "none") : (thinkingLevelMap?.[reasoningEffort] ?? reasoningEffort);
+		const offEffort = thinkingLevelMap?.["off"] === undefined ? "none" : thinkingLevelMap["off"];
+		const effort = reasoningEffort === "none" ? offEffort : (thinkingLevelMap?.[reasoningEffort] ?? reasoningEffort);
 		if (effort === null) return body;
 		body.reasoning = {
 			effort: clampReasoningEffort(model.id, effort),
 			summary: ((options as { reasoningSummary?: string | undefined } | undefined)?.reasoningSummary ?? "auto") as string,
 		};
+	} else if (model.reasoning && thinkingLevelMap?.["off"] !== null) {
+		// Pi 0.86.0 sends the model's Off effort explicitly instead of omitting it.
+		body.reasoning = { effort: thinkingLevelMap?.["off"] ?? "none" };
 	}
 
 	return body;

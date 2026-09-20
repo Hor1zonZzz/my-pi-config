@@ -42,7 +42,7 @@ again. The third-party `pi-codex-account` store format is not migrated or overwr
   Future requests send the existing visible conversation context under the selected
   account; switching does not clear conversations.
 - Already-bound/in-flight requests retain their original account. Other running
-  Pi 0.85.1 processes observe the replaced credential on their next auth read.
+  Pi 0.86.0 processes observe the replaced credential on their next auth read.
 - Management is TUI-only and requires the current Pi session to be idle. It does
   not stop requests in other processes. Runtime API-key overrides and nonstandard
   Codex backends are not supported.
@@ -68,7 +68,7 @@ unexpired token is not a guarantee that the server will accept a later request.
 
 ## Pi compatibility
 
-Tested against Pi **0.85.1**. Commands, dialogs, OAuth login/refresh, model registry
+Tested against Pi **0.86.0**. Commands, dialogs, OAuth login/refresh, model registry
 refresh and events use public APIs. The one compatibility dependency is filesystem
 locking: Pi does not expose a public transaction spanning auth.json and a vault.
 `store.ts` resolves **Pi's own `proper-lockfile` dependency** via `getPackageDir()`
@@ -77,7 +77,7 @@ with Pi's OAuth refresh, unlike an independent plugin lock. The lock is heartbea
 and its ownership/cancellation is checked before committing. Revisit the dependency
 and protocol on Pi upgrades. No private runtime objects are modified.
 
-Pi 0.85.1 re-reads credentials when the auth file revision changes. Therefore the
+Pi 0.86.0 re-reads credentials when the auth file revision changes. Therefore the
 extension neither fabricates `expires: 0` nor reloads the session on each switch.
 It refreshes local model availability without network catalog requests.
 

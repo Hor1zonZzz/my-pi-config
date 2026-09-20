@@ -117,7 +117,7 @@ export default function codexAccounts(pi: ExtensionAPI): void {
 					ctx.ui.notify("Global Codex login changed. Model, thinking, and Fast are unchanged.", "info");
 				}
 				if (changed && !signal.aborted) {
-					// Pi 0.85.1 detects atomic auth-file replacement on the next read.
+					// Pi 0.86.0 detects atomic auth-file replacement on the next read.
 					// Refresh local availability and notify quota without reloading the session.
 					pi.events.emit("codex-accounts:changed", undefined);
 					try {

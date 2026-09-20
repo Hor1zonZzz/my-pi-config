@@ -5,7 +5,7 @@ import {
 	type Api,
 	type AssistantMessage,
 	type AssistantMessageEventStream,
-	type Context,
+	type TranscriptContext,
 	type Model,
 	type Transport,
 } from "@earendil-works/pi-ai";
@@ -46,7 +46,7 @@ export interface CodexTransportRecoveryDependencies {
 	getDiagnostics?: (() => CodexDiagnosticsSink | undefined) | undefined;
 	prepareRequestBody: <TApi extends Api>(
 		model: Model<TApi>,
-		context: Context,
+		context: TranscriptContext,
 		options: OpenAICodexStreamOptions | undefined,
 	) => Promise<ResponsesBody>;
 }
@@ -169,7 +169,7 @@ async function openCodexSSE<TApi extends Api>(
 
 export function createCodexTransportStream<TApi extends Api>(
 	model: Model<TApi>,
-	context: Context,
+	context: TranscriptContext,
 	options: CodexProviderStreamOptions | undefined,
 	deps: CodexTransportRecoveryDependencies,
 ): AssistantMessageEventStream {
@@ -313,7 +313,7 @@ export function createCodexTransportStream<TApi extends Api>(
 							output,
 							createAssistantMessageDiagnostic(retryableWebSocketError ? "provider_transport_failure" : "provider_stream_failure", error, {
 								configuredTransport: preferredTransport,
-								fallbackTransport: fallbackArmed ? "sse" : undefined,
+								...(fallbackArmed ? { fallbackTransport: "sse" } : {}),
 								eventsEmitted: websocketStarted,
 								phase: websocketStarted ? "after_message_stream_start" : "before_message_stream_start",
 								requestBytes: new TextEncoder().encode(bodyJson).byteLength,

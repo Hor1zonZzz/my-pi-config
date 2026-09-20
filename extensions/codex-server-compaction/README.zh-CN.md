@@ -53,7 +53,7 @@ V2 失败时，已经并行运行的 Pi 内置压缩会直接成为结果。正�
 
 正式远程路径是 `executeRemoteCompactionV2` 调用已注册的 Codex transport。已删除没有被正式流程调用的独立 fetch/SSE 压缩实现；`v2-request.test.ts` 使用模拟后端测试实际 V2 client 和 transport，包括 tier/header/trigger 序列化、输出数量校验、 incomplete/failed 响应及取消，不再用闲置辅助函数的测试证明总超时。
 
-Pi 0.85.1 公开了 `@earendil-works/pi-ai/api/openai-responses-shared` 中的 `processResponsesStream`。前置原始事件捕获层可以取得 V2 artifact，但尚不能等价替换：本地回调会补全最终事件中缺失的 custom-tool 输入，本地解析器也保留了官方解析器会丢弃的原生 web-search 历史项。`parser-parity.test.ts` 对已安装 Pi 验证这些差异。在不引入另一套解析器的前提下保住这些行为之前，保留现有解析器和 transport。本次清理不改变消息/工具转换和账号隔离。
+Pi 0.86.0 公开了 `@earendil-works/pi-ai/api/openai-responses-shared` 中的 `processResponsesStream`。前置原始事件捕获层可以取得 V2 artifact，但尚不能等价替换：本地回调会补全最终事件中缺失的 custom-tool 输入，本地解析器也保留了官方解析器会丢弃的原生 web-search 历史项。`parser-parity.test.ts` 对已安装 Pi 验证这些差异。在不引入另一套解析器的前提下保住这些行为之前，保留现有解析器和 transport。本次清理不改变消息/工具转换和账号隔离。
 
 ## 署名
 

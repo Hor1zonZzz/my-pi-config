@@ -1,4 +1,4 @@
-// @ts-nocheck -- Run with Node 24 and Pi 0.85.0 dependencies available.
+// @ts-nocheck -- Run with Node 24 and Pi 0.86.0 dependencies available.
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";

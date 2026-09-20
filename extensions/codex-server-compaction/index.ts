@@ -3,7 +3,7 @@
 // This local variant intentionally supports only OpenAI Codex Responses.
 import { randomUUID } from "node:crypto";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { calculateCost, type Model, type ProviderHeaders, type Usage } from "@earendil-works/pi-ai";
+import { calculateCost, normalizeContext, type Model, type ProviderHeaders, type Usage } from "@earendil-works/pi-ai";
 import {
 	compact,
 	sessionEntryToContextMessages,
@@ -347,11 +347,13 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 				currentModel: model,
 			},
 			modelRegistry: ctx.modelRegistry,
-			context: {
+			// Pi 0.86.0 providers take a normalized transcript: the prompt and tool
+			// declarations travel as the leading system message, not as context fields.
+			context: normalizeContext({
 				systemPrompt: ctx.getSystemPrompt(),
 				messages: [],
 				tools: pi.getAllTools().filter((tool) => pi.getActiveTools().includes(tool.name)) as never,
-			},
+			}),
 			promptInput: (canonicalInput ?? promptResponseItems) as never,
 			promptInputSource: canonicalInput ? "canonical" : "reconstructed",
 			compactionDiagnostic: {

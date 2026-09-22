@@ -6,7 +6,6 @@ import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core"
 import { calculateCost, normalizeContext, type Model, type ProviderHeaders, type Usage } from "@earendil-works/pi-ai";
 import {
 	compact,
-	sessionEntryToContextMessages,
 	type ExtensionAPI,
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
@@ -75,13 +74,8 @@ function getBranchEntries(ctx: ExtensionContext): BranchEntry[] {
 }
 
 function getPiContextMessages(ctx: ExtensionContext): AgentMessage[] {
-	return ctx.sessionManager.buildContextEntries().flatMap((entry) => {
-		try {
-			return sessionEntryToContextMessages(entry);
-		} catch {
-			return [];
-		}
-	});
+	// Pi 0.87 applies context_edit only in the projection, not in raw entries.
+	return ctx.sessionManager.buildSessionProjection().messages;
 }
 
 function getBranchThinkingLevel(
@@ -193,6 +187,16 @@ function mergeLocalDetails(
 export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 	let activeContext: ExtensionContext | undefined;
 	const requestAccounts = new Map<string, string>();
+	const contextEdits = new Map<string, string | undefined>();
+	function invalidateEditedContext(sessionId: string, branch: BranchEntry[]): void {
+		const latestEdit = branch.findLast((entry) => entry.type === "context_edit")?.id;
+		if (contextEdits.get(sessionId) !== latestEdit) {
+			// Clear both the WebSocket continuation and canonical raw history before
+			// ordinary replay or V2 selects an input. A new edit changes the prefix.
+			closeOpenAICodexWebSocketSessions(sessionId);
+			contextEdits.set(sessionId, latestEdit);
+		}
+	}
 	registerOpenAICodexCustomProvider(pi, {
 		transformPayload(body, model, options) {
 			// V2 supplies explicit history already checked against its bound auth below.
@@ -212,6 +216,7 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 			requestAccounts.set(sessionId, accountKey);
 			requestShapeBySessionId.set(sessionId, extractRequestShape(body as unknown as JsonRecord));
 			const branchEntries = getBranchEntries(ctx);
+			invalidateEditedContext(sessionId, branchEntries);
 			const remoteState = reconstructRemoteCompactionStateFromBranch({ branchEntries, model, accountKey });
 			let payload = body as unknown as JsonRecord;
 			if (remoteState) {
@@ -233,9 +238,16 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 		}),
 	});
 
+	pi.on("context", (_event, ctx) => {
+		// Run before the transport captures its canonical-session generation, so
+		// the first response after an edit can seed a fresh continuation normally.
+		invalidateEditedContext(getSessionId(ctx), getBranchEntries(ctx));
+	});
+
 	pi.on("session_start", (_event, ctx) => {
 		activeContext = ctx;
 		requestAccounts.clear();
+		contextEdits.clear();
 		const sessionId = getSessionId(ctx);
 		requestShapeBySessionId.delete(sessionId);
 		closeOpenAICodexWebSocketSessions(sessionId);
@@ -244,6 +256,7 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 	pi.on("session_tree", (_event, ctx) => {
 		activeContext = ctx;
 		requestAccounts.clear();
+		contextEdits.clear();
 		const sessionId = getSessionId(ctx);
 		requestShapeBySessionId.delete(sessionId);
 		closeOpenAICodexWebSocketSessions(sessionId);
@@ -251,6 +264,7 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 	pi.on("model_select", (_event, ctx) => {
 		activeContext = ctx;
 		requestAccounts.clear();
+		contextEdits.clear();
 		const sessionId = getSessionId(ctx);
 		requestShapeBySessionId.delete(sessionId);
 		closeOpenAICodexWebSocketSessions(sessionId);
@@ -259,6 +273,7 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 	pi.on("session_shutdown", () => {
 		activeContext = undefined;
 		requestAccounts.clear();
+		contextEdits.clear();
 		requestShapeBySessionId.clear();
 		closeOpenAICodexWebSocketSessions();
 	});
@@ -280,6 +295,7 @@ export default function codexServerCompactionExtension(pi: ExtensionAPI) {
 		if (!accountKey) return undefined;
 		const sessionId = getSessionId(ctx);
 		const branchEntries = event.branchEntries as BranchEntry[];
+		invalidateEditedContext(sessionId, branchEntries);
 		if (latestHistoryAccount(branchEntries) !== accountKey
 			|| (requestAccounts.has(sessionId) && requestAccounts.get(sessionId) !== accountKey)) {
 			closeOpenAICodexWebSocketSessions(sessionId);

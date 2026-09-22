@@ -61,6 +61,14 @@ Pi 0.86.0 changed provider stream inputs from `Context` to a normalized `Transcr
 
 `transcript-context.test.ts` compares the vendored request body against the installed Pi Codex provider's own body for the same transcript, covering tool calls, mid-conversation prompt and tool changes, tool removal, sessions with no leading system message, and the Off reasoning effort. Run it after every Pi upgrade.
 
+### Context edits (Pi 0.87.0)
+
+Compaction inputs use `sessionManager.buildSessionProjection().messages`, which applies `context_edit` omissions and replacements. Raw `buildContextEntries()` values are not an edited message projection.
+
+Any context edit appended after the latest native checkpoint conservatively disables that checkpoint on the branch, including after resume or tree navigation. Opaque artifacts have no entry-ID provenance, so the extension does not attempt to patch them. Ordinary requests retain Pi's projected text-summary context; the next successful compaction incorporates the edited projection and enables native replay again. Existing summaries remain summaries: editing an older source entry does not rewrite their text.
+
+A newly observed edit clears the session's canonical raw history and cached WebSocket continuation before ordinary replay or V2 input selection. Unchanged edit history does not repeatedly reset the lane. Account/model isolation and the Fast tier remain unchanged. `context-edit.test.ts` covers omission/replacement, retained and trailing entries, resume/tree, fresh checkpoints, ordinary transport, and V2 input selection against Pi 0.87.0.
+
 ## Attribution
 
 Adapted from `pi-openai-server-compaction` by Alexis Gallagher and the cached Codex provider/compaction implementation in `@howaboua/pi-codex-conversion` by Igor Warzocha and contributors, both under the MIT License. See `LICENSE`, `vendor/howaboua/LICENSE`, and the repository's `THIRD_PARTY_NOTICES.md`.

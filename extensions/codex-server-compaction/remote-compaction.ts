@@ -623,6 +623,12 @@ export function reconstructRemoteCompactionStateFromBranch(params: {
 		latestDetails = extractRemoteCompactionDetails(entry.details);
 	});
 	if (!latestDetails || latestCompactionIndex < 0) return undefined;
+	// Opaque history has no entry-ID provenance, so we cannot safely patch it
+	// when Pi edits context. Keep the canonical Pi projection until a fresh
+	// compaction incorporates those edits. This rule survives resume/tree.
+	if (params.branchEntries.slice(latestCompactionIndex + 1).some((entry) => entry.type === "context_edit")) {
+		return undefined;
+	}
 	// Unknown legacy ownership also falls back to the saved Pi text summary.
 	if (params.accountKey && latestDetails.accountKey !== params.accountKey) return undefined;
 	if (params.model && latestDetails.modelKey !== modelKey(params.model)) {

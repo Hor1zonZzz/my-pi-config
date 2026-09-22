@@ -18,13 +18,17 @@ English | [中文文档](README.zh-CN.md)
 
 - `plan-mode/` — read-only planning mode with guarded write-tool calls, a Bash allowlist, plan extraction, and execution progress tracking
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
-- `notify.ts` — terminal notification when an agent turn ends
+- `notify.ts` — terminal notification after the full run settles (`agent_settled`)
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
 - `subagent/` — Pi's official subagent example adapted with local model defaults, a `/subagent` model/thinking TUI, and optional `async: true` execution with steer completion; `/subagent-jobs` lists or cancels background work (see [details](extensions/subagent/README.md#background-execution))
 - `codex-fast-toggle/` — native Pi `/fast on|off` command with Codex-only autocomplete and session-scoped priority tier; the Codex transport keeps ordinary and compaction routing hints aligned with the final tier without changing provider identity
 - `codex-server-compaction/` — runs Pi's built-in text compaction and Codex Remote Compaction V2 in parallel, persists opaque native history, follows the current Fast service tier, and uses the Pi result on remote failure
 - `codex-accounts/` — `/codex-accounts` imports, adds, and globally switches Codex subscription logins without changing the provider/model; Esc cancels device login. Credentials remain local and shared within one agent directory ([details](extensions/codex-accounts/README.md))
 - `codex-statusline/` — automatically shows the current Codex account and weekly quota remaining in the TUI; sessions sharing an agent directory reuse a five-minute per-account/user quota cache ([details](extensions/codex-statusline/README.md))
+
+## Pi compatibility
+
+The local extensions target Pi 0.87.0. Codex remote compaction honors context edits and falls back to Pi's edited text context after an edit invalidates a native checkpoint; the next successful compaction enables native replay again. See [compatibility details](extensions/codex-server-compaction/README.md#context-edits-pi-0870).
 
 ## Install
 

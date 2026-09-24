@@ -113,6 +113,10 @@ export interface FooterModel {
 	branch?: string | null;
 	input: number;
 	output: number;
+	/** Session cache-read tokens; hidden when zero. */
+	cacheRead?: number;
+	/** Latest reply's cache hit rate in percent; hidden when undefined. */
+	cacheHit?: number;
 	cost: number;
 	subscription: boolean;
 	statuses: string[];
@@ -123,7 +127,17 @@ export function renderFooter(m: FooterModel, width: number): string[] {
 	const left = `  ${fg(C.dim, m.cwd)}${m.branch ? `  ${fg(C.mint, m.branch)}` : ""}`;
 	const sep = fg(C.rule, "  ·  ");
 	const usage = [
-		fg(C.dim, `↑${formatCount(m.input)} ↓${formatCount(m.output)}`),
+		fg(
+			C.dim,
+			[
+				`↑${formatCount(m.input)}`,
+				`↓${formatCount(m.output)}`,
+				m.cacheRead ? `R${formatCount(m.cacheRead)}` : "",
+				m.cacheHit !== undefined ? `CH${m.cacheHit.toFixed(1)}%` : "",
+			]
+				.filter(Boolean)
+				.join(" "),
+		),
 		m.cost > 0 || m.subscription ? fg(C.dim, `$${m.cost.toFixed(3)}${m.subscription ? " sub" : ""}`) : "",
 	]
 		.filter(Boolean)

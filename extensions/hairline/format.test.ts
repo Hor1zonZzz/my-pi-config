@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+	cacheHitRate,
 	countLines,
 	diffBlocks,
 	diffStats,
@@ -33,6 +34,12 @@ test("measures message speed only for meaningful messages", () => {
 	assert.equal(messageSpeed(0, 0, 10_000), undefined);
 	assert.equal(messageSpeed(40, 0, 200), undefined);
 	assert.equal(messageSpeed(40, 500, 100), undefined);
+});
+
+test("cache hit rate is the cached share of one request's prompt", () => {
+	assert.equal(cacheHitRate({ input: 137, cacheRead: 27_520, cacheWrite: 0 })?.toFixed(1), "99.5");
+	assert.equal(cacheHitRate({ input: 750, cacheRead: 0, cacheWrite: 250 }), 0);
+	assert.equal(cacheHitRate({ input: 0, cacheRead: 0, cacheWrite: 0 }), undefined);
 });
 
 test("maps speeds to block levels relative to the window maximum", () => {

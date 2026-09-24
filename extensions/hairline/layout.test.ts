@@ -42,6 +42,7 @@ test("every renderer stays within the terminal width", () => {
 			renderTopBorder({ lineColor: C.rule, hiddenAbove: 0, status: "Retrying (1/3) in 5s..." }, width),
 			renderBottomBorder({ lineColor: C.rule, model: "gpt-5.6-sol", thinking: "xhigh", contextPercent: 91.4, hiddenBelow: 4 }, width),
 			...renderFooter(footer, width),
+			...renderFooter({ ...footer, cacheRead: 1_234_567, cacheHit: 99.5 }, width),
 			...renderHud({ speeds: [30, 44, 51, 63, 48], weekly: { percent: 63, stale: true } }, width),
 			...renderHud({ speeds: [], weekly: "loading" }, width),
 			renderCard({ name: "bash", arg: "bash -n install.sh && git diff --check && echo 完成", status: "running", summary: fg(C.muted, "running · 4.0s"), frame: 3 }, width),
@@ -80,6 +81,14 @@ test("footer uses one line when it fits and moves statuses down otherwise", () =
 	assert.match(narrow[0]!, /↑12k ↓3\.1k  ·  \$0\.000 sub  $/);
 	assert.match(narrow[1]!, /^  me@example\.com/);
 	assert.equal(renderFooter({ ...footer, statuses: [] }, 70).length, 1);
+});
+
+test("footer shows cache reads and the latest hit rate only when present", () => {
+	const cached = plain(renderFooter({ ...footer, cacheRead: 27_520, cacheHit: 99.5, statuses: [] }, 120)[0]!);
+	assert.match(cached, /↑12k ↓3\.1k R28k CH99\.5%  ·  \$0\.000 sub  $/);
+	const missed = plain(renderFooter({ ...footer, cacheRead: 27_520, cacheHit: 0, statuses: [] }, 120)[0]!);
+	assert.match(missed, /R28k CH0\.0%/);
+	assert.doesNotMatch(plain(renderFooter({ ...footer, statuses: [] }, 120)[0]!), /R\d|CH/);
 });
 
 test("HUD shows speed history and the weekly quota bar", () => {

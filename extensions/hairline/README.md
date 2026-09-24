@@ -22,7 +22,7 @@ the nearest 256-color values.
 ─ ⠼ Thinking · 12s ───────────────────────────────────────────────────────────
 
 ─ gpt-5.6-sol · medium ───────────────────────── context ▰▰▰▰▱▱▱▱▱▱ 42% ─
-  ~/workspace/my-pi-config  main       ↑12k ↓3.1k  ·  $0.000 sub  ·  <statuses>
+  ~/workspace/my-pi-config  main       ↑12k ↓3.1k R28k CH99.5%  ·  $0.000 sub  ·  <statuses>
 ```
 
 User messages and assistant text are still rendered by Pi and keep the active
@@ -36,7 +36,7 @@ theme; extensions can restyle them only through a theme.
 | Editor | `CustomEditor` subclass | Only the top and bottom rules are restyled; there are no side borders or corners. The bottom rule shows model · thinking level and a context gauge. Rules turn mint in `!` bash mode. |
 | Working status | `embedWorkingStatus` | The top rule shows `Thinking`, `Writing`, or `Running <tool>`, elapsed run time, and the run's tool-error count, with a light sweep across the label. Retry, compaction, and branch-summary indicators keep Pi's own wording. |
 | HUD | `ctx.ui.setWidget()` above the editor | Speed of the last 16 assistant messages with the latest tok/s, and the Codex weekly quota remaining as a bar. |
-| Footer | `ctx.ui.setFooter()` | Cwd and branch, `↑input ↓output`, cost (`sub` for subscription models), and every other extension's status text. Statuses move to a second line when one line is too narrow. |
+| Footer | `ctx.ui.setFooter()` | Cwd and branch, `↑input ↓output`, `R` session cache reads and `CH` latest-reply cache hit rate (as in Pi's footer, shown once the provider reports caching), cost (`sub` for subscription models), and every other extension's status text. Statuses move to a second line when one line is too narrow. |
 | Tool rows | re-registered `read`, `bash`, `edit`, `write` | One-line cards; `ctrl+o` shows Pi's own full output. |
 
 ## Commands

@@ -35,6 +35,13 @@ export function messageSpeed(outputTokens: number, startedAt: number, endedAt: n
 	return outputTokens / seconds;
 }
 
+/** Share of one request's prompt served from the prompt cache, in percent (Pi footer's `CH`). */
+export function cacheHitRate(usage: { input?: number; cacheRead?: number; cacheWrite?: number }): number | undefined {
+	const cacheRead = usage.cacheRead ?? 0;
+	const prompt = (usage.input ?? 0) + cacheRead + (usage.cacheWrite ?? 0);
+	return prompt > 0 ? (cacheRead / prompt) * 100 : undefined;
+}
+
 const LEVELS = "▁▂▃▄▅▆▇█";
 
 /** Block levels relative to the largest value in the window. */

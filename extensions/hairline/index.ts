@@ -8,7 +8,7 @@ import {
 	VERSION,
 } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import { displayPath, messageSpeed, parseWeekly, sanitizeStatus, stripWeekly } from "./format.ts";
+import { cacheHitRate, displayPath, messageSpeed, parseWeekly, sanitizeStatus, stripWeekly } from "./format.ts";
 import { renderBottomBorder, renderFooter, renderHeader, renderHud, renderTopBorder, type WorkingModel } from "./layout.ts";
 import { C, frameAt } from "./style.ts";
 import { registerHairlineTools } from "./tools.ts";
@@ -59,6 +59,14 @@ class HairlineEditor extends CustomEditor {
 	}
 }
 
+interface Totals {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheHit?: number;
+	cost: number;
+}
+
 interface RunState {
 	startedAt?: number;
 	errors: number;
@@ -82,7 +90,7 @@ export default function hairline(pi: ExtensionAPI) {
 	let editorFactory: ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => HairlineEditor) | undefined;
 	let messageStartedAt: number | undefined;
 	let speeds: number[] = [];
-	let totals = { input: 0, output: 0, cost: 0 };
+	let totals: Totals = { input: 0, output: 0, cacheRead: 0, cost: 0 };
 	const run: RunState = { errors: 0, activity: "thinking", tools: new Map() };
 
 	const tools = registerHairlineTools(pi, { isEnabled: () => enabled });
@@ -90,13 +98,20 @@ export default function hairline(pi: ExtensionAPI) {
 	const requestRender = () => tui?.requestRender();
 
 	function refreshTotals(ctx: ExtensionContext): void {
-		const next = { input: 0, output: 0, cost: 0 };
+		const next: Totals = { input: 0, output: 0, cacheRead: 0, cost: 0 };
+		let cacheReported = false;
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-			next.input += entry.message.usage?.input ?? 0;
-			next.output += entry.message.usage?.output ?? 0;
-			next.cost += entry.message.usage?.cost?.total ?? 0;
+			const usage = entry.message.usage;
+			next.input += usage?.input ?? 0;
+			next.output += usage?.output ?? 0;
+			next.cacheRead += usage?.cacheRead ?? 0;
+			next.cost += usage?.cost?.total ?? 0;
+			if ((usage?.cacheRead ?? 0) + (usage?.cacheWrite ?? 0) > 0) cacheReported = true;
+			// Like Pi's footer: the hit rate of the latest reply, shown once the provider has reported caching.
+			next.cacheHit = usage ? cacheHitRate(usage) : undefined;
 		}
+		if (!cacheReported) next.cacheHit = undefined;
 		totals = next;
 	}
 

@@ -8,12 +8,14 @@ import {
 	VERSION,
 } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import { displayPath, messageSpeed, sanitizeStatus } from "./format.ts";
+import { displayPath, messageSpeed, parseWeekly, sanitizeStatus } from "./format.ts";
 import { renderBottomBorder, renderFooter, renderHeader, renderHud, renderTopBorder, type WorkingModel } from "./layout.ts";
 import { C, frameAt } from "./style.ts";
 import { registerHairlineTools } from "./tools.ts";
 
 const HUD_KEY = "hairline-hud";
+/** Status key and wording owned by extensions/codex-statusline. */
+const CODEX_QUOTA_STATUS = "codex-quota";
 const MAX_SPEEDS = 64;
 
 type Indicator = Parameters<CustomEditor["setWorkingStatusIndicator"]>[0];
@@ -59,8 +61,6 @@ class HairlineEditor extends CustomEditor {
 
 interface RunState {
 	startedAt?: number;
-	lastDurationMs?: number;
-	turns: number;
 	errors: number;
 	activity: "thinking" | "writing";
 	tools: Map<string, string>;
@@ -83,7 +83,7 @@ export default function hairline(pi: ExtensionAPI) {
 	let messageStartedAt: number | undefined;
 	let speeds: number[] = [];
 	let totals = { input: 0, output: 0, cost: 0 };
-	const run: RunState = { turns: 0, errors: 0, activity: "thinking", tools: new Map() };
+	const run: RunState = { errors: 0, activity: "thinking", tools: new Map() };
 
 	const tools = registerHairlineTools(pi, { isEnabled: () => enabled });
 
@@ -157,8 +157,7 @@ export default function hairline(pi: ExtensionAPI) {
 					renderHud(
 						{
 							speeds,
-							turns: run.turns,
-							elapsedMs: run.startedAt !== undefined ? Date.now() - run.startedAt : run.lastDurationMs,
+							weekly: parseWeekly(footerData?.getExtensionStatuses().get(CODEX_QUOTA_STATUS)),
 						},
 						width,
 					),
@@ -231,7 +230,7 @@ export default function hairline(pi: ExtensionAPI) {
 		tools.clearCache();
 		speeds = [];
 		messageStartedAt = undefined;
-		Object.assign(run, { startedAt: undefined, lastDurationMs: undefined, turns: 0, errors: 0, activity: "thinking" });
+		Object.assign(run, { startedAt: undefined, errors: 0, activity: "thinking" });
 		run.tools.clear();
 		refreshTotals(ctx);
 		if (ctx.mode === "tui" && enabled) install(ctx);
@@ -244,12 +243,11 @@ export default function hairline(pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_start", () => {
-		Object.assign(run, { startedAt: Date.now(), turns: 0, errors: 0, activity: "thinking" });
+		Object.assign(run, { startedAt: Date.now(), errors: 0, activity: "thinking" });
 		run.tools.clear();
 	});
 
 	pi.on("turn_start", () => {
-		run.turns++;
 		run.activity = "thinking";
 	});
 
@@ -286,7 +284,6 @@ export default function hairline(pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_end", () => {
-		if (run.startedAt !== undefined) run.lastDurationMs = Date.now() - run.startedAt;
 		run.startedAt = undefined;
 		run.tools.clear();
 		requestRender();

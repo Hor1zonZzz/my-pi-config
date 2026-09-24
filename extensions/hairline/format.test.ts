@@ -14,6 +14,7 @@ import {
 	lastLine,
 	messageSpeed,
 	oneLine,
+	parseWeekly,
 	readLines,
 	sanitizeStatus,
 	sparkLevels,
@@ -60,6 +61,15 @@ test("extracts useful lines from tool output", () => {
 	assert.deepEqual(readLines("a\nb\n\n[Showing lines 1-5 of 212. Use offset=6 to continue.]"), { shown: 5, total: 212 });
 	assert.deepEqual(readLines("a\nb\n\n[40 more lines in file. Use offset=3 to continue.]"), { shown: 2, total: 42 });
 	assert.equal(oneLine("  git status\n  && ls "), "git status && ls");
+});
+
+test("parses codex-statusline weekly wording", () => {
+	assert.deepEqual(parseWeekly("me@example.com · weekly 63% left"), { percent: 63, stale: false });
+	assert.deepEqual(parseWeekly("acct-1234abcd · weekly 0% left (stale)"), { percent: 0, stale: true });
+	assert.equal(parseWeekly("Codex · weekly loading"), "loading");
+	assert.equal(parseWeekly("me@example.com · weekly unavailable"), "unavailable");
+	assert.equal(parseWeekly(undefined), undefined);
+	assert.equal(parseWeekly("something else"), undefined);
 });
 
 test("shortens paths and flattens statuses", () => {

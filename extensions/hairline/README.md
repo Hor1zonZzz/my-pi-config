@@ -4,7 +4,7 @@ English | [中文](README.zh-CN.md)
 
 A quiet TUI skin for Pi: grey hairlines with one mint → sky accent. It replaces
 the startup header, the editor rules, the footer, and the tool rows, and adds a
-one-line speed HUD above the editor. It paints its own truecolor palette and is
+one-line HUD above the editor with reply speed and the Codex weekly quota. It paints its own truecolor palette and is
 designed for dark terminals such as Ghostty; without truecolor it falls back to
 the nearest 256-color values.
 
@@ -18,7 +18,7 @@ the nearest 256-color values.
   ⠼  bash  bash -n install.sh && git diff --check              running · 1.5s
      ╰ checking install.sh
 
-  speed    ▁▁▁▁▁▁▁▁▁▁▁▁▂▅█▆  51 tok/s  ·  peak 63  ·  turn 3  ·  38s
+  speed    ▁▁▁▁▁▁▁▁▁▁▁▁▂▅█▆  51 tok/s       weekly  ━━━━━━━━━━━━━───────  63% left
 ─ ⠼ Thinking · 12s ───────────────────────────────────────────────────────────
 
 ─ gpt-5.6-sol · medium ───────────────────────── context ▰▰▰▰▱▱▱▱▱▱ 42% ─
@@ -35,7 +35,7 @@ theme; extensions can restyle them only through a theme.
 | Header | `ctx.ui.setHeader()` | Three-row gradient π, version, model · thinking level, cwd and branch, key hints. |
 | Editor | `CustomEditor` subclass | Only the top and bottom rules are restyled; there are no side borders or corners. The bottom rule shows model · thinking level and a context gauge. Rules turn mint in `!` bash mode. |
 | Working status | `embedWorkingStatus` | The top rule shows `Thinking`, `Writing`, or `Running <tool>`, elapsed run time, and the run's tool-error count, with a light sweep across the label. Retry, compaction, and branch-summary indicators keep Pi's own wording. |
-| HUD | `ctx.ui.setWidget()` above the editor | Speed of the last 16 assistant messages, the latest tok/s, the peak, the turn count, and run time. |
+| HUD | `ctx.ui.setWidget()` above the editor | Speed of the last 16 assistant messages with the latest tok/s, and the Codex weekly quota remaining as a bar. |
 | Footer | `ctx.ui.setFooter()` | Cwd and branch, `↑input ↓output`, cost (`sub` for subscription models), and every other extension's status text. Statuses move to a second line when one line is too narrow. |
 | Tool rows | re-registered `read`, `bash`, `edit`, `write` | One-line cards; `ctrl+o` shows Pi's own full output. |
 
@@ -44,7 +44,7 @@ theme; extensions can restyle them only through a theme.
 ```text
 /hairline            show the current state
 /hairline on|off     switch the skin
-/hairline hud on|off hide or show the speed line (a pure skin without the HUD)
+/hairline hud on|off hide or show the HUD line (a pure skin without the HUD)
 ```
 
 The state lasts for the running Pi process. Restarting Pi or `/reload` turns the
@@ -60,6 +60,17 @@ Aborted, failed, and messages shorter than 0.25 s are skipped. Up to 64 values
 are kept and the last 16 are drawn, scaled to the largest value in view. The
 history starts empty for each session and after `/reload`; resumed messages
 carry no timing.
+
+## Weekly quota
+
+The weekly bar reads the `codex-quota` footer status that
+[`codex-statusline`](../codex-statusline/README.md) sets
+(`me@example.com · weekly 63% left`), so it adds no quota request and follows
+that extension's five-minute shared cache. `loading` and `unavailable` appear as
+text, stale values are marked `(stale)`, and the percentage turns amber at 25%
+and red at 10%. The bar is hidden when that status is absent, for example with
+non-Codex models or without `codex-statusline`. The footer still shows the full
+status text.
 
 ## Tool rows
 
@@ -99,12 +110,15 @@ Verified with Pi 0.87.1. Recheck these on Pi upgrades:
 - The options Pi's `AgentSession` passes to `createReadToolDefinition()` and
   `createBashToolDefinition()`. If Pi adds another settings-derived option, add
   it to `createBaseTool()` in `tools.ts`.
+- `codex-statusline`'s status key `codex-quota` and its `weekly N% left` wording.
+  `index.test.ts` passes its real `formatStatus()` output through `parseWeekly()`.
 - `SettingsManager.create()` takes a file lock while reading, which is why tool
   definitions are cached instead of rebuilt for each call.
 
 ## Validation
 
-Tests import Pi's host packages, so run them from a disposable copy whose
+Tests import Pi's host packages and `../codex-statusline`, so run them from a
+disposable copy that contains both extension directories and whose
 `node_modules/@earendil-works` points at the installed Pi packages (do not add
 dependencies to this repository):
 
@@ -114,10 +128,11 @@ tsc -p tsconfig.json   # strict, NodeNext, allowImportingTsExtensions, noEmit
 ```
 
 The tests cover width safety from 1 to 200 columns, the editor rules, working
-status, footer wrapping, HUD speed tracking, one-line tool cards, the model-facing
+status, footer wrapping, HUD speed tracking and weekly parsing, one-line tool cards, the model-facing
 tool contract, settings and project-trust handling for `bash`, the expanded and
 disabled paths through Pi's renderers, and the bash refresh timer.
 
 Interactive checks: start `pi --no-extensions -e ./extensions/hairline`, run a
 prompt that uses `read` and `bash`, toggle `ctrl+o`, resize to a narrow width,
-and try `/hairline hud off`, `/hairline off`, and `/hairline on`.
+load `./extensions/codex-statusline` to see the weekly bar, and try
+`/hairline hud off`, `/hairline off`, and `/hairline on`.

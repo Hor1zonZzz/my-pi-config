@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { type ExtensionAPI, initTheme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { formatStatus } from "../codex-statusline/index.ts";
+import { parseWeekly } from "./format.ts";
 import hairline from "./index.ts";
 import { setTrueColorOverride } from "./style.ts";
 
@@ -75,7 +77,7 @@ test("installs header, editor, footer, and HUD only in the TUI", async () => {
 	assert.match(header.map(plain).join("\n"), /pi \d+\.\d+\.\d+ +gpt-5\.6-sol · medium/);
 	const footer = t.ui.footer(t.fakeTui, {}, t.footerData).render(140).map(plain);
 	assert.match(footer[0]!, /\/tmp\/demo  main .*\$0\.000 sub  ·  me@example\.com · weekly 63% left  $/);
-	assert.deepEqual(t.hud(), ["  speed    ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁  waiting for the first reply"]);
+	assert.deepEqual(t.hud(), [`  speed    ${"▁".repeat(16)}  waiting for the first reply    weekly  ━━━━━━────  63% left`]);
 
 	const print = setup("print");
 	await print.emit("session_start", { reason: "startup" });
@@ -113,7 +115,9 @@ test("editor keeps only top and bottom rules and embeds working status", async (
 test("measures speed from assistant messages and keeps usage totals", async () => {
 	const t = setup();
 	await t.emit("session_start", { reason: "startup" });
-	t.hud(); // Pi calls widget factories immediately; this binds the TUI used for redraws.
+	// Pi calls footer and widget factories immediately; this binds footer data and the TUI used for redraws.
+	t.ui.footer(t.fakeTui, {}, t.footerData);
+	t.hud();
 	const realNow = Date.now;
 	let now = 1_000;
 	Date.now = () => now;
@@ -130,13 +134,28 @@ test("measures speed from assistant messages and keeps usage totals", async () =
 		await t.emit("message_end", { message: { role: "assistant", stopReason: "aborted", usage: { output: 9_000 } } });
 		now += 3_000;
 		await t.emit("agent_end", { messages: [] });
-		assert.deepEqual(t.hud(), ["  speed    ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█  51 tok/s  ·  turn 1  ·  18s"]);
+		assert.deepEqual(t.hud(), [`  speed    ${"▁".repeat(15)}█  51 tok/s       weekly  ${"━".repeat(13)}${"─".repeat(7)}  63% left`]);
 		const footer = plain(t.ui.footer(t.fakeTui, {}, t.footerData).render(140)[0]);
 		assert.match(footer, /↑12k ↓510  ·  \$0\.010 sub/);
 		assert.ok(t.renders.length > 0);
 	} finally {
 		Date.now = realNow;
 	}
+});
+
+test("HUD reads codex-statusline's weekly wording", async () => {
+	const now = 1_000_000;
+	const cached = { version: 1, attemptedAt: now, nextCheckAt: now + 60_000, state: "ok", quota: { remainingPercent: 63 } } as any;
+	assert.deepEqual(parseWeekly(formatStatus("me@example.com", cached, now)), { percent: 63, stale: false });
+	assert.deepEqual(parseWeekly(formatStatus("me@example.com", { ...cached, state: "error" }, now)), { percent: 63, stale: true });
+	assert.equal(parseWeekly(formatStatus("me@example.com", undefined, now)), "loading");
+	assert.equal(parseWeekly(formatStatus("me@example.com", { ...cached, state: "error", quota: undefined }, now)), "unavailable");
+
+	const t = setup();
+	await t.emit("session_start", { reason: "startup" });
+	t.footerData.getExtensionStatuses = () => new Map();
+	t.ui.footer(t.fakeTui, {}, t.footerData);
+	assert.deepEqual(t.hud(), [`  speed    ${"▁".repeat(16)}  waiting for the first reply`], "no weekly segment without Codex status");
 });
 
 test("/hairline switches the skin and the HUD", async () => {

@@ -25,7 +25,7 @@ English | [中文文档](README.zh-CN.md)
 - `codex-server-compaction/` — runs Pi's built-in text compaction and Codex Remote Compaction V2 in parallel, persists opaque native history, follows the current Fast service tier, and uses the Pi result on remote failure
 - `codex-accounts/` — `/codex-accounts` imports, adds, and globally switches Codex subscription logins without changing the provider/model; Esc cancels device login. Credentials remain local and shared within one agent directory ([details](extensions/codex-accounts/README.md))
 - `codex-statusline/` — automatically shows the current Codex account and weekly quota remaining in the TUI; sessions sharing an agent directory reuse a five-minute per-account/user quota cache ([details](extensions/codex-statusline/README.md))
-- `hairline/` — Hairline TUI skin: gradient π header, editor with top and bottom rules only (working status in the top rule, model and context gauge in the bottom rule), one-line footer that keeps other extensions' statuses, a speed HUD, and one-line `read`/`bash`/`edit`/`write` rows whose execution stays Pi's; `/hairline on|off` and `/hairline hud on|off` ([details](extensions/hairline/README.md))
+- `hairline/` — Hairline TUI skin: gradient π header, editor with top and bottom rules only (working status in the top rule, model and context gauge in the bottom rule), one-line footer that keeps other extensions' statuses, a HUD with reply speed and the Codex weekly quota bar, and one-line `read`/`bash`/`edit`/`write` rows whose execution stays Pi's; `/hairline on|off` and `/hairline hud on|off` ([details](extensions/hairline/README.md))
 
 ## Pi compatibility
 

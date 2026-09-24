@@ -42,7 +42,8 @@ test("every renderer stays within the terminal width", () => {
 			renderTopBorder({ lineColor: C.rule, hiddenAbove: 0, status: "Retrying (1/3) in 5s..." }, width),
 			renderBottomBorder({ lineColor: C.rule, model: "gpt-5.6-sol", thinking: "xhigh", contextPercent: 91.4, hiddenBelow: 4 }, width),
 			...renderFooter(footer, width),
-			...renderHud({ speeds: [30, 44, 51, 63, 48], turns: 3, elapsedMs: 38_000 }, width),
+			...renderHud({ speeds: [30, 44, 51, 63, 48], weekly: { percent: 63, stale: true } }, width),
+			...renderHud({ speeds: [], weekly: "loading" }, width),
 			renderCard({ name: "bash", arg: "bash -n install.sh && git diff --check && echo 完成", status: "running", summary: fg(C.muted, "running · 4.0s"), frame: 3 }, width),
 			renderSubLine("install.sh: line 88: syntax error near unexpected token `fi'", C.error, width),
 		];
@@ -81,10 +82,16 @@ test("footer uses one line when it fits and moves statuses down otherwise", () =
 	assert.equal(renderFooter({ ...footer, statuses: [] }, 70).length, 1);
 });
 
-test("HUD shows speed history, peak, turn, and elapsed time", () => {
-	assert.match(plain(renderHud({ speeds: [], turns: 0 }, 100)[0]!), /speed    ▁{16}  waiting for the first reply$/);
-	const line = plain(renderHud({ speeds: [30, 60, 51], turns: 3, elapsedMs: 38_000 }, 100)[0]!);
-	assert.match(line, /speed    ▁{13}[▁-█]{3}  51 tok\/s  ·  peak 60  ·  turn 3  ·  38s$/);
+test("HUD shows speed history and the weekly quota bar", () => {
+	const hud = (model: Parameters<typeof renderHud>[0], width = 100) => plain(renderHud(model, width)[0]!);
+	assert.equal(hud({ speeds: [] }), `  speed    ${"▁".repeat(16)}  waiting for the first reply`);
+	const weekly = { percent: 63, stale: false };
+	assert.match(hud({ speeds: [30, 60, 51], weekly }), /^  speed    ▁{13}[▁-█]{3}  51 tok\/s {7}weekly  ━{13}─{7}  63% left$/);
+	assert.match(hud({ speeds: [51], weekly }, 80), /51 tok\/s {7}weekly  ━{6}─{4}  63% left$/);
+	assert.match(hud({ speeds: [51], weekly }, 60), /51 tok\/s {7}weekly  63% left$/);
+	assert.match(hud({ speeds: [51], weekly: { percent: 8, stale: true } }), /weekly  ━{2}─{18}  8% left \(stale\)$/);
+	assert.match(hud({ speeds: [51], weekly: "loading" }), /51 tok\/s {7}weekly  loading$/);
+	assert.match(hud({ speeds: [], weekly }), /waiting for the first reply {4}weekly  ━{6}─{4}  63% left$/);
 });
 
 test("tool card keeps the summary visible when the argument is long", () => {

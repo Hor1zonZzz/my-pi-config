@@ -3,7 +3,7 @@
 [English](README.md) | 中文
 
 安静的 Pi 终端皮肤：灰色细线，只用一道薄荷到天蓝的渐变做强调。它替换启动 Header、
-输入框上下横线、footer 和工具调用行，并在输入框上方加一行速度 HUD。配色由扩展自己
+输入框上下横线、footer 和工具调用行，并在输入框上方加一行 HUD，显示回复速度和 Codex 周额度。配色由扩展自己
 绘制（真彩色），为 Ghostty 这类深色终端设计；终端不支持真彩色时退回最接近的 256 色。
 
 ```text
@@ -16,7 +16,7 @@
   ⠼  bash  bash -n install.sh && git diff --check              running · 1.5s
      ╰ checking install.sh
 
-  speed    ▁▁▁▁▁▁▁▁▁▁▁▁▂▅█▆  51 tok/s  ·  peak 63  ·  turn 3  ·  38s
+  speed    ▁▁▁▁▁▁▁▁▁▁▁▁▂▅█▆  51 tok/s       weekly  ━━━━━━━━━━━━━───────  63% left
 ─ ⠼ Thinking · 12s ───────────────────────────────────────────────────────────
 
 ─ gpt-5.6-sol · medium ───────────────────────── context ▰▰▰▰▱▱▱▱▱▱ 42% ─
@@ -32,7 +32,7 @@
 | Header | `ctx.ui.setHeader()` | 三行渐变 π、版本、模型 · 思考级别、cwd 与分支、快捷键提示。 |
 | 输入框 | `CustomEditor` 子类 | 只改上下两条横线，没有左右边框和圆角。下横线显示模型 · 思考级别和上下文刻度。输入 `!` 进入 bash 模式时横线变成薄荷色。 |
 | 工作状态 | `embedWorkingStatus` | 上横线显示 `Thinking`、`Writing` 或 `Running <工具>`、本次运行耗时和工具出错次数，标签上有一道流光。重试、压缩、分支总结沿用 Pi 自己的文字。 |
-| HUD | 输入框上方的 `ctx.ui.setWidget()` | 最近 16 条回复的速度、当前 tok/s、峰值、轮次和运行时间。 |
+| HUD | 输入框上方的 `ctx.ui.setWidget()` | 最近 16 条回复的速度曲线和当前 tok/s，以及 Codex 周额度剩余进度条。 |
 | Footer | `ctx.ui.setFooter()` | cwd 与分支、`↑输入 ↓输出`、费用（订阅模型标 `sub`），以及其他扩展的全部状态。一行放不下时，状态移到第二行。 |
 | 工具调用行 | 重新注册 `read`、`bash`、`edit`、`write` | 单行卡片；`ctrl+o` 展开后显示 Pi 原生的完整输出。 |
 
@@ -41,7 +41,7 @@
 ```text
 /hairline            查看当前状态
 /hairline on|off     开关皮肤
-/hairline hud on|off 显示或隐藏速度行（不要 HUD 的纯皮肤）
+/hairline hud on|off 显示或隐藏 HUD 行（不要 HUD 的纯皮肤）
 ```
 
 状态只在当前 Pi 进程内有效；重启 Pi 或 `/reload` 后皮肤和 HUD 都恢复为开启。
@@ -54,6 +54,14 @@
 包含首字延迟。被中止、出错或短于 0.25 秒的回复不计入。最多保留 64 个值，画出
 最近 16 个，按可见范围内的最大值缩放。每个 session 开始和 `/reload` 后历史清空；
 恢复的旧消息没有计时信息。
+
+## 周额度
+
+周额度进度条读取 [`codex-statusline`](../codex-statusline/README.zh-CN.md) 写入 footer
+的 `codex-quota` 状态（`me@example.com · weekly 63% left`），所以不会额外请求额度，
+和它共用五分钟的共享缓存。`loading` 和 `unavailable` 以文字显示，过期数据标
+`(stale)`，剩余 25% 以下变琥珀色，10% 以下变红色。没有这条状态时（例如非 Codex
+模型，或没装 `codex-statusline`）不显示进度条。footer 里仍保留完整的状态文字。
 
 ## 工具调用行
 
@@ -88,23 +96,27 @@
 - Pi 的 `AgentSession` 传给 `createReadToolDefinition()` 和
   `createBashToolDefinition()` 的选项。如果 Pi 新增了来自设置的选项，要同步加到
   `tools.ts` 的 `createBaseTool()`。
+- `codex-statusline` 的状态键 `codex-quota` 和 `weekly N% left` 文案。`index.test.ts`
+  会把它真实的 `formatStatus()` 输出交给 `parseWeekly()` 解析。
 - `SettingsManager.create()` 读取时会加文件锁，所以工具定义做了缓存，而不是每次
   调用都重建。
 
 ## 验证
 
-测试会导入 Pi 的宿主包，请在临时副本里运行，并让副本的
-`node_modules/@earendil-works` 指向已安装的 Pi 包（不要给本仓库添加依赖）：
+测试会导入 Pi 的宿主包和 `../codex-statusline`，请在临时副本里运行：副本里放这两个
+扩展目录，并让 `node_modules/@earendil-works` 指向已安装的 Pi 包（不要给本仓库添加
+依赖）：
 
 ```sh
 node --test hairline/*.test.ts
 tsc -p tsconfig.json   # strict、NodeNext、allowImportingTsExtensions、noEmit
 ```
 
-测试覆盖 1 到 200 列的宽度安全、输入框横线、工作状态、footer 换行、HUD 速度统计、
+测试覆盖 1 到 200 列的宽度安全、输入框横线、工作状态、footer 换行、HUD 速度统计和周额度解析、
 单行工具卡片、模型可见的工具定义、bash 的设置与项目信任处理、展开和关闭时交回
 Pi 渲染器，以及 bash 刷新定时器的清理。
 
 交互检查：运行 `pi --no-extensions -e ./extensions/hairline`，发一条会用到 `read`
-和 `bash` 的提示，按 `ctrl+o` 展开和折叠，把终端缩窄，再试
+和 `bash` 的提示，按 `ctrl+o` 展开和折叠，把终端缩窄，同时加载 `./extensions/codex-statusline`
+查看周额度进度条，再试
 `/hairline hud off`、`/hairline off` 和 `/hairline on`。

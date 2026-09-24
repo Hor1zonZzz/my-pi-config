@@ -116,6 +116,21 @@ export function displayPath(path: string, cwd: string, home: string): string {
 	return path;
 }
 
+export type Weekly = { percent: number; stale: boolean } | "loading" | "unavailable";
+
+/**
+ * Weekly quota from codex-statusline's footer text, e.g.
+ * `me@example.com · weekly 63% left (stale)`. Keep in sync with its `formatStatus()`.
+ */
+export function parseWeekly(text: string | undefined): Weekly | undefined {
+	if (!text) return undefined;
+	const match = /\bweekly (\d{1,3})% left( \(stale\))?/.exec(text);
+	if (match) return { percent: Math.min(100, Number(match[1])), stale: Boolean(match[2]) };
+	if (/\bweekly loading\b/.test(text)) return "loading";
+	if (/\bweekly unavailable\b/.test(text)) return "unavailable";
+	return undefined;
+}
+
 /** Status text from other extensions, flattened to one line like Pi's footer. */
 export function sanitizeStatus(text: string): string {
 	return text.replace(/[\r\n\t]+/g, " ").replace(/ {2,}/g, " ").trim();

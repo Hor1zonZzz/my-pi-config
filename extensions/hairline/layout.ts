@@ -1,5 +1,5 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { diffBlocks, formatCount, formatDuration, formatSpeed, sparkLevels } from "./format.ts";
+import { diffBlocks, formatCount, formatDuration, formatSpeed, sparkLevels, type Weekly } from "./format.ts";
 import { bold, C, fg, gradient, mix, SPINNER, shimmer, spread } from "./style.ts";
 
 // Pure renderers: plain models in, width-safe ANSI lines out.
@@ -139,11 +139,31 @@ export function renderFooter(m: FooterModel, width: number): string[] {
 export interface HudModel {
 	/** Recent per-message speeds in tokens per second, oldest first. */
 	speeds: number[];
-	turns: number;
-	elapsedMs?: number;
+	/** Codex weekly quota; absent when codex-statusline shows nothing (for example, other providers). */
+	weekly?: Weekly;
 }
 
 const TRACK = 16;
+/** Column where the weekly segment starts, so it does not shift as the speed text changes. */
+const WEEKLY_COLUMN = 44;
+
+function weeklyBar(percent: number, cells: number, stale: boolean): string {
+	const filled = Math.min(cells, Math.max(0, Math.round((cells * percent) / 100)));
+	let out = "";
+	for (let i = 0; i < cells; i++) {
+		const color = stale ? C.muted : mix(C.mint, C.sky, i / Math.max(1, cells - 1));
+		out += i < filled ? fg(color, "━") : fg(C.track, "─");
+	}
+	return out;
+}
+
+function weeklySegment(weekly: Weekly, cells: number): string {
+	const label = fg(C.dim, "weekly");
+	if (weekly === "loading" || weekly === "unavailable") return `${label}  ${fg(C.dim, weekly)}`;
+	const color = weekly.stale ? C.muted : weekly.percent <= 10 ? C.error : weekly.percent <= 25 ? C.warning : C.text;
+	const bar = cells > 0 ? `  ${weeklyBar(weekly.percent, cells, weekly.stale)}` : "";
+	return `${label}${bar}  ${fg(color, `${weekly.percent}% left`)}${weekly.stale ? fg(C.dim, " (stale)") : ""}`;
+}
 
 export function renderHud(m: HudModel, width: number): string[] {
 	const window = m.speeds.slice(-TRACK);
@@ -153,12 +173,12 @@ export function renderHud(m: HudModel, width: number): string[] {
 		fg(C.track, "▁".repeat(pad)) + levels.map((ch, i) => fg(mix(C.mint, C.sky, (pad + i) / (TRACK - 1)), ch)).join("");
 	const last = window.length > 0 ? window[window.length - 1] : undefined;
 	const value = last === undefined ? fg(C.dim, "waiting for the first reply") : fg(C.text, `${formatSpeed(last)} tok/s`);
-	const extras: string[] = [];
-	if (window.length > 1) extras.push(`peak ${formatSpeed(Math.max(...window))}`);
-	if (m.turns > 0) extras.push(`turn ${m.turns}`);
-	if (m.elapsedMs !== undefined) extras.push(formatDuration(m.elapsedMs));
-	const tail = extras.length > 0 ? fg(C.dim, `  ·  ${extras.join("  ·  ")}`) : "";
-	return [truncateToWidth(`  ${fg(C.dim, "speed")}    ${track}  ${value}${tail}`, width, "")];
+	const speed = `  ${fg(C.dim, "speed")}    ${track}  ${value}`;
+	if (!m.weekly) return [truncateToWidth(speed, width, "")];
+	const column = Math.max(WEEKLY_COLUMN, visibleWidth(speed) + 4);
+	const cells = width >= column + 44 ? 20 : width >= column + 32 ? 10 : 0;
+	const line = speed + " ".repeat(column - visibleWidth(speed)) + weeklySegment(m.weekly, cells);
+	return [truncateToWidth(line, width, "")];
 }
 
 export type CardStatus = "pending" | "running" | "ok" | "error";

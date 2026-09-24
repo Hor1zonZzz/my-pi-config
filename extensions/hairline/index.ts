@@ -266,7 +266,7 @@ export default function hairline(pi: ExtensionAPI) {
 		else if (type.startsWith("text")) run.activity = "writing";
 	});
 
-	pi.on("message_end", (event, ctx) => {
+	pi.on("message_end", (event) => {
 		const message = event.message as { role?: string; stopReason?: string; usage?: { output?: number } };
 		if (message.role !== "assistant") return;
 		const startedAt = messageStartedAt;
@@ -275,6 +275,12 @@ export default function hairline(pi: ExtensionAPI) {
 			const speed = messageSpeed(message.usage?.output ?? 0, startedAt, Date.now());
 			if (speed !== undefined) speeds = [...speeds, speed].slice(-MAX_SPEEDS);
 		}
+		requestRender();
+	});
+
+	// Pi persists a message only after extension message_end handlers return, so totals are
+	// read once the turn (or an aborted run) has finished.
+	pi.on("turn_end", (_event, ctx) => {
 		refreshTotals(ctx);
 		requestRender();
 	});
@@ -288,9 +294,10 @@ export default function hairline(pi: ExtensionAPI) {
 		if (event.isError) run.errors++;
 	});
 
-	pi.on("agent_end", () => {
+	pi.on("agent_end", (_event, ctx) => {
 		run.startedAt = undefined;
 		run.tools.clear();
+		refreshTotals(ctx);
 		requestRender();
 	});
 

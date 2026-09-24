@@ -127,8 +127,11 @@ test("measures speed from assistant messages and keeps usage totals", async () =
 		await t.emit("message_start", { message: { role: "assistant" } });
 		now += 10_000;
 		const message = { role: "assistant", stopReason: "stop", usage: { input: 12_400, output: 510, cost: { total: 0.01 } } };
-		t.branch.push({ type: "message", message });
 		await t.emit("message_end", { message });
+		// Pi appends the message to the session only after extension message_end handlers run.
+		t.branch.push({ type: "message", message });
+		await t.emit("turn_end", { turnIndex: 0, message, toolResults: [] });
+		assert.match(plain(t.ui.footer(t.fakeTui, {}, t.footerData).render(140)[0]), /↑12k ↓510/);
 		await t.emit("message_start", { message: { role: "assistant" } });
 		now += 5_000;
 		await t.emit("message_end", { message: { role: "assistant", stopReason: "aborted", usage: { output: 9_000 } } });

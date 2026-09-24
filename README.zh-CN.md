@@ -6,7 +6,7 @@
 
 ## 包含内容
 
-- `settings.json` — 模型默认值与可安装的 Pi 包，包括 Pi Lens、MCP 适配器与 Herdr 工具集成
+- `settings.json` — 模型默认值与可安装的 Pi 包，包括 MCP 适配器与 Herdr 工具集成
 - `model-overrides.json` — 受管理的、不含凭据的内置模型覆盖项
 - `extensions/` — 本地扩展；`extensions/subagent/` 同时持有其代理定义与工作流提示词
 - `prompts/` — 本地通用提示词模板，包括可手动选择是否探索仓库的 `/understand` 与 `/explore-understand`
@@ -24,10 +24,11 @@
 - `codex-server-compaction/` — 并行执行 Pi 内置文本压缩与 Codex Remote Compaction V2，持久化 opaque 原生历史，继承当前 Fast service tier，并在远程失败时使用 Pi 结果
 - `codex-accounts/` — `/codex-accounts` 导入、添加和全局切换 Codex 订阅账号，保留 provider/模型；设备码登录可按 Esc 取消。凭据只存本机，在同一 agent 目录内共享（[详细说明](extensions/codex-accounts/README.zh-CN.md)）
 - `codex-statusline/` — 在 Codex TUI 中自动显示当前账号与周额度剩余比例；同一 agent 目录内的 session 共享五分钟账号/用户额度缓存（[详细说明](extensions/codex-statusline/README.zh-CN.md)）
+- `hairline/` — Hairline 素线皮肤：渐变 π Header、只有上下横线的输入框（上横线显示工作状态，下横线显示模型和上下文刻度）、保留其他扩展状态的单行 footer、速度 HUD，以及单行的 `read`/`bash`/`edit`/`write` 工具行（执行仍由 Pi 完成）；`/hairline on|off` 与 `/hairline hud on|off`（[详细说明](extensions/hairline/README.zh-CN.md)）
 
 ## Pi 兼容性
 
-本地扩展适配 Pi 0.87.0。Codex 远程压缩遵守上下文编辑；编辑使旧 native checkpoint 失效后，使用 Pi 已应用编辑的文本上下文，直到下一次成功压缩恢复 native replay。参见[兼容性说明](extensions/codex-server-compaction/README.md#context-edits-pi-0870)。
+本地扩展适配 Pi 0.87.0；`hairline/` 在 Pi 0.87.1 上验证。Codex 远程压缩遵守上下文编辑；编辑使旧 native checkpoint 失效后，使用 Pi 已应用编辑的文本上下文，直到下一次成功压缩恢复 native replay。参见[兼容性说明](extensions/codex-server-compaction/README.md#context-edits-pi-0870)。
 
 ## 安装
 
@@ -52,6 +53,7 @@ cd my-pi-config
 ```text
 /plan
 /fast
+/hairline
 /subagent
 /understand [requirement]
 /explore-understand [requirement]

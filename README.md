@@ -20,7 +20,7 @@ English | [中文文档](README.zh-CN.md)
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification after the full run settles (`agent_settled`)
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
-- `subagent/` — Pi's official subagent example adapted with local model defaults, a `/subagent` model/thinking TUI, and optional `async: true` execution with steer completion; `/subagent-jobs` lists or cancels background work (see [details](extensions/subagent/README.md#background-execution))
+- `subagent/` — delegates tasks to `pi` subprocesses in single, parallel, or chain mode, in the foreground or with `async: true` in the background; saves every child session, lists running subagents below the editor (`↓` on an empty prompt selects one to watch or stop), and adds `/subagent-history` plus the `/subagent` model/thinking selector ([details](extensions/subagent/README.md))
 - `codex-fast-toggle/` — native Pi `/fast on|off` command with Codex-only autocomplete and session-scoped priority tier; the Codex transport keeps ordinary and compaction routing hints aligned with the final tier without changing provider identity
 - `codex-server-compaction/` — runs Pi's built-in text compaction and Codex Remote Compaction V2 in parallel, persists opaque native history, follows the current Fast service tier, and uses the Pi result on remote failure
 - `codex-accounts/` — `/codex-accounts` imports, adds, and globally switches Codex subscription logins without changing the provider/model; Esc cancels device login. Credentials remain local and shared within one agent directory ([details](extensions/codex-accounts/README.md))
@@ -68,6 +68,7 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 /fast
 /hairline
 /subagent
+/subagent-history
 /understand [requirement]
 /explore-understand [requirement]
 /scout <task>
@@ -90,7 +91,7 @@ local file.
 
 ## Attribution and licenses
 
-Several extensions and the subagent workflow are adapted from Pi's official examples. Pi's license is included at `licenses/pi-LICENSE`.
+Several extensions, the subagent agent discovery, sample agents, and workflow prompts are adapted from Pi's official examples. Pi's license is included at `licenses/pi-LICENSE`.
 
 `codex-fast-toggle` originally derived its Fast behavior from `pi-openai-codex-fast` and now uses Pi's native command and request hooks; its upstream MIT license and README are included in that directory.
 

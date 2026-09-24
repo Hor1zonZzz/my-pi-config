@@ -270,15 +270,14 @@
       <header>
         <h1>Subagent 插件说明</h1>
         <p class="lede">
-          本插件把一个委派任务交给独立启动的
-          <code>pi</code>
-          子进程执行。它隔离对话上下文，但不会隔离文件系统或项目目录；主代理随后得到子代理的最终输出。
+          本插件把委派任务交给独立启动的 <code>pi</code>
+          子进程执行。子代理拥有独立的对话上下文，但与主代理共享文件系统和项目目录。它可以在前台运行（主代理等待结果），也可以在后台运行（完成后自动把结果送回主代理）。每次运行都会保存完整会话，运行期间可以在输入框下方选中查看或停止。
         </p>
         <div class="meta">
           <span class="chip">插件：<code>extensions/subagent/</code></span>
-          <span class="chip">已检查 Pi：0.82.1</span>
+          <span class="chip">已检查 Pi：0.87.1</span>
           <span class="chip">入口：<code>index.ts</code></span>
-          <span class="chip">定义读取：<code>agents.ts</code></span>
+          <span class="chip">会话目录：<code>~/.pi/agent/subagent-sessions/</code></span>
         </div>
       </header>
 
@@ -287,28 +286,26 @@
         <div class="grid">
           <article class="card span-4">
             <div class="number">1</div>
-            <h3>有四个内置角色</h3>
+            <h3>三种模式，前台或后台</h3>
             <p>
-              <code>scout</code
-              >、<code>planner</code>、<code>reviewer</code>、<code>worker</code>。它们是
-              Markdown 文件中的角色提示词与配置，不是四个不同的插件。
+              单个（single）、并行（parallel）、链式（chain）。默认在前台运行；加上
+              <code>async: true</code> 改为后台运行，完成后自动送回结果。
             </p>
           </article>
           <article class="card span-4">
             <div class="number">2</div>
-            <h3>有三种调用模式</h3>
+            <h3>每次运行都有完整记录</h3>
             <p>
-              单个执行（single）、并行执行（parallel）、串行交接（chain）。每次调用必须且只能选择其中一种。
+              子进程的会话保存为 Pi 原生会话文件，另存一份元数据。<code>/subagent-history</code>
+              可以随时查看，重启 Pi 后也在。
             </p>
           </article>
           <article class="card span-4">
             <div class="number">3</div>
-            <h3>可以选模型</h3>
+            <h3>运行中可以选中、查看、停止</h3>
             <p>
-              <span class="yesno">可以。</span>模型由“角色定义”的 YAML
-              <code>model</code>
-              字段选择；当前工具调用参数中<strong>没有</strong>临时覆盖模型的
-              <code>model</code> 字段。
+              输入框为空时按 <code>↓</code> 进入输入框下方的列表，回车看实时进度，连按两次
+              <code>x</code> 停止，<code>Esc</code> 回到输入框。
             </p>
           </article>
         </div>
@@ -318,99 +315,66 @@
         <h2>当前仓库中的角色</h2>
         <p>
           仓库的 <code>extensions/subagent/agents/*.md</code> 是安装源；执行
-          <code>./install.sh</code> 后会复制到
-          <code>~/.pi/agent/agents/</code>（或
-          <code>PI_CODING_AGENT_DIR/agents/</code
-          >），插件运行时从那里重新发现角色。
+          <code>./install.sh</code> 后复制到 <code>~/.pi/agent/agents/</code>，插件运行时从那里发现角色。
         </p>
         <div class="table-wrap">
           <table>
             <thead>
-              <tr>
-                <th>角色</th>
-                <th>职责</th>
-                <th>当前模型</th>
-                <th>显式工具限制</th>
-              </tr>
+              <tr><th>角色</th><th>用途</th><th>工具</th><th>仓库默认模型</th></tr>
             </thead>
             <tbody>
-              <tr>
-                <td><code>scout</code></td>
-                <td>
-                  快速勘察代码库，产出可交接的压缩上下文、关键代码与入口。
-                </td>
-                <td><code>openai-codex/gpt-5.6-luna</code></td>
-                <td><code>read, grep, find, ls, bash</code></td>
-              </tr>
-              <tr>
-                <td><code>planner</code></td>
-                <td>
-                  基于需求和勘察结果输出实施计划；提示词要求只读、不修改。
-                </td>
-                <td><code>openai-codex/gpt-5.6-sol</code></td>
-                <td><code>read, grep, find, ls</code></td>
-              </tr>
-              <tr>
-                <td><code>reviewer</code></td>
-                <td>
-                  审查质量、安全性和可维护性；提示词要求 Bash 仅用于只读 Git
-                  命令。
-                </td>
-                <td><code>openai-codex/gpt-5.6-sol</code></td>
-                <td><code>read, grep, find, ls, bash</code></td>
-              </tr>
-              <tr>
-                <td><code>worker</code></td>
-                <td>通用执行者，完成委派工作并报告变更文件和注意事项。</td>
-                <td><code>openai-codex/gpt-5.6-sol</code></td>
-                <td><code>read, bash, edit, write, lsp_diagnostics</code></td>
-              </tr>
+              <tr><td><code>scout</code></td><td>快速侦察代码库，返回压缩后的上下文</td><td>read, grep, find, ls, bash</td><td><code>openai-codex/gpt-5.6-luna</code></td></tr>
+              <tr><td><code>planner</code></td><td>根据上下文和需求制定实现计划</td><td>read, grep, find, ls</td><td><code>openai-codex/gpt-5.6-sol</code></td></tr>
+              <tr><td><code>reviewer</code></td><td>代码审查，关注质量与安全</td><td>read, grep, find, ls, bash</td><td><code>openai-codex/gpt-5.6-sol</code></td></tr>
+              <tr><td><code>worker</code></td><td>通用子代理，完整能力</td><td>全部默认工具</td><td><code>openai-codex/gpt-5.6-sol</code></td></tr>
             </tbody>
           </table>
         </div>
         <p class="small">
-          “只读”是角色提示词和工具配置约束，不是操作系统沙箱。尤其不要把不可信项目中的项目级角色当作安全边界。
+          “只读”是角色提示词和工具配置上的约束，不是操作系统沙箱。项目级角色（<code>.pi/agents/</code>）只在
+          <code>agentScope</code> 为 <code>"project"</code> 或 <code>"both"</code> 时使用，并且运行前一定会先确认。
         </p>
       </section>
 
       <section>
-        <h2>三种调用模式</h2>
-        <div class="grid">
-          <article class="card span-4">
-            <h3>Single：一个角色，一个任务</h3>
-            <pre><code>{
-  "agent": "scout",
-  "task": "找出认证相关代码"
-}</code></pre>
-            <p>适合一次性检索、审查或独立实现。</p>
-          </article>
-          <article class="card span-4">
-            <h3>Parallel：多个任务并行</h3>
-            <pre><code>{
-  "tasks": [
-    { "agent": "scout", "task": "查模型层" },
-    { "agent": "scout", "task": "查鉴权层" }
-  ]
-}</code></pre>
-            <p>最多 8 个任务，同时最多运行 4 个子进程；结果按任务汇总。</p>
-          </article>
-          <article class="card span-4">
-            <h3>Chain：逐步交接</h3>
-            <pre><code>{
-  "chain": [
-    { "agent": "scout", "task": "研究 X" },
-    { "agent": "planner", "task": "基于以下结果制订计划：\n{previous}" }
-  ]
-}</code></pre>
-            <p>
-              每一步的最终文本替换下一步任务中的所有
-              <code>{previous}</code>；任一步失败即停止。
-            </p>
-          </article>
+        <h2>调用方式</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>模式</th><th>参数</th><th>行为</th></tr></thead>
+            <tbody>
+              <tr><td>单个</td><td><code>{ agent, task }</code></td><td>一个角色执行一个任务</td></tr>
+              <tr><td>并行</td><td><code>{ tasks: [...] }</code></td><td>最多 8 个任务，同时最多 4 个</td></tr>
+              <tr><td>链式</td><td><code>{ chain: [...] }</code></td><td>依次执行，<code>{previous}</code> 替换为上一步答案；任一步失败或被停止就结束</td></tr>
+            </tbody>
+          </table>
         </div>
-        <div class="note warning">
-          <strong>并行写入警告：</strong
-          >并行任务可以使用相同的工作目录。若它们都会改同一文件，插件不会替你做跨子进程的冲突协调；并行模式更适合只读勘察或互不重叠的任务。
+        <ul>
+          <li><strong>前台（同步）：</strong>主代理等待，工具行实时显示每个子代理的当前动作、耗时和输出 token。</li>
+          <li>
+            <strong>后台（异步）：</strong>加 <code>async: true</code>，工具立即返回任务 ID。完成后结果以 steer
+            方式送回：主代理忙时在下一次模型调用前收到，空闲时自动开始新的回复。最多同时 4 个后台任务，需要 TUI 或 RPC 会话。
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>运行中的交互</h2>
+        <p>只要有子代理在运行，输入框下方就会列出它们：</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>按键</th><th>位置</th><th>作用</th></tr></thead>
+            <tbody>
+              <tr><td><code>↓</code></td><td>空的输入框</td><td>进入列表</td></tr>
+              <tr><td><code>↑</code> <code>↓</code></td><td>列表</td><td>选择；在第一项按 <code>↑</code> 回到输入框</td></tr>
+              <tr><td><code>Enter</code></td><td>列表</td><td>打开实时对话记录（任务、思考、工具调用、结果、流式答案）</td></tr>
+              <tr><td><code>x</code> <code>x</code></td><td>列表或对话记录</td><td>停止选中的子代理（3 秒内按两次）</td></tr>
+              <tr><td><code>Esc</code></td><td>列表</td><td>回到输入框，不会中断主代理</td></tr>
+              <tr><td>其他键</td><td>列表</td><td>回到输入框并正常输入</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note">
+          <strong>停止只影响这一个子代理：</strong>并行中的其他任务继续，链式在这一步结束，主代理收到“已被用户停止”的结果。已经做出的改动不会回滚。
         </div>
       </section>
 
@@ -419,298 +383,56 @@
         <div class="flow" aria-label="执行流程">
           <div>主代理调用<br /><code>subagent</code> 工具</div>
           <div class="arrow">→</div>
-          <div>合并用户级与<br />项目级角色</div>
+          <div>校验模式、角色<br />与项目角色确认</div>
           <div class="arrow">→</div>
-          <div>校验执行模式<br />与角色名称</div>
+          <div>启动 <code>pi</code> 子进程<br />并保存会话</div>
           <div class="arrow">→</div>
-          <div>启动独立的<br /><code>pi</code> 子进程</div>
+          <div>解析 JSON 事件<br />刷新工具行与面板</div>
           <div class="arrow">→</div>
-          <div>解析 JSON 事件<br />并流式更新 TUI</div>
-          <div class="arrow">→</div>
-          <div>把最终结果<br />返回给主代理</div>
+          <div>写入元数据<br />返回或送回结果</div>
         </div>
         <ol>
-          <li>
-            <strong>发现角色。</strong><code>discoverAgents()</code>
-            始终读取用户级角色和从当前目录向上找到的最近项目级
-            <code>.pi/agents/*.md</code>；缺少 <code>name</code> 或
-            <code>description</code> 的文件会被忽略。
-          </li>
-          <li>
-            <strong>选择唯一模式。</strong>提供 single、parallel、chain
-            中的一个。角色名不存在时，返回可用角色列表。
-          </li>
-          <li>
-            <strong>应用覆盖规则。</strong
-            >用户级和项目级角色自动合并；同名时项目级定义覆盖用户级定义，不需要作用域参数或额外确认。
-          </li>
-          <li>
-            <strong>构造子进程。</strong>基础参数为
-            <code>--mode json -p --no-session</code>；受控扩展角色会附加
-            <code>--no-extensions</code>，并为白名单逐项附加
-            <code>--extension</code>；有模型时附加
-            <code>--model</code>，有工具列表时附加
-            <code>--tools</code>。角色系统提示词先写入权限为
-            <code>0600</code> 的临时文件，再经
-            <code>--append-system-prompt</code> 加载。
-          </li>
-          <li>
-            <strong>运行与收集。</strong>子进程在
-            <code>cwd</code>
-            参数指定的目录运行，否则使用父代理的当前目录。插件逐行解析 stdout 的
-            JSON
-            事件，收集助手消息、工具结果、轮次、token、缓存用量、费用和实际模型。
-          </li>
-          <li>
-            <strong>返回与展示。</strong>返回最后一条助手文本；chain
-            将该文本传给下一步，parallel
-            为每个任务生成小结。并行时给主代理看的每个任务输出上限为 50
-            KiB，完整结果仍保存在工具详情中。
-          </li>
+          <li>子进程参数为 <code>--mode json -p --session-dir &lt;目录&gt; --session-id &lt;运行 ID&gt; --name …</code>，以及角色的模型、思考级别、工具和追加系统提示词。</li>
+          <li>子进程输出的 <code>message_*</code>、<code>tool_execution_*</code> 等事件实时更新当前动作、用量和对话记录。</li>
+          <li>运行开始和结束时各写一次 <code>&lt;运行 ID&gt;.meta.json</code>；子会话文件由子进程自己边运行边写入。</li>
         </ol>
-        <p>
-          按 Ctrl+O 可展开 TUI 中的子代理结果：查看完整任务、工具调用、Markdown
-          最终输出及各任务的
-          token/费用/模型统计。折叠状态会只显示最近项目（single 最多 10
-          条，chain/parallel 每项最多 5 条）。
-        </p>
       </section>
 
       <section>
-        <h2>上下文、文件与取消</h2>
-        <div class="grid">
-          <article class="card span-6">
-            <h3>真正隔离的内容</h3>
-            <ul>
-              <li>
-                子代理是另一个 <code>pi</code> 进程，并以
-                <code>--no-session</code> 启动。
-              </li>
-              <li>
-                它不会继承主对话的完整上下文；只有任务文本、角色提示词和该子进程自己的
-                Pi 配置进入上下文。
-              </li>
-              <li>
-                chain 是显式交接：仅上一步“最后一条助手文本”会替换
-                <code>{previous}</code>。
-              </li>
-            </ul>
-          </article>
-          <article class="card span-6">
-            <h3>没有隔离的内容</h3>
-            <ul>
-              <li>
-                工作目录、文件系统、Git 工作区、环境权限仍然由本机 Pi
-                子进程共享。
-              </li>
-              <li>角色的 <code>cwd</code> 可逐任务覆盖默认目录。</li>
-              <li>用户级 Pi 配置、认证和已安装扩展会影响子进程的可用能力。</li>
-            </ul>
-          </article>
-        </div>
-        <p>
-          主代理取消时，AbortSignal 会发送 <code>SIGTERM</code> 给子进程；5
-          秒后如仍未结束则发送 <code>SIGKILL</code>。非零退出码、<code
-            >stopReason: error</code
-          >
-          或 <code>aborted</code> 都会被视为失败；chain 在失败步骤处终止。
-        </p>
-      </section>
-
-      <section>
-        <h2>扩展加载策略</h2>
-        <p>
-          <code>tools</code>
-          只决定模型能调用哪些工具；它不会阻止已加载扩展的命令、事件处理器或系统提示词注入。角色可用
-          YAML <code>extensions</code> 控制子 Pi 实际加载的扩展：
-        </p>
-        <pre><code>---
-# 未配置：保持现有自动扩展发现
-
-# 不自动加载任何扩展
-extensions: none
-
-# 禁用自动发现后，只加载白名单
-extensions:
-  - npm:pi-lens
-  - ../extensions/my-extension.ts
----</code></pre>
+        <h2>历史记录与存储</h2>
+        <pre><code>~/.pi/agent/subagent-sessions/&lt;主会话 ID&gt;/
+├── &lt;时间戳&gt;_&lt;运行 ID&gt;.jsonl   # 子会话
+└── &lt;运行 ID&gt;.meta.json        # 角色、任务、模式、状态、时间、用量、答案</code></pre>
         <ul>
-          <li>缺少 <code>extensions</code> 字段时，完全保持原有行为。</li>
-          <li><code>none</code> 传入 <code>--no-extensions</code>。</li>
-          <li>
-            YAML 字符串数组同样传入 <code>--no-extensions</code>，并为每个
-            source 传入 <code>--extension</code>；<code>./</code>、<code
-              >../</code
-            >
-            与绝对本地路径相对于角色 Markdown 文件解析，<code>npm:</code>/<code
-              >git:</code
-            >
-            source 原样交给 Pi。
-          </li>
-          <li>
-            配置格式无效会使本次角色调用失败，绝不会静默退回为加载全部扩展。
-          </li>
+          <li><code>/subagent-history</code> 列出当前会话的全部运行（包括重启前的），回车查看完整记录。</li>
+          <li>文件永久保留，需要时手动删除目录。它们包含子代理读过的内容，不会出现在 <code>/resume</code> 列表里。</li>
+          <li>Pi 在运行结束前退出时，记录显示为“中断”；后台任务不会在重启后继续。</li>
         </ul>
-        <div class="note danger">
-          <strong>信任边界：</strong>显式扩展会在子 Pi
-          启动时执行代码。项目级角色及其 extension source 只能来自可信仓库；无
-          UI 模式下仍不会出现项目角色确认框。
-        </div>
-        <p>
-          此项仅控制扩展；skills、prompt templates 和
-          <code>AGENTS.md</code>
-          等资源不受影响。折叠结果显示扩展策略，展开结果显示完整白名单
-          source，便于审计。
-        </p>
-      </section>
-
-      <section>
-        <h2>角色来源与覆盖规则</h2>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>级别</th>
-                <th>读取位置</th>
-                <th>发现方式</th>
-                <th>覆盖规则</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><code>user</code></td>
-                <td><code>~/.pi/agent/agents/*.md</code></td>
-                <td>每次调用自动读取</td>
-                <td>作为基础角色集合</td>
-              </tr>
-              <tr>
-                <td><code>project</code></td>
-                <td>从当前目录向上找最近的 <code>.pi/agents/*.md</code></td>
-                <td>每次调用自动读取</td>
-                <td>同名时覆盖用户级角色</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="note">
-          <strong>固定规则：</strong
-          >两级角色始终自动合并。工具不再暴露作用域选择或项目级确认参数。合并后的角色名称会直接注入
-          <code>subagent</code>
-          工具描述，不附带较长的角色说明；扩展会在会话启动及每次主代理运行前检测名称集合并按需刷新。
-        </div>
       </section>
 
       <section>
         <h2>模型：能否选择，以及怎样选择</h2>
         <p>
-          <span class="yesno">能选择。</span
-          >当前实现的选择粒度是<strong>角色级</strong>，不是某一次工具调用级。插件读取角色
-          Markdown 的 YAML frontmatter：
+          <span class="yesno">可以。</span>运行 <code>/subagent</code>，依次选择用户角色、当前可用的模型和该模型支持的思考级别，结果写回角色文件的
+          <code>model</code> 与 <code>thinkingLevel</code>，下一次运行即生效。
         </p>
-        <pre><code>---
-name: scout
-description: Fast codebase recon
-tools: read, grep, find, ls, bash
-model: openai-codex/gpt-5.6-luna
----
-
-这里是该角色附加给子 Pi 的系统提示词。</code></pre>
         <ul>
-          <li>
-            存在 <code>model</code> 时：子进程会接收
-            <code>--model &lt;该值&gt;</code>。例如当前 scout 使用
-            Luna，其余三个内置角色使用 Sol。
-          </li>
-          <li>
-            没有 <code>model</code> 时：插件不传
-            <code>--model</code>，子进程按自己的 Pi
-            默认模型配置运行；当前仓库的默认值是
-            <code>openai-codex/gpt-5.6-sol</code>。
-          </li>
-          <li>
-            当前 <code>subagent</code> 参数 schema 没有
-            <code>model</code> 字段。因此不能在一次调用中写
-            <code>{ agent: "scout", model: "..." }</code> 来覆盖 scout 的模型。
-          </li>
-          <li>
-            模型名必须是当前 Pi 可识别且已具备认证的模型。仓库的
-            <code>model-overrides.json</code> 目前包含
-            <code>gpt-5.6-luna</code>、<code>gpt-5.6-sol</code>、<code
-              >gpt-5.6-terra</code
-            >
-            的覆盖配置。
-          </li>
+          <li>没有设置 <code>model</code> 的角色继承主代理的模型和思考级别。</li>
+          <li>设置了 <code>model</code> 的角色保留自己的思考级别，不继承主代理的。</li>
+          <li>重新运行安装脚本会用仓库里的角色文件覆盖已安装的，长期修改请写进仓库。</li>
         </ul>
-        <h3>修改现有角色的模型</h3>
-        <pre><code># 编辑仓库源文件
-# extensions/subagent/agents/scout.md
-model: openai-codex/gpt-5.6-terra
-
-# 安装到实际 Pi 配置目录
-./install.sh</code></pre>
-        <p>
-          角色会在每次 subagent
-          调用时重新发现；安装后的角色文件修改会在下一次调用中生效。若修改的是仓库源文件，先执行安装脚本复制到实际
-          Pi 配置目录。模型或凭据不可用时，子进程会失败，错误会返回给主代理。
-        </p>
-        <h3>新增一个固定模型的角色</h3>
-        <pre><code>---
-name: deep-reviewer
-description: Uses Terra for a deeper code review
-tools: read, grep, find, ls, bash
-model: openai-codex/gpt-5.6-terra
----
-
-只读检查变更；按严重性报告问题和路径、行号。</code></pre>
-        <p>
-          将其放到仓库的
-          <code>extensions/subagent/agents/deep-reviewer.md</code>
-          并安装，之后以
-          <code>agent: "deep-reviewer"</code> 调用即可。也可直接放到项目的
-          <code>.pi/agents/</code>
-          中；插件会自动发现，若与用户级角色同名则使用项目级定义。
-        </p>
-        <div class="note">
-          <strong>如果需要“每次调用临时指定模型”：</strong
-          >当前插件尚未提供这一能力。需要扩展工具 schema（增加可选
-          <code>model</code>）并在 <code>runSingleAgent()</code> 中让该值优先于
-          <code>agent.model</code>；这会改变插件接口，不能仅通过调用参数实现。
-        </div>
       </section>
 
       <section>
         <h2>预置工作流模板</h2>
-        <p>
-          <code>extensions/subagent/prompts/</code>
-          中的模板不是新的子代理类型；它们只是指导主代理用 chain
-          模式调用前述角色。
-        </p>
         <div class="table-wrap">
           <table>
-            <thead>
-              <tr>
-                <th>命令</th>
-                <th>链路</th>
-                <th>用途</th>
-              </tr>
-            </thead>
+            <thead><tr><th>命令</th><th>流程</th></tr></thead>
             <tbody>
-              <tr>
-                <td><code>/scout-and-plan &lt;任务&gt;</code></td>
-                <td>scout → planner</td>
-                <td>只调研和规划，不实施。</td>
-              </tr>
-              <tr>
-                <td><code>/implement &lt;任务&gt;</code></td>
-                <td>scout → planner → worker</td>
-                <td>先建立上下文和计划，再实现。</td>
-              </tr>
-              <tr>
-                <td><code>/implement-and-review &lt;任务&gt;</code></td>
-                <td>worker → reviewer → worker</td>
-                <td>实现、审查、根据反馈修正。</td>
-              </tr>
+              <tr><td><code>/scout</code></td><td>用 scout 探索代码库</td></tr>
+              <tr><td><code>/scout-and-plan</code></td><td>scout 收集上下文 → planner 出计划（不实现）</td></tr>
+              <tr><td><code>/implement</code></td><td>scout → planner → worker 实现</td></tr>
+              <tr><td><code>/implement-and-review</code></td><td>worker 实现 → reviewer 审查 → worker 按意见修改</td></tr>
             </tbody>
           </table>
         </div>
@@ -718,38 +440,18 @@ model: openai-codex/gpt-5.6-terra
 
       <section>
         <h2>常见问题</h2>
-        <h3>为什么提示 Unknown agent？</h3>
+        <h3>子代理和主代理隔离了什么？</h3>
+        <p>只隔离对话上下文。文件系统、项目目录和凭据都是共享的；子进程会加载你的用户扩展。</p>
+        <h3>停止子代理会撤销它的改动吗？</h3>
+        <p>不会。停止只是结束进程，已经写入的文件保持原样。</p>
+        <h3>为什么按 ↓ 没反应？</h3>
+        <p>只有在没有子代理运行时，或输入框里已经有文字时才会这样。输入框非空时，<code>↓</code> 留给编辑器自己使用。</p>
+        <h3>手动测试时怎么只加载这个插件？</h3>
         <p>
-          检查角色文件是否已安装到用户级 agent 目录或最近的项目级
-          <code>.pi/agents/</code>、YAML 是否有非空 <code>name</code> 与
-          <code>description</code>，以及调用名是否一致。
-        </p>
-        <h3>为什么子代理没有使用当前主代理的模型？</h3>
-        <p>
-          它是新的 Pi 进程。模型优先来自角色的
-          <code>model</code> 字段；没有该字段才读取子进程自己的默认 Pi
-          配置。主会话当前临时选中的模型不会作为参数自动传递。
-        </p>
-        <h3>为什么 planner/reviewer 仍可能改文件？</h3>
-        <p>
-          它们的角色提示词要求只读，且 planner 不暴露 Bash、reviewer 的 Bash
-          被提示为只读；但这不是沙箱。应搭配可信模型、最小工具集和必要的外部权限控制。
-        </p>
-        <h3>为什么 chain 的下一步信息不完整？</h3>
-        <p>
-          只有前一步最后一条助手文本会传递。让前一步按结构化、压缩格式输出关键路径、代码片段和结论；需要保留原任务时，也应在后一步任务文本中显式写入。
+          使用 <code>pi --no-extensions -e ./extensions/subagent/index.ts</code>。直接传目录的话，因为目录里有
+          <code>prompts/</code>，Pi 会把它当成资源包，只加载提示词。
         </p>
       </section>
-
-      <footer>
-        依据本仓库的
-        <code>extensions/subagent/index.ts</code
-        >、<code>extensions/subagent/tool.ts</code>、<code>extensions/subagent/task-manager.ts</code>、<code>extensions/subagent/schema.ts</code>、<code>extensions/subagent/types.ts</code>、<code>extensions/subagent/runner.ts</code>、<code>extensions/subagent/execution.ts</code>、<code>extensions/subagent/render.ts</code>、<code>extensions/subagent/agents.ts</code>、<code>extensions/subagent/agents/*.md</code>、<code>extensions/subagent/prompts/*.md</code>、<code
-          >install.sh</code
-        >
-        与 Pi 0.82.1 扩展文档整理。本文描述当前实现，不替代 Pi
-        的权限、认证或项目可信任机制。
-      </footer>
     </main>
   </body>
 </html>

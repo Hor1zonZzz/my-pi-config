@@ -7,7 +7,7 @@ Files adapted or copied from Pi's official extension examples include:
 - `extensions/notify.ts`
 - `extensions/plan-mode/`
 - `extensions/questionnaire.ts`
-- `extensions/subagent/`
+- `extensions/subagent/agents.ts` and parts of `extensions/subagent/runner.ts` (the rest of `extensions/subagent/` was rewritten for this repository)
 - `extensions/subagent/agents/`
 - `extensions/subagent/prompts/`
 

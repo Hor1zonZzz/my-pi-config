@@ -1,246 +1,209 @@
-# Subagent Example
+# Subagent
 
-Delegate tasks to specialized subagents with isolated context windows.
+English | [中文](README.zh-CN.md)
 
-## Features
+Delegate scoped tasks to specialized agents. Each subagent is a separate `pi`
+process with its own context window. It can run in the foreground (the parent
+waits) or in the background (`async: true`). Its full session is saved so you
+can read it later, and a panel below the editor lets you watch or stop running
+subagents.
 
-- **Isolated context**: Each subagent runs in a separate `pi` process
-- **Streaming output**: See tool calls and progress as they happen
-- **Parallel streaming**: All parallel tasks stream updates simultaneously
-- **Markdown rendering**: Final output rendered with proper formatting (expanded view)
-- **Usage tracking**: Shows turns, tokens, cost, and context usage per agent
-- **Async dispatch**: `async: true` returns a job ID immediately; completion steers the parent and wakes it if idle
-- **Abort support**: Foreground cancellation kills subagent processes; `/subagent-jobs cancel <id|all>` cancels background jobs
-- **Interactive configuration**: `/subagent` selects a user agent, an available model, and a supported thinking level
+```text
+  ⠼  subagent  parallel · 1/3 done                                     12s · ↓1.2k
+     ├ ● scout   Find the models …                                     8s · ↓900
+     ├ ⠼ scout   Find the providers …                read src/providers.ts · 12s
+     └ · worker  Update the docs …                                        queued
+
+  ─ ⠼ Running subagent · 12s ──────────────────────────────────────────────────
+
+  ─ gpt-5.6-sol · medium ─────────────────────────────────────── context 42% ──
+  ▾ 2 subagents running  ·  ↑↓ select · enter view · x stop · esc back
+  › ⠼ scout  Find the providers …                    read src/providers.ts · 12s
+    ⠼ worker bg  Update the docs …                              $ npm test · 3s
+```
+
+This is this repository's own implementation. Agent discovery (`agents.ts`), the
+sample agents, the workflow prompts, and parts of the process runner come from
+Pi's official subagent example; the rest was rewritten.
 
 ## Structure
 
-```
+```text
 subagent/
-├── README.md            # This file
-├── index.ts             # The extension (entry point)
-├── agents.ts            # Agent discovery logic
-├── agents/              # Sample agent definitions
-│   ├── scout.md         # Fast recon, returns compressed context
-│   ├── planner.md       # Creates implementation plans
-│   ├── reviewer.md      # Code review
-│   └── worker.md        # General-purpose (full capabilities)
-└── prompts/             # Workflow presets (prompt templates)
-    ├── implement.md     # scout -> planner -> worker
-    ├── scout-and-plan.md    # scout -> planner (no implementation)
-    └── implement-and-review.md  # worker -> reviewer -> worker
+├── index.ts        # Wiring: tool, commands, panel, overlays, lifecycle
+├── tool.ts         # The subagent tool: modes, sync/async, results
+├── runner.ts       # Starts a child pi, parses its JSON events, saves metadata
+├── runs.ts         # Run snapshots and the in-memory registry of this process's runs
+├── store.ts        # Child session directory, metadata, transcript reading
+├── background.ts   # Background jobs and steer delivery
+├── panel.ts        # List below the editor and its keyboard handling
+├── viewer.ts       # Live transcript view and /subagent-history
+├── render.ts       # Tool rows, completion cards, panel rows
+├── format.ts       # Pure formatting helpers
+├── config.ts       # /subagent model and thinking-level configuration
+├── agents.ts       # Agent discovery and frontmatter updates
+├── agents/         # scout, planner, reviewer, worker
+└── prompts/        # /scout, /implement, /scout-and-plan, /implement-and-review
 ```
 
-## Installation
+## Calling subagents
 
-From the repository root, symlink the files:
+The tool takes exactly one mode:
 
-```bash
-# Symlink the extension (must be in a subdirectory with index.ts)
-mkdir -p ~/.pi/agent/extensions/subagent
-ln -sf "$(pwd)/packages/coding-agent/examples/extensions/subagent/index.ts" ~/.pi/agent/extensions/subagent/index.ts
-ln -sf "$(pwd)/packages/coding-agent/examples/extensions/subagent/agents.ts" ~/.pi/agent/extensions/subagent/agents.ts
+| Mode | Parameters | Behavior |
+| --- | --- | --- |
+| Single | `{ agent, task }` | One agent, one task |
+| Parallel | `{ tasks: [...] }` | Up to 8 tasks, at most 4 running at once |
+| Chain | `{ chain: [...] }` | Sequential; `{previous}` is replaced by the prior step's answer |
 
-# Symlink agents
-mkdir -p ~/.pi/agent/agents
-for f in packages/coding-agent/examples/extensions/subagent/agents/*.md; do
-  ln -sf "$(pwd)/$f" ~/.pi/agent/agents/$(basename "$f")
-done
+Each mode runs in the foreground by default. Add `async: true` to run it in the
+background:
 
-# Symlink workflow prompts
-mkdir -p ~/.pi/agent/prompts
-for f in packages/coding-agent/examples/extensions/subagent/prompts/*.md; do
-  ln -sf "$(pwd)/$f" ~/.pi/agent/prompts/$(basename "$f")
-done
+```json
+{ "agent": "scout", "task": "Find authentication entry points.", "async": true }
 ```
 
-## Security Model
+- **Foreground (sync).** The tool row updates live while the parent waits. The
+  result is the subagent's answer, or for parallel runs one section per task
+  (each capped at 50 KB).
+- **Background (async).** The call returns a job ID immediately. When the job
+  finishes, the result arrives as a completion message delivered with
+  `deliverAs: "steer"` and `triggerTurn: true`: a busy parent receives it before
+  its next model call, an idle parent starts a new response. The parent should
+  not repeat or poll the delegated work. At most 4 background jobs run at once;
+  completion text is capped at 32 KB and 1,000 lines, and the full result is in
+  the message details. Async needs a long-lived TUI or RPC session; print and
+  JSON modes reject it.
 
-This tool executes a separate `pi` subprocess with a delegated system prompt and tool/model configuration.
+Project-local agents (`.pi/agents/*.md`) run only with `agentScope: "project"` or
+`"both"`, and the tool always asks for confirmation first, even in trusted
+projects, unless the call sets `confirmProjectAgents: false`.
 
-**Project-local agents** (`.pi/agents/*.md`) are repo-controlled prompts that can instruct the model to read files, run bash commands, etc.
+## Watching and stopping running subagents
 
-**Default behavior:** Only loads **user-level agents** from `~/.pi/agent/agents`.
+While any subagent runs (foreground or background), a list appears below the
+editor with each run's current action and elapsed time.
 
-To enable project-local agents, pass `agentScope: "both"` (or `"project"`). Only do this for repositories you trust.
+| Key | Where | Action |
+| --- | --- | --- |
+| `↓` | empty prompt | Move into the list |
+| `↑` `↓` | list | Select; `↑` on the first row returns to the prompt |
+| `Enter` | list | Open the live transcript |
+| `x` `x` | list or transcript | Stop the selected run (press twice within 3 s) |
+| `Esc` | list | Return to the prompt without interrupting the main agent |
+| any other key | list | Return to the prompt and type normally |
 
-When running interactively, the tool prompts for confirmation before running project-local agents. Set `confirmProjectAgents: false` to disable.
+`↓` is taken only when the prompt is empty and has focus, so history navigation
+and multi-line editing keep working. Stopping a run affects only that run: other
+parallel tasks keep going, a chain stops at that step, and the tool or job
+reports the run as stopped. Work the subagent already did is not rolled back.
 
-## Usage
+The transcript view shows the task, thinking (first lines; `t` shows all), tool
+calls, tool results, and the answer as it streams. It follows new output until
+you scroll up; `G` or `End` follows again. Keys: `↑↓`, `PgUp`/`PgDn`, `g`/`G`,
+`t`, `x x`, `Esc`.
 
-### Configure a user agent
+## History
+
+```text
+/subagent-history
+```
+
+Lists every run of the current session, including runs from before `/reload` or
+a restart, newest first. `Enter` opens a transcript, `x x` stops a running one,
+`r` refreshes, `Esc` closes.
+
+Each run saves Pi's own session file plus a metadata file:
+
+```text
+<agent dir>/subagent-sessions/<parent session id>/
+├── <timestamp>_<run id>.jsonl   # the child session (written as it runs)
+└── <run id>.meta.json           # agent, task, mode, status, timing, usage, answer
+```
+
+The child is started with `--session-dir` and `--session-id` instead of
+`--no-session`. These files are kept permanently; delete the directory to free
+space. They contain whatever the subagent read, like any Pi session, and they do
+not appear in `/resume`. A run whose Pi process exited before it finished is
+shown as interrupted.
+
+`/subagent-jobs` opens the same list in the TUI. `/subagent-jobs cancel <id|all>`
+cancels background jobs from any mode.
+
+## Configuring agents
 
 ```text
 /subagent
 ```
 
-The command opens searchable agent, model, and thinking-level selectors. The model list is restricted to models currently available to Pi and, when configured, the current session's scoped models. The selected values are written directly to the user agent's Markdown frontmatter and apply on its next invocation without `/reload`.
+Opens searchable selectors for a user agent, a model available to the session
+(within the session's scoped models when configured), and a thinking level the
+model supports, then writes `model` and `thinkingLevel` to the agent's
+frontmatter. The change applies to the next run without `/reload`. Re-running
+this repository's installer replaces installed agent files with the repository
+copies, so move durable changes into `agents/` first.
 
-Re-running this repository's installer backs up and then replaces installed user agent files with the repository defaults, so make durable defaults in the repository before reinstalling.
+An agent without `model` inherits the parent's model and thinking level. An agent
+with `model` keeps its own thinking level.
 
-### Single agent
-```
-Use scout to find all authentication code
-```
-
-### Background execution
-
-Add `async: true` to any of the three tool modes (default: `false`):
-
-```json
-{
-  "agent": "scout",
-  "task": "Find authentication entry points and summarize their call relationships.",
-  "async": true
-}
-```
-
-The call returns a job ID after validation and any project-agent confirmation.
-The delegated task belongs to the subagent: the parent should only continue
-independent work. If none remains, it should end its turn without polling or
-repeating the task. Completion arrives automatically as a custom message through
-`pi.sendMessage(..., { deliverAs: "steer", triggerTurn: true })`: while busy, Pi
-receives it after the current assistant turn's tools finish, before the next
-model call; while idle, Pi starts a new response. No extra wait tool is needed.
-This is a coordination instruction, not a lock on files or a guarantee against
-model duplication.
-
-For `tasks`, the batch reports once all tasks finish (including individual
-failures). For `chain`, steps still run sequentially with `{previous}` and the
-chain reports at completion or the first failure. The status bar counts active
-background jobs; final messages can be expanded to inspect full agent output.
-Background jobs do not keep updating a tool call that has already returned.
-
-```text
-/subagent-jobs
-/subagent-jobs cancel subagent-<id>
-/subagent-jobs cancel all
-```
-
-The list shows active IDs and delegated tasks. Cancellation is reported to the
-parent; changes already made by a cancelled worker are not rolled back.
-Cancelling the parent turn does not cancel a background job. Session replacement,
-reload, shutdown, and tree navigation cancel background jobs and suppress their
-late results. Jobs are in memory and do not resume after a restart.
-
-Async execution requires a long-lived TUI or RPC session. Single-shot print/JSON
-mode rejects `async: true` because it exits when the parent finishes. This also
-prevents a single-shot child from starting background work it cannot collect.
-At most 4 background jobs are active at once; each parallel job retains the
-existing 8-task / 4-concurrent-child limits. Completion text is capped at 32 KB
-and 1,000 lines; full agent results remain in message details for expanded display.
-
-Compatibility checked against Pi **0.86.0**. Run the deterministic lifecycle and
-subprocess tests with Node 24 and Pi 0.86.0 dependencies resolvable from this repo:
-
-```bash
-node --test extensions/subagent/async.test.ts
-```
-
-### Parallel execution
-```
-Run 2 scouts in parallel: one to find models, one to find providers
-```
-
-### Chained workflow
-```
-Use a chain: first have scout find the read tool, then have planner suggest improvements
-```
-
-### Workflow prompts
-```
-/scout authentication flow
-/implement add Redis caching to the session store
-/scout-and-plan refactor auth to support OAuth
-/implement-and-review add input validation to API endpoints
-```
-
-## Tool Modes
-
-| Mode | Parameter | Description |
-|------|-----------|-------------|
-| Single | `{ agent, task }` | One agent, one task |
-| Parallel | `{ tasks: [...] }` | Multiple agents run concurrently (max 8, 4 concurrent) |
-| Chain | `{ chain: [...] }` | Sequential with `{previous}` placeholder |
-
-## Output Display
-
-**Collapsed view** (default):
-- Status icon (✓/✗/⏳) and agent name
-- Last 5-10 items (tool calls and text)
-- Usage stats: `3 turns ↑input ↓output RcacheRead WcacheWrite $cost ctx:contextTokens model`
-
-**Expanded view** (Ctrl+O):
-- Full task text
-- All tool calls with formatted arguments
-- Final output rendered as Markdown
-- Per-task usage (for chain/parallel)
-
-**Parallel mode streaming**:
-- Shows all tasks with live status (⏳ running, ✓ done, ✗ failed)
-- Updates as each task makes progress
-- Shows "2/3 done, 1 running" status
-- Returns each completed task's final output to the parent model, capped at 50 KB per task
-- Returns failure diagnostics from stderr/error messages when a child exits before producing output
-
-**Tool call formatting** (mimics built-in tools):
-- `$ command` for bash
-- `read ~/path:1-10` for read
-- `grep /pattern/ in ~/path` for grep
-- etc.
-
-## Agent Definitions
-
-Agents are markdown files with YAML frontmatter:
+## Agent definitions
 
 ```markdown
 ---
 name: my-agent
 description: What this agent does
 tools: read, grep, find, ls
-model: openai-codex/gpt-5.6-sol
-thinkingLevel: high
+model: "provider/model-id"
+thinkingLevel: "high"
 ---
 
-System prompt for the agent goes here.
+System prompt for the agent.
 ```
 
-`model` and `thinkingLevel` are optional. When `model` is omitted, the subagent inherits the dispatching session's active model; when both fields are omitted, it also inherits the dispatching thinking level. Legacy `model: provider/model:thinking` values remain valid and are normalized into separate fields the next time `/subagent` saves that agent.
+User agents live in `<agent dir>/agents/`, project agents in the nearest
+`.pi/agents/`.
 
-**Locations:**
-- `~/.pi/agent/agents/*.md` - User-level (always loaded)
-- `.pi/agents/*.md` - Project-level (only with `agentScope: "project"` or `"both"`)
+## Tool rows and messages
 
-Project agents override user agents with the same name when `agentScope: "both"`.
+Collapsed rows show one line per run: a status mark (spinner, `●` done, `✕`
+failed, `○` stopped, `·` queued), the agent and task, and the current action or
+duration and output tokens. `Ctrl+O` expands a row to show each run's task, tool
+calls, answer as Markdown, usage, and where its transcript is. Background
+completions appear as a card with the same layout. Rows from sessions recorded
+by the previous version of this extension still render.
 
-## Sample Agents
+## Compatibility and validation
 
-| Agent | Purpose | Model | Tools |
-|-------|---------|-------|-------|
-| `scout` | Fast codebase recon | Configurable | read, grep, find, ls, bash |
-| `planner` | Implementation plans | Configurable | read, grep, find, ls |
-| `reviewer` | Code review | Configurable | read, grep, find, ls, bash |
-| `worker` | General-purpose | Configurable | (all default) |
+Verified with Pi 0.87.1. The extension depends on:
 
-## Workflow Prompts
+- `pi --mode json -p` with `--session-dir`, `--session-id`, `--name`, `--model`,
+  `--thinking`, `--tools`, and `--append-system-prompt`, and the JSON-mode events
+  `message_start`, `message_update`, `message_end`, `tool_execution_*`,
+  `auto_retry_start`, and `compaction_start`;
+- the session file name `<timestamp>_<session id>.jsonl` and `message` entries;
+- `ctx.ui.onTerminalInput()` running before the focused component, the concrete
+  TUI's `getFocusedComponent()`, and Pi's main editor carrying `actionHandlers`
+  (how the panel tells the prompt apart from dialogs);
+- `ctx.ui.setWidget(..., { placement: "belowEditor" })` and overlay
+  `ctx.ui.custom()`.
 
-| Prompt | Flow |
-|--------|------|
-| `/scout <query>` | scout |
-| `/implement <query>` | scout → planner → worker |
-| `/scout-and-plan <query>` | scout → planner |
-| `/implement-and-review <query>` | worker → reviewer → worker |
+Tests run with Node 24 against the installed Pi packages. Use a disposable copy
+whose `node_modules/@earendil-works` and `node_modules/typebox` point at the
+installed packages:
 
-## Error Handling
+```sh
+node --test subagent/*.test.ts
+```
 
-- **Exit code != 0**: Tool returns error with stderr/output
-- **stopReason "error"**: LLM error propagated with error message
-- **stopReason "aborted"**: User abort (Ctrl+C) kills subprocess, throws error
-- **Chain mode**: Stops at first failing step, reports which step failed
+They cover the runner with a fake child (session arguments, events, metadata,
+user stop versus parent abort, SIGKILL escalation), background jobs, the panel's
+key handling, rendering at widths from 1 to 160 columns, legacy details, the
+transcript and history views, and an end-to-end select → watch → stop → history
+flow.
 
-## Limitations
+For an interactive check, load the entry file directly. Passing the directory
+makes Pi treat it as a package because it contains `prompts/`:
 
-- Output truncated to last 10 items in collapsed view (expand to see all)
-- Parallel model-visible output is capped at 50 KB per task; full results remain in tool details
-- Agents discovered fresh on each invocation (allows `/subagent` changes to apply immediately)
-- Parallel mode limited to 8 tasks, 4 concurrent
+```sh
+pi --no-extensions -e ./extensions/subagent/index.ts
+```

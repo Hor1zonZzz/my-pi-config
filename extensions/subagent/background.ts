@@ -22,7 +22,8 @@ export class BackgroundJobs {
 	}
 
 	private updateStatus(): void {
-		if (this.context?.hasUI) {
+		// The TUI lists running subagents below the editor; other UIs get a status line.
+		if (this.context?.hasUI && this.context.mode !== "tui") {
 			this.context.ui.setStatus("subagent-background", this.jobs.size ? `subagents: ${this.jobs.size} running` : undefined);
 		}
 	}
@@ -37,7 +38,7 @@ export class BackgroundJobs {
 		return jobs.length;
 	}
 
-	start<T>(ctx: ExtensionContext, task: string, run: (signal: AbortSignal) => Promise<AgentToolResult<T> & { isError?: boolean }>): string {
+	start<T>(ctx: ExtensionContext, task: string, run: (signal: AbortSignal) => Promise<AgentToolResult<T> & { isError?: boolean; cancelled?: boolean }>): string {
 		if (this.stopped) throw new Error("Subagent extension is shutting down.");
 		if (this.jobs.size >= 4) throw new Error("At most 4 background subagent jobs may run at once. Wait for a completion.");
 		const generation = this.generation;
@@ -54,13 +55,14 @@ export class BackgroundJobs {
 		// Yield to let the dispatch tool return before even an immediate completion.
 		job.promise = new Promise<void>((resolve) => setTimeout(resolve, 0))
 			.then(async () => {
-				let result: (AgentToolResult<T> & { isError?: boolean }) | undefined;
+				let result: (AgentToolResult<T> & { isError?: boolean; cancelled?: boolean }) | undefined;
 				let status = "completed";
 				let output = "";
 				try {
 					job.controller.signal.throwIfAborted();
 					result = await run(job.controller.signal);
-					status = result.isError ? "failed" : "completed";
+					// A run stopped from the subagent panel reports cancelled rather than failed.
+					status = result.cancelled ? "cancelled" : result.isError ? "failed" : "completed";
 					output = result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
 				} catch (error) {
 					status = "failed";

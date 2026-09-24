@@ -1,4 +1,4 @@
-// @ts-nocheck -- Run with Node 24 and Pi 0.86.0 dependencies available.
+// @ts-nocheck -- Run with Node 24 and Pi 0.87.1 dependencies available.
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +7,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { BackgroundJobs } from "./background.ts";
 import register from "./index.ts";
+
+// Child sessions are written under the agent directory; keep them out of ~/.pi/agent.
+const agentDir = mkdtempSync(join(tmpdir(), "subagent-agent-"));
+process.env.PI_CODING_AGENT_DIR = agentDir;
+process.on("exit", () => rmSync(agentDir, { recursive: true, force: true }));
 
 async function until(predicate, timeout = 3000) {
 	const deadline = Date.now() + timeout;
@@ -143,7 +148,8 @@ if (task === 'stubborn') {
 		await t.test("async dispatch returns before result and does not keep using the tool update callback", async () => {
 			const controller = new AbortController();
 			const response = await execute({ agent: "scout", task: "slow", async: true }, controller.signal, () => assert.fail("stale update"));
-			assert.equal(response.details.status, "running");
+			assert.equal(response.details.dispatched, true);
+			assert.match(response.details.jobId, /^subagent-/);
 			assert.equal(h.messages.length, 0);
 			controller.abort(); // Ending/cancelling the dispatch call must not cancel detached work.
 			await until(() => h.messages.length === 1);

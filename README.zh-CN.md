@@ -6,7 +6,7 @@
 
 ## 包含内容
 
-- `settings.json` — 模型默认值与可安装的 Pi 包，包括 MCP 适配器与 Herdr 工具集成
+- `settings.json` — 模型默认值与可安装的 Pi 包，包括 MCP 适配器、Herdr 工具集成，以及 Pi Voice（本地语音转文字，提供录音快捷键和 `transcribe_file` 工具）
 - `model-overrides.json` — 受管理的、不含凭据的内置模型覆盖项
 - `extensions/` — 本地扩展；`extensions/subagent/` 同时持有其代理定义与工作流提示词
 - `prompts/` — 本地通用提示词模板，包括可手动选择是否探索仓库的 `/understand` 与 `/explore-understand`

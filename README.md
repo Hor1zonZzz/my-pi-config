@@ -6,7 +6,7 @@ English | [中文文档](README.zh-CN.md)
 
 ## Included
 
-- `settings.json` — model defaults and installable Pi packages, including the MCP adapter and the Herdr tool integration
+- `settings.json` — model defaults and installable Pi packages, including the MCP adapter, the Herdr tool integration, and Pi Voice (local speech-to-text with a recording shortcut and the `transcribe_file` tool)
 - `model-overrides.json` — managed, credential-free overrides for built-in models
 - `extensions/` — local extensions; `extensions/subagent/` also owns its agent definitions and workflow prompts
 - `prompts/` — local general-purpose prompt templates, including `/understand` and `/explore-understand` for manually controlled requirement alignment

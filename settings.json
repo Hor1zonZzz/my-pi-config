@@ -6,6 +6,7 @@
   "packages": [
     "npm:pi-mcp-adapter",
     "npm:pi-annotate",
-    "npm:@ogulcancelik/pi-herdr"
+    "npm:@ogulcancelik/pi-herdr",
+    "npm:@earendil-works/pi-voice"
   ]
 }

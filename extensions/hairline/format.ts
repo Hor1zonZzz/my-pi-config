@@ -131,6 +131,11 @@ export function parseWeekly(text: string | undefined): Weekly | undefined {
 	return undefined;
 }
 
+/** The account label alone: `me@example.com · weekly 63% left` → `me@example.com`. */
+export function stripWeekly(text: string): string {
+	return text.replace(/\s*·\s*weekly\b.*$/, "").trim();
+}
+
 /** Status text from other extensions, flattened to one line like Pi's footer. */
 export function sanitizeStatus(text: string): string {
 	return text.replace(/[\r\n\t]+/g, " ").replace(/ {2,}/g, " ").trim();

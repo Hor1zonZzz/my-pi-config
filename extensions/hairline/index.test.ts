@@ -76,7 +76,7 @@ test("installs header, editor, footer, and HUD only in the TUI", async () => {
 	for (const line of header) assert.ok(visibleWidth(line) <= 100);
 	assert.match(header.map(plain).join("\n"), /pi \d+\.\d+\.\d+ +gpt-5\.6-sol · medium/);
 	const footer = t.ui.footer(t.fakeTui, {}, t.footerData).render(140).map(plain);
-	assert.match(footer[0]!, /\/tmp\/demo  main .*\$0\.000 sub  ·  me@example\.com · weekly 63% left  $/);
+	assert.match(footer[0]!, /\/tmp\/demo  main .*\$0\.000 sub  ·  me@example\.com  $/, "weekly moves to the HUD");
 	assert.deepEqual(t.hud(), [`  speed    ${"▁".repeat(16)}  waiting for the first reply    weekly  ━━━━━━────  63% left`]);
 
 	const print = setup("print");
@@ -163,9 +163,12 @@ test("/hairline switches the skin and the HUD", async () => {
 	await t.emit("session_start", { reason: "startup" });
 	await t.run("hud off");
 	assert.equal(t.ui.widgets.has("hairline-hud"), false);
+	const footer = () => plain(t.ui.footer(t.fakeTui, {}, t.footerData).render(140)[0]);
+	assert.match(footer(), /me@example\.com · weekly 63% left  $/, "without the HUD the footer keeps the weekly text");
 	assert.ok(t.ui.header);
 	await t.run("hud on");
 	assert.equal(t.ui.widgets.has("hairline-hud"), true);
+	assert.match(footer(), /me@example\.com  $/);
 	await t.run("off");
 	assert.equal(t.ui.header, undefined);
 	assert.equal(t.ui.footer, undefined);

@@ -8,7 +8,7 @@ import {
 	VERSION,
 } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import { displayPath, messageSpeed, parseWeekly, sanitizeStatus } from "./format.ts";
+import { displayPath, messageSpeed, parseWeekly, sanitizeStatus, stripWeekly } from "./format.ts";
 import { renderBottomBorder, renderFooter, renderHeader, renderHud, renderTopBorder, type WorkingModel } from "./layout.ts";
 import { C, frameAt } from "./style.ts";
 import { registerHairlineTools } from "./tools.ts";
@@ -200,7 +200,12 @@ export default function hairline(pi: ExtensionAPI) {
 					} catch {}
 					const statuses = [...data.getExtensionStatuses().entries()]
 						.sort(([a], [b]) => a.localeCompare(b))
-						.map(([, text]) => sanitizeStatus(text))
+						.map(([key, text]) => {
+							const status = sanitizeStatus(text);
+							// The HUD already shows the weekly bar; keep only the account in the footer.
+							const inHud = enabled && hudEnabled && key === CODEX_QUOTA_STATUS && parseWeekly(status) !== undefined;
+							return inHud ? stripWeekly(status) : status;
+						})
 						.filter(Boolean);
 					return renderFooter({ cwd, branch: data.getGitBranch(), ...totals, subscription, statuses }, width);
 				},

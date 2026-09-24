@@ -69,8 +69,9 @@ The weekly bar reads the `codex-quota` footer status that
 that extension's five-minute shared cache. `loading` and `unavailable` appear as
 text, stale values are marked `(stale)`, and the percentage turns amber at 25%
 and red at 10%. The bar is hidden when that status is absent, for example with
-non-Codex models or without `codex-statusline`. The footer still shows the full
-status text.
+non-Codex models or without `codex-statusline`. While the HUD shows the bar, the
+footer keeps only the account from that status (`me@example.com`); after
+`/hairline hud off` it shows the full text again.
 
 ## Tool rows
 

@@ -61,7 +61,8 @@
 的 `codex-quota` 状态（`me@example.com · weekly 63% left`），所以不会额外请求额度，
 和它共用五分钟的共享缓存。`loading` 和 `unavailable` 以文字显示，过期数据标
 `(stale)`，剩余 25% 以下变琥珀色，10% 以下变红色。没有这条状态时（例如非 Codex
-模型，或没装 `codex-statusline`）不显示进度条。footer 里仍保留完整的状态文字。
+模型，或没装 `codex-statusline`）不显示进度条。HUD 显示进度条时，footer 里这条状态只保留
+账号（`me@example.com`）；`/hairline hud off` 之后 footer 恢复显示完整文字。
 
 ## 工具调用行
 

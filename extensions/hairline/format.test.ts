@@ -18,6 +18,7 @@ import {
 	readLines,
 	sanitizeStatus,
 	sparkLevels,
+	stripWeekly,
 } from "./format.ts";
 
 test("formats counts and durations compactly", () => {
@@ -70,6 +71,9 @@ test("parses codex-statusline weekly wording", () => {
 	assert.equal(parseWeekly("me@example.com · weekly unavailable"), "unavailable");
 	assert.equal(parseWeekly(undefined), undefined);
 	assert.equal(parseWeekly("something else"), undefined);
+	assert.equal(stripWeekly("me@example.com · weekly 63% left (stale)"), "me@example.com");
+	assert.equal(stripWeekly("Codex · weekly loading"), "Codex");
+	assert.equal(stripWeekly("⚡ fast"), "⚡ fast");
 });
 
 test("shortens paths and flattens statuses", () => {

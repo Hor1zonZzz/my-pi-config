@@ -146,6 +146,11 @@ copies, so move durable changes into `agents/` first.
 An agent without `model` inherits the parent's model and thinking level. An agent
 with `model` keeps its own thinking level.
 
+The tool description lists each user agent's name and description, which is how
+the model knows what it can call. It is built when the extension loads, so run
+`/reload` after adding or renaming an agent file. Calling an unknown name fails
+with the list of agents that do exist.
+
 ## Agent definitions
 
 ```markdown

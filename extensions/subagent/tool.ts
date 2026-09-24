@@ -104,16 +104,30 @@ function throttle(fn: () => void, ms: number): Throttle {
 	};
 }
 
+function agentNames(agents: AgentConfig[]): string {
+	return agents.map((a) => `"${a.name}"`).join(", ") || "none";
+}
+
+// The model only knows the agent names this description gives it. It is read
+// when the tool is registered, so new agent files need /reload.
+export function toolDescription(userAgents: AgentConfig[]): string {
+	const catalog = userAgents.length
+		? `User agents (use these exact names): ${userAgents.map((a) => `${a.name} — ${preview(a.description, 120)}`).join("; ")}.`
+		: "No user agents are installed.";
+	return [
+		"Delegate scoped tasks to subagents with isolated context. For async work, do not duplicate it: continue independent work or end your turn; results arrive automatically.",
+		"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
+		catalog,
+		`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
+		`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
+	].join(" ");
+}
+
 export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, background: BackgroundJobs): void {
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
-		description: [
-			"Delegate scoped tasks to subagents with isolated context. For async work, do not duplicate it: continue independent work or end your turn; results arrive automatically.",
-			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
-			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
-		].join(" "),
+		description: toolDescription(discoverAgents(process.cwd(), "user").agents),
 		parameters: SubagentParams,
 		renderShell: "self",
 
@@ -159,7 +173,7 @@ export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, ba
 			}
 
 			const unknown = requested.find((item) => !agents.some((agent) => agent.name === item.agent));
-			if (unknown) throw new Error(`Unknown agent: ${unknown.agent}`);
+			if (unknown) throw new Error(`Unknown agent: "${unknown.agent}". Available agents: ${agentNames(agents)}.`);
 			if (params.tasks && params.tasks.length > MAX_PARALLEL_TASKS) throw new Error(`Too many parallel tasks. Max is ${MAX_PARALLEL_TASKS}.`);
 			signal?.throwIfAborted();
 			if (params.async && (ctx.mode === "print" || ctx.mode === "json")) {

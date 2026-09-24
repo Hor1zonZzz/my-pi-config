@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { BackgroundJobs } from "./background.ts";
 import register from "./index.ts";
+import { toolDescription } from "./tool.ts";
 
 // Child sessions are written under the agent directory; keep them out of ~/.pi/agent.
 const agentDir = mkdtempSync(join(tmpdir(), "subagent-agent-"));
@@ -177,7 +178,7 @@ if (task === 'stubborn') {
 			h.ctx.mode = "json";
 			await assert.rejects(execute({ agent: "scout", task: "no", async: true }), /TUI or RPC/);
 			h.ctx.mode = "tui";
-			await assert.rejects(execute({ agent: "missing", task: "no", async: true }), /Unknown agent/);
+			await assert.rejects(execute({ agent: "missing", task: "no", async: true }), /Unknown agent: "missing"\. Available agents: "scout"\./);
 			assert.equal(h.messages.length, 3);
 		});
 		await t.test("shutdown escalates SIGTERM to SIGKILL and waits for subprocess exit", async () => {
@@ -193,4 +194,12 @@ if (task === 'stubborn') {
 		process.argv[1] = originalScript;
 		rmSync(dir, { recursive: true, force: true });
 	}
+});
+
+test("tool description names the installed user agents", () => {
+	const agent = (name, description) => ({ name, description, source: "user", systemPrompt: "", filePath: `/a/${name}.md` });
+	const text = toolDescription([agent("scout", "Fast codebase recon"), agent("worker", "x".repeat(300))]);
+	assert.match(text, /User agents \(use these exact names\): scout — Fast codebase recon; worker — x+…\./);
+	assert.ok(text.length < 1000, "long agent descriptions are shortened");
+	assert.match(toolDescription([]), /No user agents are installed\./);
 });

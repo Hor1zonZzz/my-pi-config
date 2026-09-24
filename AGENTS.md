@@ -16,7 +16,6 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `skills/` — remote-managed skill caches; `install.sh` refreshes Herdr from
   its upstream Git repository and installs it to the target Pi skills directory.
 - `extensions/` — user-level TypeScript extensions loaded by Pi.
-  - `plan-mode/` — implements read-only planning, local write-call and Bash guards, plan extraction, and execution progress tracking.
   - `questionnaire.ts` — registers the TUI-only `questionnaire` tool for one or more interactive questions.
   - `notify.ts` — emits a terminal notification after an agent run ends.
   - `herdr/` — owns the repository-managed Herdr integration checker, the asynchronous official `herdr_agent prompt` monitor, and the source for the installed `herdr-pi-reference` skill. It uses the public Herdr CLI and does not modify Herdr-managed integration files.
@@ -36,10 +35,9 @@ Some files must be maintained together:
 
 - `extensions/subagent/` modules, `README.md`/`README.zh-CN.md`, `agents/*.md`, and `prompts/*.md` form the subagent workflow. Agent names referenced by a prompt must exist in `extensions/subagent/agents/`; `config.ts` and the `agents.ts` frontmatter parser must agree on `model` and `thinkingLevel`. The tool's parameter schema is what the prompts and agents rely on; keep it stable. `RunSnapshot` (`runs.ts`) is persisted in tool details, completion messages, and `*.meta.json`; `render.ts` also reads the previous version's `results` details, so keep both shapes readable.
 - Model identifiers appear in `settings.json`, `extensions/subagent/agents/*.md`, and `model-overrides.json`. When models are renamed or removed, inspect all three locations.
-- `extensions/plan-mode/index.ts` and `extensions/plan-mode/utils.ts` must agree on state, plan markers, and the bash safety policy. If a question tool is renamed, update `PLAN_MODE_TOOLS` and the injected instructions. The extension still emits legacy `config-manager:layer-*` events, but this repository no longer installs a listener; changes to that integration are intentionally deferred.
 - `extensions/codex-fast-toggle/index.ts`, `extensions/codex-server-compaction/`, `settings.json`, `install.sh`, and their English/Chinese documentation define session-scoped Fast behavior and Codex remote compaction. The compaction extension reads the latest `codex-fast` custom entry so V2 requests inherit `service_tier: "priority"`, while the installer removes both the former global Fast state and the retired external compaction package checkout.
 - `extensions/codex-accounts/`, `codex-statusline/`, and `codex-server-compaction/` share the pure account fingerprint decoder in `codex-statusline/quota.ts`. Global switches notify the local quota display. Compaction replay must use the actual bound request token, not a new global auth lookup; opaque history and cached continuations must remain account-isolated, including A/B/A and untagged legacy artifacts.
-- `extensions/hairline/tools.ts` owns the `read`, `bash`, `edit`, and `write` tool names. Another extension that re-registers one of them would replace Hairline's override (or be replaced by it); keep a single owner. The overrides must copy Pi's model-facing definition unchanged and build execution with the same settings-derived options Pi's `AgentSession` uses; `plan-mode` and other tool-name guards keep working because the names do not change. The footer replaces Pi's footer, so it must keep rendering `setStatus()` text from `codex-statusline`, `codex-fast-toggle`, `plan-mode`, `subagent`, and `herdr`. The HUD's weekly bar parses `codex-statusline`'s `codex-quota` status (`weekly N% left`, `(stale)`, `loading`, `unavailable`); change `formatStatus()` and `hairline/format.ts` `parseWeekly()` together — `hairline/index.test.ts` checks them against each other.
+- `extensions/hairline/tools.ts` owns the `read`, `bash`, `edit`, and `write` tool names. Another extension that re-registers one of them would replace Hairline's override (or be replaced by it); keep a single owner. The overrides must copy Pi's model-facing definition unchanged and build execution with the same settings-derived options Pi's `AgentSession` uses; tool-name guards keep working because the names do not change. The footer replaces Pi's footer, so it must keep rendering `setStatus()` text from `codex-statusline`, `codex-fast-toggle`, `subagent`, and `herdr`. The HUD's weekly bar parses `codex-statusline`'s `codex-quota` status (`weekly N% left`, `(stale)`, `loading`, `unavailable`); change `formatStatus()` and `hairline/format.ts` `parseWeekly()` together — `hairline/index.test.ts` checks them against each other.
 - `extensions/herdr/` owns `integration-check.ts`, the background-monitor modules, and `skills/herdr-pi-reference/`; `install.sh` must install that skill into the target skills directory and remove the former standalone extension paths. `herdr-agent-state.ts` is installed and overwritten by Herdr. The local extension may use documented Herdr CLI behavior but must not vendor, import, modify, install, or update the Herdr-managed integration. The background monitor is session-scoped and must not deliver a completion to a replacement Pi session.
 
 ## Upstream-Derived Code
@@ -49,7 +47,6 @@ Several files are copied from or adapted from Pi's official extension examples. 
 The following areas closely track official examples:
 
 - `extensions/notify.ts`
-- `extensions/plan-mode/`
 - `extensions/questionnaire.ts`
 - `extensions/subagent/agents.ts`, `extensions/subagent/agents/`, and `extensions/subagent/prompts/` (the rest of `extensions/subagent/` is this repository's own implementation)
 
@@ -58,7 +55,6 @@ Local behavior that must be preserved during an upstream refresh includes:
 - local model choices in `extensions/subagent/agents/*.md`;
 - strict confirmation before running project-local agents, even in trusted projects;
 - the `/subagent` user-agent model/thinking TUI and its available/scoped-model filtering;
-- local plan-mode tool choices and instructions;
 - the custom Codex Fast implementation and its retained upstream attribution;
 - the Codex-only compaction scope, parallel Pi/native requests, V2 `/codex/responses` plus `compaction_trigger` protocol, exact-model replay isolation, text fallback, installation-id behavior, and retained upstream MIT attribution.
 
@@ -91,7 +87,6 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - `codex-statusline` depends on public Pi auth resolution, Codex JWT account/profile claims, the `/wham/usage` response shape, session/model lifecycle events, and atomic local filesystem operations. Preserve account/user cache isolation, the shared five-minute failure cooldown, no polling outside Codex TUI sessions, and rejection of late account/session results. It is not an account manager.
 - `hairline` depends on `CustomEditor`'s protected `renderTopBorder()`/`renderBottomBorder()` hooks, `embedWorkingStatus` and the unexported status indicator's `kind`/`renderInBorder()`, header/footer/widget factories, `ReadonlyFooterDataProvider`, the tool-renderer contract (`renderShell: "self"`, shared `context.state`, `lastComponent`), Pi's own tool renderers and their private state (the bash renderer's refresh interval is settled by passing it the final result), `createReadToolDefinition()`/`createBashToolDefinition()` options mirrored from `AgentSession`, `SettingsManager.create()` with `ctx.isProjectTrusted()`, message/tool lifecycle events for speed and working labels, and `codex-statusline`'s status wording for the weekly bar. Re-run its tests and `tsc` in a disposable copy on every Pi upgrade.
 - `questionnaire` depends on TUI component, key handling, autocomplete, theming, and invalidation contracts.
-- `plan-mode` depends on tool names, lifecycle event ordering, session entries, its local tool-call guard, and its bash allowlist. Treat the allowlist as a convenience guard, not a security boundary.
 
 ## Editing Guidelines
 
@@ -113,7 +108,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - Existing managed paths are backed up under `backups/my-pi-config-<timestamp>/` before copying.
 - The installer preserves Pi-managed `settings.json.lastChangelogVersion` instead of tracking it in this repository.
 - It merges credential-free `model-overrides.json` entries into the target `models.json`, preserving unrelated local providers and settings.
-- It removes obsolete extension paths and state, including the former standalone Preset extension and skill, the previously customized `extensions/subagent/`, `subagent-settings.json`, the retired `explore-and-gather` prompt, the former global `codex-fast.json` state, and the retired `git/github.com/algal/pi-openai-server-compaction` package checkout before copying the current settings, local extensions, local general-purpose prompts, upstream subagent-owned agents/prompts, and refreshed Herdr-owned skills.
+- It removes obsolete extension paths and state, including the former standalone Preset extension and skill, the retired `extensions/plan-mode/`, the previously customized `extensions/subagent/`, `subagent-settings.json`, the retired `explore-and-gather` prompt, the former global `codex-fast.json` state, and the retired `git/github.com/algal/pi-openai-server-compaction` package checkout before copying the current settings, local extensions, local general-purpose prompts, upstream subagent-owned agents/prompts, and refreshed Herdr-owned skills.
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
 - It backs up and then replaces installed user-agent Markdown files with repository copies, so `/subagent` runtime edits must be moved into this repository before reinstalling if they should become reproducible defaults.
 
@@ -156,7 +151,6 @@ PI_CODING_AGENT_DIR="$TEST_AGENT_DIR" pi
 Perform applicable interactive checks:
 
 - Pi starts without extension load errors and `/reload` succeeds.
-- `/plan` blocks write calls and unsafe Bash commands, extracts a plan, and removes its local restrictions before execution.
 - `questionnaire` handles single, multiple, custom-text, cancellation, narrow-terminal, and non-TUI cases.
 - `/fast on|off` persists only in the current session/branch, defaults Off in unrelated sessions and subagents, appears only for `openai-codex`, updates status, and changes only the intended outgoing request field.
 - Codex server compaction is a no-op for non-Codex models; runs Pi's built-in text compaction on an isolated lane and V2 on the main cached WebSocket lane in parallel; follows the active Fast tier; stores a 64K-bounded native history and combined usage; sends explicit history on seed/reconnect and `previous_response_id` plus the trigger on a matching live chain; restores the current V2 details shape across resume/tree/model round-trips without importing foreign-model assistant turns; provides no legacy V1 or older-format migration; and uses the Pi result when V2 fails.

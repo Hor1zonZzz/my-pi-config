@@ -16,7 +16,6 @@ English | [中文文档](README.zh-CN.md)
 
 ## Local extensions
 
-- `plan-mode/` — read-only planning mode with guarded write-tool calls, a Bash allowlist, plan extraction, and execution progress tracking
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification after the full run settles (`agent_settled`)
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
@@ -51,7 +50,8 @@ used when the remote is temporarily unavailable. When Pi starts inside Herdr,
 the local integration checker warns if Herdr's Pi integration is missing or
 outdated; it never installs or updates the Herdr-managed integration
 automatically. During migration the installer also backs up and removes the
-former global `codex-fast.json` state file and the retired external
+retired `extensions/plan-mode/`, the former global `codex-fast.json` state
+file, and the retired external
 `pi-openai-server-compaction` Git package checkout; the repository-managed
 Codex-only extension replaces that dependency. Restart Pi or run:
 
@@ -64,7 +64,6 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 ## Useful commands
 
 ```text
-/plan
 /fast
 /hairline
 /subagent

@@ -15,7 +15,6 @@
 
 ## 本地扩展
 
-- `plan-mode/` — 只读规划模式，提供写入工具调用拦截、Bash 白名单、计划提取和执行进度跟踪
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
 - `notify.ts` — 整个运行结束（`agent_settled`）后的终端通知
 - `herdr/` — 统一持有本地 Herdr 集成检查器、异步 `herdr_agent prompt` 监控器和 `herdr-pi-reference` 技能源码；它让显式 `wait: false` 调用保持非阻塞，并注入会话级完成 follow-up
@@ -40,7 +39,7 @@ cd my-pi-config
 ./install.sh
 ```
 
-安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，并把 Herdr 扩展持有的 `herdr-pi-reference` 技能安装到 `~/.pi/agent/skills/herdr-pi-reference/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。迁移期间还会先备份、再删除旧的全局 `codex-fast.json` 状态文件以及已退役的外部 `pi-openai-server-compaction` Git 包 checkout；仓库管理的 Codex-only 扩展会完全取代该依赖。重启 Pi 或运行：
+安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，并把 Herdr 扩展持有的 `herdr-pi-reference` 技能安装到 `~/.pi/agent/skills/herdr-pi-reference/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。迁移期间还会先备份、再删除已退役的 `extensions/plan-mode/`、旧的全局 `codex-fast.json` 状态文件以及已退役的外部 `pi-openai-server-compaction` Git 包 checkout；仓库管理的 Codex-only 扩展会完全取代该依赖。重启 Pi 或运行：
 
 ```text
 /reload
@@ -51,7 +50,6 @@ cd my-pi-config
 ## 常用命令
 
 ```text
-/plan
 /fast
 /hairline
 /subagent

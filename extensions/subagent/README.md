@@ -89,15 +89,20 @@ editor with each run's current action and elapsed time.
 
 | Key | Where | Action |
 | --- | --- | --- |
-| `↓` | empty prompt | Move into the list |
+| `↓` | last line of the prompt | Move into the list |
 | `↑` `↓` | list | Select; `↑` on the first row returns to the prompt |
 | `Enter` | list | Open the live transcript |
 | `x` `x` | list or transcript | Stop the selected run (press twice within 3 s) |
 | `Esc` | list | Return to the prompt without interrupting the main agent |
 | any other key | list | Return to the prompt and type normally |
 
-`↓` is taken only when the prompt is empty and has focus, so history navigation
-and multi-line editing keep working. Stopping a run affects only that run: other
+`↓` is taken only when it has nothing left to do in the focused prompt: the
+cursor is on the prompt's last line (a draft may be there), no completion menu
+is open, and you are not browsing history. Moving within multi-line or wrapped
+text and history navigation keep working; the only editor action lost is ↓
+jumping to the end of the last line. Key releases (Ghostty and other terminals
+with the Kitty keyboard protocol report them) are ignored, so one press moves
+one row. Stopping a run affects only that run: other
 parallel tasks keep going, a chain stops at that step, and the tool or job
 reports the run as stopped. Work the subagent already did is not rolled back.
 Stopping sends the child Pi an `abort` and closes its input so it shuts down in

@@ -18,7 +18,7 @@
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
 - `notify.ts` — 整个运行结束（`agent_settled`）后的终端通知
 - `herdr/` — 统一持有本地 Herdr 集成检查器、异步 `herdr_agent prompt` 监控器和 `herdr-pi-reference` 技能源码；它让显式 `wait: false` 调用保持非阻塞，并注入会话级完成 follow-up
-- `subagent/` — 把任务交给 `pi` 子进程，支持单个、并行、链式三种模式，可前台运行，也可用 `async: true` 在后台运行；保存每个子会话，在输入框下方列出运行中的 subagent（输入框为空时按 `↓` 选中后可查看或停止），返回每个运行的短 ID 和会话文件，主 agent 可以直接 `read` 查看进度，并用 `subagent_control` 给运行发消息、打断、继续或停止；后台运行状态变化时追加一行 `<subagent_notification>`，任务结束时一并送达所有回答，并提供 `/subagent-history` 和 `/subagent` 模型/思考级别选择器（[详细说明](extensions/subagent/README.zh-CN.md)）
+- `subagent/` — 把任务交给 `pi` 子进程，支持单个、并行、链式三种模式，可前台运行，也可用 `async: true` 在后台运行；保存每个子会话，在输入框下方列出运行中的 subagent（光标在输入框最后一行时按 `↓` 选中后可查看或停止），返回每个运行的短 ID 和会话文件，主 agent 可以直接 `read` 查看进度，并用 `subagent_control` 给运行发消息、打断、继续或停止；后台运行状态变化时追加一行 `<subagent_notification>`，任务结束时一并送达所有回答，并提供 `/subagent-history` 和 `/subagent` 模型/思考级别选择器（[详细说明](extensions/subagent/README.zh-CN.md)）
 - `codex-fast-toggle/` — 使用 Pi 原生命令 `/fast on|off`，仅在 Codex 下显示补全，按 session 切换优先级；Codex transport 让普通请求和压缩请求的路由提示与最终 tier 一致，不改变提供方身份
 - `codex-server-compaction/` — 并行执行 Pi 内置文本压缩与 Codex Remote Compaction V2，持久化 opaque 原生历史，继承当前 Fast service tier，并在远程失败时使用 Pi 结果
 - `codex-accounts/` — `/codex-accounts` 导入、添加和全局切换 Codex 订阅账号，保留 provider/模型；设备码登录可按 Esc 取消。凭据只存本机，在同一 agent 目录内共享（[详细说明](extensions/codex-accounts/README.zh-CN.md)）

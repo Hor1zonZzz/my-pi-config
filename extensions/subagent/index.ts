@@ -31,6 +31,29 @@ const ANIMATION_MS = 120;
 interface EditorLike {
 	actionHandlers?: unknown;
 	getText?: () => string;
+	getLines?: () => string[];
+	getCursor?: () => { line: number; col: number };
+	isShowingAutocomplete?: () => boolean;
+	// Private in pi-tui's Editor, read by duck typing: whether ↓ would browse history
+	// or move within a wrapped line. Without them the logical last line is used.
+	historyIndex?: unknown;
+	isOnLastVisualLine?: () => boolean;
+}
+
+/**
+ * True when ↓ has nothing left to do in the editor: its cursor is on the last
+ * line, no completion menu is open, and the user is not browsing history. There
+ * Pi's editor would only jump to the end of the line.
+ */
+export function editorAtBottom(editor: EditorLike | undefined): boolean {
+	if (!editor) return false;
+	if (editor.isShowingAutocomplete?.()) return false;
+	if (typeof editor.historyIndex === "number" && editor.historyIndex > -1) return false;
+	if (typeof editor.isOnLastVisualLine === "function") return editor.isOnLastVisualLine();
+	const lines = editor.getLines?.();
+	const cursor = editor.getCursor?.();
+	if (lines && cursor) return cursor.line >= lines.length - 1;
+	return (editor.getText?.() ?? "x").length === 0;
 }
 
 /**
@@ -133,7 +156,7 @@ export default function subagentExtension(pi: ExtensionAPI) {
 
 	const panel = new RunPanel(registry, {
 		isEditorFocused: () => focusedEditor(tui) !== undefined,
-		isEditorEmpty: () => (focusedEditor(tui)?.getText?.() ?? "x").length === 0,
+		isEditorAtBottom: () => editorAtBottom(focusedEditor(tui)),
 		requestRender,
 		open: openRun,
 		stop: stopRun,

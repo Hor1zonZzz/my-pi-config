@@ -14,10 +14,10 @@ function setup(count = 2) {
 		registry.add(run);
 		return run;
 	});
-	const state = { focused: true, empty: true, clock: 1_000_000, opened: [] as string[], stopped: [] as string[], renders: 0 };
+	const state = { focused: true, atBottom: true, clock: 1_000_000, opened: [] as string[], stopped: [] as string[], renders: 0 };
 	const panel = new RunPanel(registry, {
 		isEditorFocused: () => state.focused,
-		isEditorEmpty: () => state.empty,
+		isEditorAtBottom: () => state.atBottom,
 		requestRender: () => state.renders++,
 		open: (id) => state.opened.push(id),
 		stop: (id) => state.stopped.push(id),
@@ -26,13 +26,13 @@ function setup(count = 2) {
 	return { registry, runs, state, panel, key: (data: string) => panel.handleInput(data) };
 }
 
-test("↓ enters the list only from an empty, focused prompt with running subagents", () => {
+test("↓ enters the list only from the bottom of a focused editor with running subagents", () => {
 	const empty = setup(0);
 	assert.equal(empty.key(KEY.down), undefined);
 	const t = setup();
-	t.state.empty = false;
+	t.state.atBottom = false;
 	assert.equal(t.key(KEY.down), undefined);
-	t.state.empty = true;
+	t.state.atBottom = true;
 	t.state.focused = false;
 	assert.equal(t.key(KEY.down), undefined);
 	t.state.focused = true;
@@ -108,4 +108,17 @@ test("panel lines fit the width and mark the selected row", () => {
 	assert.match(lines[0]!, /running\s+·\s+↑↓ select · enter view · x stop · esc back/);
 	assert.match(lines[1]!, /^\[  › /);
 	assert.match(lines[2]!, /worker bg/);
+});
+
+test("key releases are ignored, so one ↓ moves the selection one row", () => {
+	const t = setup(3);
+	const press = "\x1b[1;1:1B";
+	const release = "\x1b[1;1:3B";
+	assert.deepEqual(t.key(press), { consume: true });
+	assert.equal(t.key(release), undefined);
+	assert.equal(t.panel.selectedIndex(), 0, "the release of the ↓ that entered the list does not move on");
+	t.key(press);
+	t.key(release);
+	assert.equal(t.panel.selectedIndex(), 1);
+	assert.equal(t.panel.active, true, "a release does not hand input back to the editor");
 });

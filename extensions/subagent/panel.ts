@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { isKeyRelease, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { panelLines } from "./render.ts";
 import type { RunRegistry, RunSnapshot } from "./runs.ts";
 
@@ -8,7 +8,8 @@ export const STOP_CONFIRM_MS = 3000;
 export interface PanelHost {
 	/** True when Pi's main prompt editor has focus (not a dialog or overlay). */
 	isEditorFocused(): boolean;
-	isEditorEmpty(): boolean;
+	/** True when ↓ has nothing left to do in the editor (cursor on its last line, no menu, no history). */
+	isEditorAtBottom(): boolean;
 	requestRender(): void;
 	open(runId: string): void;
 	stop(runId: string): void;
@@ -18,9 +19,10 @@ export interface PanelHost {
 type InputResult = { consume: true } | undefined;
 
 /**
- * The list of running subagents below the editor. On an empty prompt, ↓
- * moves the selection into the list; ↑ from the first row, Esc, or any other
- * key hands input back to the editor.
+ * The list of running subagents below the editor. When ↓ has nothing left to
+ * do in the editor (its cursor is on the last line), it moves the selection
+ * into the list; ↑ from the first row, Esc, or any other key hands input back
+ * to the editor.
  */
 export class RunPanel {
 	private readonly registry: RunRegistry;
@@ -63,9 +65,12 @@ export class RunPanel {
 	}
 
 	handleInput(data: string): InputResult {
+		// Terminal input listeners see every Kitty key release too, and matchesKey
+		// matches a release like its press; acting on both moved the selection twice.
+		if (isKeyRelease(data)) return undefined;
 		const runs = this.runs();
 		if (this.selectedId === undefined) {
-			if (runs.length > 0 && matchesKey(data, "down") && this.host.isEditorFocused() && this.host.isEditorEmpty()) {
+			if (runs.length > 0 && matchesKey(data, "down") && this.host.isEditorFocused() && this.host.isEditorAtBottom()) {
 				this.selectedId = runs[0]!.id;
 				return this.done();
 			}

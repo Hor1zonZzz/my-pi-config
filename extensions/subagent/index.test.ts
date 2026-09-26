@@ -6,7 +6,7 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { type ExtensionAPI, initTheme } from "@earendil-works/pi-coding-agent";
 import { FAKE_RPC } from "./fake-rpc.ts";
-import register from "./index.ts";
+import register, { editorAtBottom } from "./index.ts";
 
 initTheme("dark");
 const root = mkdtempSync(join(tmpdir(), "subagent-index-"));
@@ -50,13 +50,20 @@ function harness() {
 	const tools = new Map<string, any>();
 	const state = {
 		editorText: "",
+		cursorLine: undefined as number | undefined,
 		focused: true,
 		widget: undefined as undefined | { key: string; factory: any; options: any },
 		input: undefined as undefined | ((data: string) => unknown),
 		overlays: [] as Array<{ component: any; options: any; closed: boolean }>,
 		notes: [] as string[],
 	};
-	const editor = { actionHandlers: new Map(), getText: () => state.editorText };
+	// Like Pi's editor: one line per \n, cursor at the end unless a test moves it.
+	const editor = {
+		actionHandlers: new Map(),
+		getText: () => state.editorText,
+		getLines: () => state.editorText.split("\n"),
+		getCursor: () => ({ line: state.cursorLine ?? state.editorText.split("\n").length - 1, col: 0 }),
+	};
 	const tui = { terminal: { rows: 30 }, requestRender() {}, getFocusedComponent: () => (state.focused ? editor : { dialog: true }) };
 	const ctx = {
 		cwd,
@@ -114,10 +121,11 @@ test("select a running subagent from the prompt, watch it, stop it, and find it 
 	await until(() => h.panel().length === 2 && /read src\/auth\.ts/.test(h.panel()[1]!));
 	assert.match(h.panel()[0]!, /1 subagent running\s+·\s+↓ select/);
 
-	h.state.editorText = "draft";
-	assert.equal(h.key("\x1b[B"), undefined, "a non-empty prompt keeps ↓");
-	h.state.editorText = "";
-	assert.deepEqual(h.key("\x1b[B"), { consume: true });
+	h.state.editorText = "first line\nsecond line";
+	h.state.cursorLine = 0;
+	assert.equal(h.key("\x1b[B"), undefined, "↓ above the last line stays in the editor");
+	h.state.cursorLine = undefined;
+	assert.deepEqual(h.key("\x1b[B"), { consume: true }, "a draft does not block the list once the cursor is on its last line");
 	assert.match(h.panel()[1]!, /› ⠋|› [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
 
 	assert.deepEqual(h.key("\r"), { consume: true });
@@ -155,4 +163,15 @@ test("Esc on the prompt is left alone when the panel is not selected", async () 
 	await h.emit("session_start", { reason: "startup" });
 	assert.equal(h.key("\x1b"), undefined);
 	await h.emit("session_shutdown");
+});
+
+test("↓ is left to the editor while a menu is open, history is being browsed, or a wrapped line continues", () => {
+	const base = { getLines: () => ["a"], getCursor: () => ({ line: 0, col: 1 }) };
+	assert.equal(editorAtBottom(base), true);
+	assert.equal(editorAtBottom({ ...base, isShowingAutocomplete: () => true }), false);
+	assert.equal(editorAtBottom({ ...base, historyIndex: 2 }), false, "↓ steps forward through history");
+	assert.equal(editorAtBottom({ ...base, historyIndex: -1 }), true);
+	assert.equal(editorAtBottom({ ...base, isOnLastVisualLine: () => false }), false, "a wrapped last line has rows below the cursor");
+	assert.equal(editorAtBottom({ getLines: () => ["a", "b"], getCursor: () => ({ line: 0, col: 0 }) }), false);
+	assert.equal(editorAtBottom(undefined), false);
 });

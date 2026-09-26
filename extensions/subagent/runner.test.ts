@@ -36,7 +36,8 @@ onTask((task) => {
     return;
   }
   if (task === 'fail') {
-    process.stderr.write('boom');
+    // Pi's RPC mode routes an extension's direct terminal writes (notify.ts's OSC) to stderr.
+    process.stderr.write('\\x1b]777;notify;Pi;Ready for input\\x07boom');
     process.exit(3);
   }
   if (task === 'reject') return false;
@@ -179,7 +180,7 @@ test("reports failures with stderr", async () => {
 	const run = await request("fail").promise;
 	assert.equal(run.snapshot.status, "failed");
 	assert.equal(run.snapshot.exitCode, 3);
-	assert.match(run.snapshot.output ?? "", /boom/);
+	assert.equal(run.snapshot.output, "boom", "terminal escapes are stripped from stderr");
 	assert.doesNotMatch(run.snapshot.stderr ?? "", /No project session/);
 });
 

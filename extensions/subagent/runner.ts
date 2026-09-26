@@ -7,7 +7,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "./agents.ts";
-import { cleanStderr, describeToolCall, finalOutput, preview, tail } from "./format.ts";
+import { cleanStderr, describeToolCall, finalOutput, preview, stripTerminalEscapes, tail } from "./format.ts";
 import { LiveRun, newSnapshot, type RunGroup, type RunMode, type RunRegistry, type RunSnapshot } from "./runs.ts";
 import { ensureDir, parentSessionDir, writeMeta } from "./store.ts";
 
@@ -20,8 +20,6 @@ const KILL_GRACE_MS = 5000;
 export const CHILD_ENV = "PI_SUBAGENT_CHILD";
 /** Pi's RPC dialogs; they block until answered, and a subagent has nobody to ask. */
 const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
-/** Terminal escape sequences an extension may write straight to stdout (for example OSC notifications). */
-const STRAY_ESCAPES = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 
 export interface DispatchDefaults {
 	model?: string;
@@ -241,7 +239,7 @@ export async function runAgent(request: RunRequest): Promise<LiveRun> {
 			};
 			let buffer = "";
 			const processLine = (line: string) => {
-				const text = line.replace(/\r$/, "").replace(STRAY_ESCAPES, "");
+				const text = stripTerminalEscapes(line.replace(/\r$/, ""));
 				if (!text.trim()) return;
 				let record: any;
 				try {

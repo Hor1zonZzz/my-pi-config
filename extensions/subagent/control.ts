@@ -153,7 +153,8 @@ function messageText(message: Message, number: number): string {
 		const body = textOf(result.content).trim();
 		return `#${number} tool ${result.toolName ?? ""} ${result.isError ? "error" : "ok"}`.replace(/  +/g, " ") + (body ? `\n${indent(truncateText(body, RESULT_CAP))}` : "");
 	}
-	if (message.role !== "assistant") return `#${number} ${message.role}\n${indent(truncateText(textOf(message.content).trim(), TEXT_CAP))}`;
+	// Pi records the subagent's full system prompt as the first message; it is not progress.
+	if (message.role === "system") return `#${number} system prompt (${textOf(message.content).length} chars, not shown)`;
 	const parts: string[] = [];
 	for (const part of message.content) {
 		if (part.type === "thinking" && part.thinking.trim()) parts.push(indent(`thinking: ${preview(part.thinking, 300)}`));

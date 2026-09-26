@@ -186,6 +186,9 @@ test("read pages through long transcripts from the end", () => {
 	assert.match(middle, /messages 5-7 of 30 · next: from 8 · earlier: from 2$/);
 	assert.match(readText(e, 99, 5), /messages 30-30 of 30/);
 	assert.match(readText(entry("dddd"), undefined, 5), /No transcript messages yet\./);
+	const withPrompt = entry("eeee5555-v");
+	withPrompt.live!.messages.push({ role: "system", content: [{ type: "text", text: "x".repeat(5000) }] } as any);
+	assert.match(readText(withPrompt, undefined, 5), /#1 system prompt \(5000 chars, not shown\)\n\nmessages 1-1 of 1$/);
 });
 
 test("wait stops when the tool call is aborted", async () => {

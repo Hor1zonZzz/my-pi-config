@@ -141,9 +141,19 @@ export function truncateBytes(text: string, maxBytes: number, note = "Full outpu
 	return `${cut}\n\n[Output truncated: ${size - Buffer.byteLength(cut, "utf8")} bytes omitted. ${note}]`;
 }
 
+/**
+ * Terminal escape sequences an extension may write straight to the output, such
+ * as notify.ts's OSC notification (Pi's RPC mode routes it to stderr).
+ */
+const TERMINAL_ESCAPES = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+
+export function stripTerminalEscapes(text: string): string {
+	return text.replace(TERMINAL_ESCAPES, "");
+}
+
 /** Pi warns on stderr when `--session-id` creates a new session; that is expected here. */
 export function cleanStderr(stderr: string): string {
-	return stderr
+	return stripTerminalEscapes(stderr)
 		.split("\n")
 		.filter((line) => !/No project session found with id/.test(line))
 		.join("\n")

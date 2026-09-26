@@ -43,9 +43,10 @@ subagent/
 ├── render.ts       # Tool rows, completion cards, panel rows
 ├── format.ts       # Pure formatting helpers
 ├── config.ts       # /subagent model and thinking-level configuration
+├── enabled.ts      # The subagents on/off switch and /subagent on|off
 ├── agents.ts       # Agent discovery and frontmatter updates
 ├── agents/         # scout, planner, reviewer, worker
-└── prompts/        # /scout, /implement, /scout-and-plan, /implement-and-review
+└── prompts/        # /scout, /implement, /scout-and-plan, /implement-and-review (provided by the extension)
 ```
 
 ## Calling subagents
@@ -201,6 +202,29 @@ final         Background job subagent-37690385 completed.
   until the new prompt starts.
 - Continuing a project-local agent asks for confirmation again.
 
+## Turning subagents off
+
+```text
+/subagent off     turn subagents off everywhere, then reload
+/subagent on      turn them back on, then reload
+```
+
+The switch is `"subagents": { "enabled": false }` in `<agent dir>/settings.json`
+(absent means on). It applies to every session, and `/subagent` reloads Pi so it
+takes effect at once. Turning subagents off while some run asks first, because
+the reload stops them. While they are off the extension registers nothing that
+reaches the model or the screen:
+
+- no `subagent` or `subagent_control` tool, so nothing about subagents is in the
+  system prompt or the tool list (`/tools` does not show them either);
+- no `/scout`, `/implement`, `/scout-and-plan`, or `/implement-and-review`: the
+  extension provides these prompts through `resources_discover` only while on;
+- no panel, key handling, notices, `/subagent-history`, or `/subagent-jobs`.
+
+Only `/subagent` (to turn them back on) and the renderers for completion and
+notice messages already in a session stay. The installer keeps the value it
+finds, so a reinstall does not turn subagents back on.
+
 ## Configuring agents
 
 ```text
@@ -278,6 +302,8 @@ Verified with Pi 0.87.1. The extension depends on:
   (how the panel tells the prompt apart from dialogs);
 - `ctx.ui.setWidget(..., { placement: "belowEditor" })` and overlay
   `ctx.ui.custom()`;
+- `resources_discover` returning `promptPaths`, `ctx.reload()` in commands,
+  and Pi keeping unknown keys such as `subagents` when it saves `settings.json`;
 - `pi.sendMessage(..., { triggerTurn: false })` appending at the end of the
   current turn while the agent streams, and at once while it is idle.
 

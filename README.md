@@ -69,7 +69,7 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 /code-mode
 /fast
 /hairline
-/subagent
+/subagent [on|off]
 /subagent-history
 /understand [requirement]
 /explore-understand [requirement]
@@ -78,6 +78,8 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 /scout-and-plan <task>
 /implement-and-review <task>
 ```
+
+`/subagent off` removes subagents entirely (tools, prompts, panel, and the workflow commands below) until `/subagent on`.
 
 `/understand` clarifies the requirement directly. `/explore-understand` explicitly begins with focused, read-only repository exploration. Both wait for confirmation before implementation.
 

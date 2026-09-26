@@ -86,6 +86,10 @@ done
 backup_path "git/github.com/algal/pi-openai-server-compaction"
 
 mkdir -p "$AGENT_DIR/extensions" "$AGENT_DIR/agents" "$AGENT_DIR/prompts" "$AGENT_DIR/skills"
+# The subagent extension now provides its workflow prompts itself (only while subagents are on).
+for prompt in "$SUBAGENT_DIR"/prompts/*.md; do
+	rm -f "$AGENT_DIR/prompts/$(basename "$prompt")"
+done
 rm -f "$AGENT_DIR/extensions/question.ts" "$AGENT_DIR/extensions/tools.ts" "$AGENT_DIR/extensions/preset.ts" "$AGENT_DIR/extensions/herdr-integration-check.ts" "$AGENT_DIR/prompts/explore-and-gather.md" "$AGENT_DIR/subagent-settings.json" "$AGENT_DIR/codex-fast.json"
 rm -rf "$AGENT_DIR/extensions/skills-manager" "$AGENT_DIR/extensions/sidebar-tui" "$AGENT_DIR/extensions/pi-config-manager" "$AGENT_DIR/extensions/herdr-background-monitor" "$AGENT_DIR/extensions/subagent" "$AGENT_DIR/extensions/preset" "$AGENT_DIR/extensions/plan-mode" "$AGENT_DIR/skills/preset-settings" "$AGENT_DIR/git/github.com/algal/pi-openai-server-compaction"
 node - "$ROOT_DIR/settings.json" "$AGENT_DIR/settings.json" <<'NODE'
@@ -98,6 +102,10 @@ try {
 	const currentSettings = JSON.parse(fs.readFileSync(targetPath, "utf8"));
 	if (typeof currentSettings.lastChangelogVersion === "string") {
 		nextSettings.lastChangelogVersion = currentSettings.lastChangelogVersion;
+	}
+	// /subagent on|off is a runtime choice; a reinstall keeps it.
+	if (typeof currentSettings.subagents?.enabled === "boolean") {
+		nextSettings.subagents = { ...(nextSettings.subagents ?? {}), enabled: currentSettings.subagents.enabled };
 	}
 } catch (error) {
 	if (error.code !== "ENOENT") throw error;
@@ -173,7 +181,6 @@ fs.renameSync(temporaryPath, targetPath);
 NODE
 cp -R "$ROOT_DIR/extensions/." "$AGENT_DIR/extensions/"
 cp -R "$SUBAGENT_DIR/agents/." "$AGENT_DIR/agents/"
-cp -R "$SUBAGENT_DIR/prompts/." "$AGENT_DIR/prompts/"
 cp -R "$ROOT_DIR/prompts/." "$AGENT_DIR/prompts/"
 install_herdr_skill
 install_herdr_pi_reference_skill

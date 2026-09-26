@@ -40,9 +40,10 @@ subagent/
 ├── render.ts       # 工具行、完成卡片、面板行
 ├── format.ts       # 纯格式化函数
 ├── config.ts       # /subagent 模型与思考级别配置
+├── enabled.ts      # subagent 总开关与 /subagent on|off
 ├── agents.ts       # agent 发现与 frontmatter 更新
 ├── agents/         # scout、planner、reviewer、worker
-└── prompts/        # /scout、/implement、/scout-and-plan、/implement-and-review
+└── prompts/        # /scout、/implement、/scout-and-plan、/implement-and-review（由扩展提供）
 ```
 
 ## 调用方式
@@ -173,6 +174,26 @@ subagent 已经做完的改动不会回滚。停止时先给子 Pi 发 `abort` �
   `agent_settled` 之后仍保持子进程输入打开，直到新 prompt 开始运行。
 - 继续一个项目本地 agent 时会再次请求确认。
 
+## 关闭 subagent
+
+```text
+/subagent off     在所有会话中关闭 subagent，然后重新加载
+/subagent on      重新打开，然后重新加载
+```
+
+开关是 `<agent 目录>/settings.json` 里的 `"subagents": { "enabled": false }`（不写即为开启）。它对
+所有会话生效，`/subagent` 会重新加载 Pi，使其立即生效。有 subagent 正在运行时关闭会先询问，因为
+重新加载会停止它们。关闭期间，扩展不注册任何会影响模型或界面的东西：
+
+- 没有 `subagent` 和 `subagent_control` 工具，所以系统提示词和工具列表里都没有 subagent 的内容
+  （`/tools` 里也看不到）；
+- 没有 `/scout`、`/implement`、`/scout-and-plan`、`/implement-and-review`：这些提示词只在开启时
+  由扩展通过 `resources_discover` 提供；
+- 没有面板、按键处理、通知、`/subagent-history` 和 `/subagent-jobs`。
+
+只保留 `/subagent`（用来重新打开），以及会话中已有的完成消息和通知的显示方式。安装脚本会保留它
+看到的值，重新安装不会把 subagent 重新打开。
+
 ## 配置 agent
 
 ```text
@@ -236,6 +257,8 @@ agent 和任务，以及当前动作，或者耗时和输出 token 数。`Ctrl+O
 - `ctx.ui.onTerminalInput()` 在焦点组件之前执行、具体 TUI 实现的 `getFocusedComponent()`，
   以及 Pi 主输入框带有 `actionHandlers`（面板靠它区分主输入框和对话框）；
 - `ctx.ui.setWidget(..., { placement: "belowEditor" })` 和浮层形式的 `ctx.ui.custom()`；
+- `resources_discover` 返回 `promptPaths`、命令中的 `ctx.reload()`，以及 Pi 保存 `settings.json`
+  时保留 `subagents` 这类它不认识的键；
 - `pi.sendMessage(..., { triggerTurn: false })`：主 agent 运行时在当前这一轮结束时追加，空闲时
   立即追加。
 

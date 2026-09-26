@@ -3,6 +3,9 @@
   "defaultModel": "gpt-5.6-sol",
   "defaultThinkingLevel": "medium",
   "theme": "dark",
+  "subagents": {
+    "enabled": true
+  },
   "packages": [
     "npm:pi-mcp-adapter",
     "npm:pi-annotate",

@@ -55,7 +55,7 @@ cd my-pi-config
 /code-mode
 /fast
 /hairline
-/subagent
+/subagent [on|off]
 /subagent-history
 /understand [requirement]
 /explore-understand [requirement]
@@ -64,6 +64,8 @@ cd my-pi-config
 /scout-and-plan <task>
 /implement-and-review <task>
 ```
+
+`/subagent off` 彻底移除 subagent（工具、提示词、面板以及下面的工作流命令），直到 `/subagent on`。
 
 `/understand` 直接澄清需求；`/explore-understand` 会明确先对仓库进行有针对性的只读探索。两者都会在开始实现前等待确认。
 

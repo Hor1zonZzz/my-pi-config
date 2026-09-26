@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, fuzzyFilter, type Focusable, Input, type SelectItem, SelectList, Spacer, Text } from "@earendil-works/pi-tui";
 import { discoverAgents, updateAgentModelSettings } from "./agents.ts";
+import { toggleSubagents } from "./enabled.ts";
 
 // `/subagent`: choose a user agent, an available model, and a supported thinking level,
 // then write them to the agent's frontmatter. Unchanged from the previous extension.
@@ -188,10 +189,16 @@ function resolveConfiguredModel(
 	return model ? { model, thinkingLevel: suffix } : {};
 }
 
-export function registerConfigCommand(pi: ExtensionAPI): void {
+export function registerConfigCommand(pi: ExtensionAPI, running: () => number): void {
 	pi.registerCommand("subagent", {
-		description: "Configure a user subagent model and thinking level",
-		handler: async (_args, ctx) => {
+		description: "Configure a user subagent's model and thinking level, or turn subagents on|off",
+		handler: async (args, ctx) => {
+			const action = args.trim();
+			if (action === "on" || action === "off") return toggleSubagents(action === "on", ctx, running());
+			if (action) {
+				ctx.ui.notify("Usage: /subagent [on|off]", "warning");
+				return;
+			}
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("/subagent requires TUI mode", "error");
 				return;

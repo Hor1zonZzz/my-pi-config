@@ -9,10 +9,12 @@
  * - /subagent configures a user agent's model and thinking level.
  */
 
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { BackgroundJobs } from "./background.ts";
 import { registerConfigCommand } from "./config.ts";
+import { subagentsEnabled, toggleSubagents } from "./enabled.ts";
 import { registerControlTool } from "./control.ts";
 import { preview } from "./format.ts";
 import { RunPanel } from "./panel.ts";
@@ -43,7 +45,32 @@ function focusedEditor(tui: TUI | undefined): EditorLike | undefined {
 	return focused && focused.actionHandlers instanceof Map && typeof focused.getText === "function" ? focused : undefined;
 }
 
+/** Messages already in a session keep their look even while subagents are off; they do not reach the model differently. */
+function registerRenderers(pi: ExtensionAPI): void {
+	pi.registerMessageRenderer("subagent-completion", (message, { expanded }, theme) =>
+		completionComponent(theme, String(message.content), message.details, expanded),
+	);
+	pi.registerMessageRenderer(NOTICE_TYPE, (message, _options, theme) => noticeComponent(theme, message.details as NoticeDetails | undefined));
+}
+
+/** The workflow prompts (/scout, /implement, …) ship with the extension and exist only while it is on. */
+const PROMPTS_DIR = fileURLToPath(new URL("./prompts", import.meta.url));
+
 export default function subagentExtension(pi: ExtensionAPI) {
+	registerRenderers(pi);
+	if (!subagentsEnabled()) {
+		// Off: no tools, prompts, panel, notices, or other commands; only the way back.
+		pi.registerCommand("subagent", {
+			description: "Subagents are off; /subagent on turns them on",
+			handler: async (args, ctx) => {
+				if (args.trim() === "on") return toggleSubagents(true, ctx);
+				ctx.ui.notify("Subagents are off. /subagent on turns them on.", "info");
+			},
+		});
+		return;
+	}
+	pi.on("resources_discover", () => ({ promptPaths: [PROMPTS_DIR] }));
+
 	const registry = new RunRegistry();
 	const background = new BackgroundJobs(pi);
 	let ctxRef: ExtensionContext | undefined;
@@ -160,7 +187,7 @@ export default function subagentExtension(pi: ExtensionAPI) {
 
 	pi.on("session_tree", () => background.shutdown(false));
 
-	registerConfigCommand(pi);
+	registerConfigCommand(pi, () => registry.running().length);
 	registerSubagentTool(pi, registry, background);
 	registerControlTool(pi, { registry, background });
 
@@ -192,10 +219,5 @@ export default function subagentExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerMessageRenderer("subagent-completion", (message, { expanded }, theme) =>
-		completionComponent(theme, String(message.content), message.details, expanded),
-	);
-
 	watchRunNotices(pi, registry, { sessionId: () => ctxRef?.sessionManager.getSessionId() });
-	pi.registerMessageRenderer(NOTICE_TYPE, (message, _options, theme) => noticeComponent(theme, message.details as NoticeDetails | undefined));
 }

@@ -193,8 +193,7 @@ c 完成     <subagent_result run="c1d2e3f4" agent="worker" status="completed">
 所有会话生效，`/subagent` 会重新加载 Pi，使其立即生效。有 subagent 正在运行时关闭会先询问，因为
 重新加载会停止它们。关闭期间，扩展不注册任何会影响模型或界面的东西：
 
-- 没有 `subagent` 和 `subagent_control` 工具，所以系统提示词和工具列表里都没有 subagent 的内容
-  （`/tools` 里也看不到）；
+- 没有 `subagent` 和 `subagent_control` 工具，所以系统提示词和工具列表里都没有 subagent 的内容；
 - 没有 `/scout`、`/implement`、`/scout-and-plan`、`/implement-and-review`：这些提示词只在开启时
   由扩展通过 `resources_discover` 提供；
 - 没有面板、按键处理、通知、`/subagent-history` 和 `/subagent-jobs`。

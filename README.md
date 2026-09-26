@@ -24,12 +24,11 @@ English | [中文文档](README.zh-CN.md)
 - `codex-server-compaction/` — runs Pi's built-in text compaction and Codex Remote Compaction V2 in parallel, persists opaque native history, follows the current Fast service tier, and uses the Pi result on remote failure
 - `codex-accounts/` — `/codex-accounts` imports, adds, and globally switches Codex subscription logins without changing the provider/model; Esc cancels device login. Credentials remain local and shared within one agent directory ([details](extensions/codex-accounts/README.md))
 - `codex-statusline/` — automatically shows the current Codex account and weekly quota remaining in the TUI; sessions sharing an agent directory reuse a five-minute per-account/user quota cache ([details](extensions/codex-statusline/README.md))
-- `code-mode/` — `/tools` turns registered tools on or off and switches code mode and its sandbox (also `/code-mode on|off` and `pi --code-mode`); code mode moves the enabled built-in tools into `execute_code`, where the model writes a JavaScript or Python program that calls them as functions and only the printed output returns to the context; on macOS the program itself runs sandboxed, with no file, network, or process access except through the tools ([details](extensions/code-mode/README.md))
 - `hairline/` — Hairline TUI skin: gradient π header, editor with top and bottom rules only (working status in the top rule, model and context gauge in the bottom rule), one-line footer that keeps other extensions' statuses, a HUD with reply speed and the Codex weekly quota bar, and one-line `read`/`bash`/`edit`/`write` rows whose execution stays Pi's; `/hairline on|off` and `/hairline hud on|off` ([details](extensions/hairline/README.md))
 
 ## Pi compatibility
 
-The local extensions target Pi 0.87.0; `hairline/` and `code-mode/` were verified on Pi 0.87.1. Codex remote compaction honors context edits and falls back to Pi's edited text context after an edit invalidates a native checkpoint; the next successful compaction enables native replay again. See [compatibility details](extensions/codex-server-compaction/README.md#context-edits-pi-0870).
+The local extensions target Pi 0.87.0; `hairline/` was verified on Pi 0.87.1. Codex remote compaction honors context edits and falls back to Pi's edited text context after an edit invalidates a native checkpoint; the next successful compaction enables native replay again. See [compatibility details](extensions/codex-server-compaction/README.md#context-edits-pi-0870).
 
 ## Install
 
@@ -51,7 +50,7 @@ used when the remote is temporarily unavailable. When Pi starts inside Herdr,
 the local integration checker warns if Herdr's Pi integration is missing or
 outdated; it never installs or updates the Herdr-managed integration
 automatically. During migration the installer also backs up and removes the
-retired `extensions/plan-mode/`, the former global `codex-fast.json` state
+retired `extensions/plan-mode/` and `extensions/code-mode/`, the former global `codex-fast.json` state
 file, and the retired external
 `pi-openai-server-compaction` Git package checkout; the repository-managed
 Codex-only extension replaces that dependency. Restart Pi or run:
@@ -65,8 +64,6 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 ## Useful commands
 
 ```text
-/tools
-/code-mode
 /fast
 /hairline
 /subagent [on|off]

@@ -230,7 +230,7 @@ the reload stops them. While they are off the extension registers nothing that
 reaches the model or the screen:
 
 - no `subagent` or `subagent_control` tool, so nothing about subagents is in the
-  system prompt or the tool list (`/tools` does not show them either);
+  system prompt or the tool list;
 - no `/scout`, `/implement`, `/scout-and-plan`, or `/implement-and-review`: the
   extension provides these prompts through `resources_discover` only while on;
 - no panel, key handling, notices, `/subagent-history`, or `/subagent-jobs`.

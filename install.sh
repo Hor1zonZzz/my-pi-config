@@ -91,7 +91,7 @@ for prompt in "$SUBAGENT_DIR"/prompts/*.md; do
 	rm -f "$AGENT_DIR/prompts/$(basename "$prompt")"
 done
 rm -f "$AGENT_DIR/extensions/question.ts" "$AGENT_DIR/extensions/tools.ts" "$AGENT_DIR/extensions/preset.ts" "$AGENT_DIR/extensions/herdr-integration-check.ts" "$AGENT_DIR/prompts/explore-and-gather.md" "$AGENT_DIR/subagent-settings.json" "$AGENT_DIR/codex-fast.json"
-rm -rf "$AGENT_DIR/extensions/skills-manager" "$AGENT_DIR/extensions/sidebar-tui" "$AGENT_DIR/extensions/pi-config-manager" "$AGENT_DIR/extensions/herdr-background-monitor" "$AGENT_DIR/extensions/subagent" "$AGENT_DIR/extensions/preset" "$AGENT_DIR/extensions/plan-mode" "$AGENT_DIR/skills/preset-settings" "$AGENT_DIR/git/github.com/algal/pi-openai-server-compaction"
+rm -rf "$AGENT_DIR/extensions/skills-manager" "$AGENT_DIR/extensions/sidebar-tui" "$AGENT_DIR/extensions/pi-config-manager" "$AGENT_DIR/extensions/herdr-background-monitor" "$AGENT_DIR/extensions/subagent" "$AGENT_DIR/extensions/preset" "$AGENT_DIR/extensions/plan-mode" "$AGENT_DIR/extensions/code-mode" "$AGENT_DIR/skills/preset-settings" "$AGENT_DIR/git/github.com/algal/pi-openai-server-compaction"
 node - "$ROOT_DIR/settings.json" "$AGENT_DIR/settings.json" <<'NODE'
 const fs = require("node:fs");
 

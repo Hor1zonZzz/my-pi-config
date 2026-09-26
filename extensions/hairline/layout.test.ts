@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
+	contextGauge,
 	renderBottomBorder,
 	renderCard,
 	renderFooter,
@@ -57,8 +58,15 @@ test("editor rules fill the width without side borders or corners", () => {
 	const bottom = renderBottomBorder({ lineColor: C.rule, model: "gpt-5.6-sol", thinking: "medium", contextPercent: 42, hiddenBelow: 0 }, 80);
 	assert.equal(plain(top), "─".repeat(50));
 	assert.equal(visibleWidth(bottom), 80);
-	assert.match(plain(bottom), /^─ gpt-5\.6-sol · medium ─+ context ▰▰▰▰▱▱▱▱▱▱ 42% ─$/);
+	assert.match(plain(bottom), /^─ gpt-5\.6-sol · medium ─+ context ▰▰▰▰▰▰▰▰▰▰ 42% ─$/);
 	assert.doesNotMatch(plain(top + bottom), /[╭╮╰╯│]/);
+});
+
+test("context gauge uses one glyph and marks empty cells by color", () => {
+	// Distinct filled/empty glyphs can resolve to different fallback fonts and render at different sizes.
+	const gauge = contextGauge(42);
+	assert.equal(plain(gauge), "▰".repeat(10));
+	assert.equal(gauge.split(fg(C.rule, "▰")).length - 1, 6);
 });
 
 test("top rule carries working status and scroll state", () => {

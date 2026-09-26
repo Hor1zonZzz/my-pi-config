@@ -82,7 +82,7 @@ export function contextGauge(percent: number, cells = 10): string {
 	const filled = Math.min(cells, Math.max(0, Math.round((cells * percent) / 100)));
 	let out = "";
 	for (let i = 0; i < cells; i++) {
-		out += i < filled ? fg(mix(C.mint, C.sky, i / Math.max(1, cells - 1)), "▰") : fg(C.rule, "▱");
+		out += i < filled ? fg(mix(C.mint, C.sky, i / Math.max(1, cells - 1)), "▰") : fg(C.rule, "▰");
 	}
 	return out;
 }

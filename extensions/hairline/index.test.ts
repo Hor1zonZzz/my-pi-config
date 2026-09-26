@@ -93,7 +93,7 @@ test("editor keeps only top and bottom rules and embeds working status", async (
 	let lines = editor.render(80);
 	for (const line of lines) assert.ok(visibleWidth(line) <= 80);
 	assert.equal(plain(lines[0]), "─".repeat(80));
-	assert.match(plain(lines[lines.length - 1]), /^─ gpt-5\.6-sol · medium ─+ context ▰▰▰▰▱▱▱▱▱▱ 42% ─$/);
+	assert.match(plain(lines[lines.length - 1]), /^─ gpt-5\.6-sol · medium ─+ context ▰▰▰▰▰▰▰▰▰▰ 42% ─$/);
 	assert.equal(editor.embedWorkingStatus, true);
 
 	await t.emit("agent_start");

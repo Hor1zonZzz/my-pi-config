@@ -126,7 +126,7 @@ test("builds a persisted child session instead of --no-session", () => {
 	assert.equal(args[args.indexOf("--model") + 1], "p/m");
 	assert.equal(args[args.indexOf("--thinking") + 1], "high");
 	assert.ok(!args.some((arg) => arg.startsWith("Task:")), "RPC mode receives the task on stdin");
-	assert.deepEqual(JSON.parse(taskCommand("find auth")), { id: "task", type: "prompt", message: "Task: find auth" });
+	assert.deepEqual(JSON.parse(taskCommand("Task: find auth")), { id: "task", type: "prompt", message: "Task: find auth" });
 	assert.ok(taskCommand("a\nb").endsWith("}\n") && taskCommand("a\nb").split("\n").length === 2, "one JSONL record");
 	const own = buildArgs({ ...base, agent: { ...agent, model: "x/y" } }, "/s/run-2.jsonl", "/s");
 	assert.equal(own[own.indexOf("--model") + 1], "x/y");

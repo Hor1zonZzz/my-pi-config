@@ -30,6 +30,7 @@ subagent/
 ├── index.ts        # 装配：工具、命令、面板、浮层、生命周期
 ├── tool.ts         # subagent 工具：三种模式、同步/异步、结果
 ├── notices.ts      # 后台运行的一行状态通知
+├── control.ts      # subagent_control：send（插话、打断、继续）和 stop
 ├── runner.ts       # 以 RPC 模式启动子 pi、发送任务、解析事件、写元数据
 ├── runs.ts         # 运行快照，以及本进程运行的内存登记表
 ├── store.ts        # 子会话目录、元数据、读取对话记录
@@ -149,10 +150,28 @@ subagent 已经做完的改动不会回滚。停止时先给子 Pi 发 `abort` �
 - **最终消息**：结束整个任务的那次变化不单独通知。任务的最终消息给出每个子任务的状态和回答
   （每个最多 16 KB；链式中没运行的步骤为 `not started`），以 `deliverAs: "steer"` 加
   `triggerTurn: true` 投递，空闲的主 agent 会开始新的回复。整条消息最多 32 KB、1000 行。
-- **过程**：想看 subagent 做了什么，主 agent 用 `read` 读它的会话文件。没有单独的查看工具。
+- **过程**：想看 subagent 做了什么，主 agent 用 `read` 读它的会话文件。没有单独的查看工具；
+  `subagent_control` 只负责操作运行（见下）。
 - 前台运行不发通知：主 agent 正在这次调用里等待。
 - [`codex-server-compaction`](../codex-server-compaction/README.zh-CN.md) 远程压缩时不会把通知
   当作用户输入保留。通知只在历史末尾追加，所以前缀缓存和 Codex 续接都不受影响。
+
+### 给运行发消息和停止运行
+
+`subagent_control` 让主 agent 对本会话的运行做两件事：
+
+| 调用 | 运行中 | 已结束 |
+|---|---|---|
+| `{ action: "send", run, message }` | Pi 的 `steer`：当前这一步做完后看到 | 在它自己的会话文件上以后台方式继续，保留完整上下文；回答作为最终消息送达 |
+| `{ action: "send", run, message, interrupt: true }` | 先 `abort`，再把消息作为新 prompt：当前这一步（包括正在跑的命令）立即停止，转而处理这条消息 | 同上 |
+| `{ action: "stop", run }` | 结束它：`abort`、有序退出，2 秒后 SIGTERM，再过 5 秒 SIGKILL；工具等它结束后返回 `stopped` | 说明它已经结束 |
+
+- `run` 用结果里的短 ID，唯一前缀也行。
+- 已派发但还没开始的任务可以停止：它不会再启动，也不留文件。刚派发的运行，`send` 最多等 5 秒
+  让它启动；仍在排队就提示等它的 `running` 通知后再发。
+- 主 agent 自己发起的停止不再追加通知，工具结果已经说明。interrupt 在 abort 引发的
+  `agent_settled` 之后仍保持子进程输入打开，直到新 prompt 开始运行。
+- 继续一个项目本地 agent 时会再次请求确认。
 
 ## 配置 agent
 
@@ -206,7 +225,8 @@ agent 和任务，以及当前动作，或者耗时和输出 token 数。`Ctrl+O
 - 会话事件 `message_start`、`message_update`、`message_end`、`tool_execution_*`、
   `auto_retry_start`、`compaction_start` 和 `agent_settled`；收到 `agent_settled` 后关闭 stdin，
   Pi 随即退出；
-- `abort` 命令，以及关闭 stdin 后的有序退出；
+- `abort`、`steer` 和后续 `prompt` 命令（interrupt 是先 `abort` 再 `prompt`，其间 abort 引发的
+  `agent_settled` 不关闭 stdin），关闭 stdin 后的有序退出；`--session` 指向非空文件时接着那个会话；
 - RPC 扩展 UI 请求：`select`、`confirm`、`input`、`editor` 会一直阻塞到收到回答，所以运行器
   一律回答 `cancelled: true`（subagent 没有人可问）；通知和状态更新直接忽略。RPC 模式下子进程
   里的扩展看到的是 `ctx.hasUI === true` 和 `ctx.mode === "rpc"`。扩展直接写到 stdout 的终端
@@ -230,7 +250,8 @@ node --test subagent/*.test.ts
 中断的区别、abort 命令、SIGKILL 升级、被取消的对话框、忽略的通知、混入的转义序列、被拒绝的
 prompt 和子进程标记）、后台任务、面板按键处理、1 到 160 列宽度下的渲染、旧格式兼容、对话记录和
 历史视图、“选中 → 查看 → 停止 → 历史”的端到端流程、后台状态通知与最终回答、预留的会话
-文件，以及用真实子进程验证中途停止的链不会给未运行的步骤留下文件。
+文件、用真实子进程验证中途停止的链不会给未运行的步骤留下文件，以及 `subagent_control` 的插话、
+打断、停止、启动前停止、派发后立即发送和在同一会话文件上继续。
 
 交互检查时请直接加载入口文件。传目录的话，因为里面有 `prompts/`，Pi 会把它当成资源包：
 

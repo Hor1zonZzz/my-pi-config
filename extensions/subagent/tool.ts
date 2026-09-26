@@ -9,7 +9,7 @@ import { preview, truncateBytes } from "./format.ts";
 import { readDetails, type PendingTask, type SubagentDetails, toolBodyComponent, toolCallComponent } from "./render.ts";
 import { CHILD_ENV, type DispatchDefaults, runAgent } from "./runner.ts";
 import { parentSessionDir, type ReservedRun, releaseRun, reserveRun, shortRunId } from "./store.ts";
-import type { GroupKind, LiveRun, RunMode, RunRegistry, RunSnapshot } from "./runs.ts";
+import { type GroupKind, LiveRun, newSnapshot, type RunMode, type RunRegistry, type RunSnapshot } from "./runs.ts";
 
 export const MAX_PARALLEL_TASKS = 8;
 export const MAX_CONCURRENCY = 4;
@@ -155,6 +155,7 @@ export function toolDescription(userAgents: AgentConfig[]): string {
 		`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 		`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
 		"Results name each run's ID and session JSONL file; read the file to see what the subagent did.",
+		"Use subagent_control to send a run a message (steer, interrupt, or continue it) or stop it.",
 	].join(" ");
 }
 
@@ -224,6 +225,7 @@ export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, ba
 			// IDs and session files exist before any child starts, so the result can name them.
 			const sessionDir = parentSessionDir(parentSessionId);
 			const reserved = requested.map(() => reserveRun(sessionDir));
+			requested.forEach((item, index) => registry.expect({ id: reserved[index]!.id, agent: item.agent, parentSessionId }));
 			const ids = { runIds: reserved.map((r) => shortRunId(r.id)), sessionFiles: reserved.map((r) => r.sessionFile) };
 
 			const run = async (runSignal: AbortSignal | undefined, update: typeof onUpdate, runMode: RunMode, jobId?: string): Promise<Result> => {
@@ -238,6 +240,15 @@ export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, ba
 				}, UPDATE_INTERVAL_MS);
 				const start = async (item: { agent: string; task: string; cwd?: string }, index: number): Promise<RunSnapshot> => {
 					pending = pending.filter((p) => p.index !== index);
+					if (registry.takeStartDecision(reserved[index]!.id)) {
+						// subagent_control stopped it while it waited; it never starts.
+						const skipped = newSnapshot({ id: reserved[index]!.id, parentSessionId, agent: item.agent, agentSource: agentFor(item.agent).source, task: item.task, cwd: item.cwd ?? ctx.cwd, mode: runMode, group: { kind: mode, index, total: requested.length }, sessionDir, jobId });
+						Object.assign(skipped, { status: "cancelled", endedAt: skipped.startedAt, output: "Stopped by the main agent before it started." });
+						const stopped = new LiveRun(skipped);
+						live.push(stopped);
+						emit.call();
+						return copy(skipped);
+					}
 					started.add(index);
 					const liveRun = await runAgent({
 						agent: agentFor(item.agent),
@@ -322,7 +333,9 @@ export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, ba
 					emit.cancel();
 					// Tasks that never started (a stopped chain, an aborted job) leave no empty files behind.
 					reserved.forEach((r, index) => {
-						if (!started.has(index)) releaseRun(r);
+						if (started.has(index)) return;
+						releaseRun(r);
+						registry.takeStartDecision(r.id);
 					});
 				}
 			};
@@ -333,7 +346,10 @@ export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, ba
 			try {
 				jobId = background.start(ctx, label, (backgroundSignal) => run(backgroundSignal, undefined, "async", jobId));
 			} catch (error) {
-				for (const r of reserved) releaseRun(r);
+				for (const r of reserved) {
+					releaseRun(r);
+					registry.takeStartDecision(r.id);
+				}
 				throw error;
 			}
 			const lines = requested.map((item, index) => `${ids.runIds[index]} ${item.agent} ${initialStatus(mode, index)} ${ids.sessionFiles[index]}`);

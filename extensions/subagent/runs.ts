@@ -62,7 +62,15 @@ export class LiveRun {
 	readonly messages: Message[] = [];
 	streaming: StreamingMessage | undefined;
 	readonly controller = new AbortController();
-	stoppedByUser = false;
+	/** Who stopped the run: the user from the panel, or the main agent with subagent_control. */
+	stoppedBy: "user" | "agent" | undefined;
+	/**
+	 * Set by the runner while the child takes commands. `steer` is delivered after
+	 * the child's current step; `interrupt` aborts that step and handles the
+	 * message at once. Both reject when the child refuses or has exited.
+	 */
+	steer?: (message: string) => Promise<void>;
+	interrupt?: (message: string) => Promise<void>;
 
 	constructor(snapshot: RunSnapshot) {
 		this.snapshot = snapshot;
@@ -77,9 +85,9 @@ export class LiveRun {
 	}
 
 	/** Stop only this run; the rest of its tool call or background job keeps going. */
-	stop(): boolean {
+	stop(by: "user" | "agent" = "user"): boolean {
 		if (!this.running || this.controller.signal.aborted) return false;
-		this.stoppedByUser = true;
+		this.stoppedBy = by;
 		this.controller.abort();
 		return true;
 	}
@@ -93,14 +101,48 @@ export function interrupted(snapshot: RunSnapshot): RunSnapshot {
 
 type Listener = (run: LiveRun | undefined) => void;
 
+export interface WaitingRun {
+	id: string;
+	agent: string;
+	parentSessionId: string;
+	stopRequested?: boolean;
+}
+
 /** Runs started by this process, in start order, with change notifications for the UI. */
 export class RunRegistry {
 	private readonly runs = new Map<string, LiveRun>();
 	private readonly listeners = new Set<Listener>();
+	/** Runs handed out by a dispatch that have not started yet, and whether a stop was asked for. */
+	private readonly waiting = new Map<string, WaitingRun>();
 
 	add(run: LiveRun): void {
+		this.waiting.delete(run.id);
 		this.runs.set(run.id, run);
 		this.emit(run);
+	}
+
+	/** Records a dispatched run before it starts, so it can be named and stopped at once. */
+	expect(run: WaitingRun): void {
+		this.waiting.set(run.id, run);
+	}
+
+	waitingRuns(): WaitingRun[] {
+		return [...this.waiting.values()];
+	}
+
+	/** Asks a run that has not started never to start. False when it is not waiting. */
+	stopBeforeStart(id: string): boolean {
+		const run = this.waiting.get(id);
+		if (!run) return false;
+		run.stopRequested = true;
+		return true;
+	}
+
+	/** Called when a task's turn comes: true when it must be skipped. Forgets the waiting entry. */
+	takeStartDecision(id: string): boolean {
+		const run = this.waiting.get(id);
+		this.waiting.delete(id);
+		return run?.stopRequested === true;
 	}
 
 	get(id: string): LiveRun | undefined {
@@ -134,6 +176,7 @@ export class RunRegistry {
 	reset(): void {
 		for (const run of this.runs.values()) run.stop();
 		this.runs.clear();
+		this.waiting.clear();
 		this.emit();
 	}
 }

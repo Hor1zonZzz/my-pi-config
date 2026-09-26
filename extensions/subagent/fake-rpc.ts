@@ -4,6 +4,7 @@
  * `onTask(handler)`, and exits when stdin closes, as Pi does. A handler that
  * returns false rejects the prompt. `settle()` emits `agent_settled`; set
  * `globalThis.ignoreStdinEnd` to model a child that will not shut down.
+ * `globalThis.onCommand(command)` sees every later command before its reply.
  */
 export const FAKE_RPC = `
 const out = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
@@ -26,6 +27,7 @@ function onTask(handler) {
         const ok = handler(command.message.replace(/^Task: /, '')) !== false;
         out({ id: command.id, type: 'response', command: 'prompt', success: ok, ...(ok ? {} : { error: 'prompt rejected' }) });
       } else if (command.type !== 'extension_ui_response') {
+        globalThis.onCommand?.(command);
         out({ id: command.id, type: 'response', command: command.type, success: true });
       }
     }

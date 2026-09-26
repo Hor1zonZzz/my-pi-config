@@ -33,6 +33,7 @@ subagent/
 ├── index.ts        # Wiring: tool, commands, panel, overlays, lifecycle
 ├── tool.ts         # The subagent tool: modes, sync/async, results
 ├── notices.ts      # One-line state notices for background runs
+├── control.ts      # subagent_control: send (steer, interrupt, continue) and stop
 ├── runner.ts       # Starts a child pi in RPC mode, sends the task, parses events, saves metadata
 ├── runs.ts         # Run snapshots and the in-memory registry of this process's runs
 ├── store.ts        # Child session directory, metadata, transcript reading
@@ -174,11 +175,31 @@ final         Background job subagent-37690385 completed.
   `deliverAs: "steer"` and `triggerTurn: true`, so an idle main agent starts a
   new response. The whole message is capped at 32 KB and 1,000 lines.
 - **Progress**: to see what a subagent did, the main agent reads its session
-  file with `read`. There is no separate inspection tool.
+  file with `read`. There is no separate inspection tool; `subagent_control`
+  only acts on runs (below).
 - Foreground runs send no notices; the main agent is waiting inside the call.
 - [`codex-server-compaction`](../codex-server-compaction/README.md) does not
   retain notices as user input during remote compaction. Because they only
   append to the history, prompt caching and Codex continuation are unaffected.
+
+### Messaging and stopping a run
+
+`subagent_control` gives the main agent two actions on a run of this session:
+
+| Call | Run is running | Run has finished |
+|---|---|---|
+| `{ action: "send", run, message }` | Pi's `steer`: seen after the current step | Continued in the background on its own session file, with its full context; the answer arrives as a final message |
+| `{ action: "send", run, message, interrupt: true }` | `abort`, then the message as a new prompt: the current step (a running command too) stops and the run works on the message | Same as above |
+| `{ action: "stop", run }` | Ends it: `abort`, orderly exit, SIGTERM after 2 s, SIGKILL 5 s later; the result waits and says `stopped` | Says it is already finished |
+
+- `run` is the short ID from a result; a unique prefix also works.
+- A dispatched task that has not started can be stopped: it never starts and
+  leaves no file. `send` waits up to 5 s for a just-dispatched run to start and
+  otherwise asks to send again after its `running` notice.
+- The main agent's own stops add no notice; the tool result reports them.
+  An interrupt keeps the run's stdin open across the abort's `agent_settled`
+  until the new prompt starts.
+- Continuing a project-local agent asks for confirmation again.
 
 ## Configuring agents
 
@@ -239,7 +260,10 @@ Verified with Pi 0.87.1. The extension depends on:
 - the session events `message_start`, `message_update`, `message_end`,
   `tool_execution_*`, `auto_retry_start`, `compaction_start`, and
   `agent_settled`, after which the runner closes stdin and Pi exits;
-- the `abort` command, and orderly shutdown when stdin closes;
+- the `abort`, `steer`, and later `prompt` commands (an interrupt is `abort`
+  then `prompt`, with stdin held open across the abort's `agent_settled`), and
+  orderly shutdown when stdin closes; `--session` on a non-empty file continues
+  that session;
 - RPC extension UI requests: `select`, `confirm`, `input`, and `editor` block
   until answered, so the runner answers `cancelled: true` (a subagent has no one
   to ask); notifications and status updates are ignored. In RPC mode child
@@ -271,8 +295,10 @@ SIGKILL escalation, cancelled dialogs, ignored notifications, stray escape
 sequences, rejected prompts, and the child marker), background jobs, the panel's
 key handling, rendering at widths from 1 to 160 columns, legacy details, the
 transcript and history views, an end-to-end select → watch → stop → history
-flow, background state notices and final answers, reserved session files, and a
-real-process chain that releases the files of steps that never ran).
+flow, background state notices and final answers, reserved session files, a
+real-process chain that releases the files of steps that never ran, and
+`subagent_control` steer, interrupt, stop, stop-before-start, send right after
+dispatch, and continue on the same session file).
 
 For an interactive check, load the entry file directly. Passing the directory
 makes Pi treat it as a package because it contains `prompts/`:

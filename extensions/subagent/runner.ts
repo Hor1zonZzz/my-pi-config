@@ -15,6 +15,8 @@ const MAX_STDERR = 16 * 1024;
 /** After abort and closing stdin, how long Pi gets to shut down before SIGTERM. */
 const STOP_GRACE_MS = 2000;
 const KILL_GRACE_MS = 5000;
+/** How long an interrupt waits for the child to start on the new message before letting go. */
+const INTERRUPT_START_MS = 10_000;
 /** Set in every child so a subagent cannot start background subagents of its own. */
 export const CHILD_ENV = "PI_SUBAGENT_CHILD";
 /** Pi's RPC dialogs; they block until answered, and a subagent has nobody to ask. */
@@ -40,6 +42,8 @@ export interface RunRequest {
 	onChange?: (run: LiveRun) => void;
 	/** The run ID and session file handed out at dispatch; reserved here when absent. */
 	reserved?: ReservedRun;
+	/** First message instead of `Task: <task>`, for a run continued on its existing session. */
+	prompt?: string;
 }
 
 /** How to start the same Pi that runs this extension. */
@@ -80,8 +84,13 @@ export function buildArgs(request: RunRequest, sessionFile: string, sessionDir: 
 }
 
 /** The first RPC command: the task itself. */
-export function taskCommand(task: string): string {
-	return `${JSON.stringify({ id: "task", type: "prompt", message: `Task: ${task}` })}\n`;
+export function taskCommand(message: string): string {
+	return `${JSON.stringify({ id: "task", type: "prompt", message })}\n`;
+}
+
+interface RpcReply {
+	success: boolean;
+	error?: string;
 }
 
 /** Apply one JSON-mode event from the child to the live run. Returns true when state changed. */
@@ -129,7 +138,8 @@ export function applyEvent(run: LiveRun, event: any): boolean {
 				}
 				if (!s.model && message.model) s.model = message.model;
 				if (message.stopReason) s.stopReason = message.stopReason;
-				if (message.errorMessage) s.errorMessage = message.errorMessage;
+				// An interrupted step ends with an aborted message; a later answer supersedes it.
+				s.errorMessage = message.errorMessage || undefined;
 				const output = finalOutput(run.messages);
 				if (output) s.output = output;
 			}
@@ -163,9 +173,11 @@ function settle(run: LiveRun, exitCode: number, stderr: string, parentAborted = 
 	run.streaming = undefined;
 	const cleaned = cleanStderr(stderr);
 	if (cleaned) s.stderr = tail(cleaned, MAX_STDERR);
-	if (run.stoppedByUser || parentAborted) {
+	if (run.stoppedBy || parentAborted) {
 		s.status = "cancelled";
-		s.output = run.stoppedByUser ? "Stopped by the user before it finished." : "Cancelled with the parent operation.";
+		s.output = run.stoppedBy === "agent"
+			? "Stopped by the main agent before it finished."
+			: run.stoppedBy === "user" ? "Stopped by the user before it finished." : "Cancelled with the parent operation.";
 		return;
 	}
 	const failed = exitCode !== 0 || s.stopReason === "error" || s.stopReason === "aborted";
@@ -240,6 +252,39 @@ export async function runAgent(request: RunRequest): Promise<LiveRun> {
 			const endInput = () => {
 				if (!proc.stdin.destroyed && !proc.stdin.writableEnded) proc.stdin.end();
 			};
+			// Commands from subagent_control, answered by id.
+			const replies = new Map<string, (reply: RpcReply) => void>();
+			let nextCommand = 0;
+			const rpc = (command: Record<string, unknown>) => new Promise<RpcReply>((resolveReply) => {
+				if (proc.stdin.destroyed || proc.stdin.writableEnded) {
+					resolveReply({ success: false, error: "The subagent is shutting down." });
+					return;
+				}
+				const id = `control-${++nextCommand}`;
+				replies.set(id, resolveReply);
+				send({ ...command, id });
+			});
+			// Between agent_settled and the next agent_start the child is idle; stdin closes
+			// then unless an interrupt holds it open for the prompt that follows its abort.
+			let idle = false;
+			let hold = false;
+			const startWaiters: Array<() => void> = [];
+			const expectOk = (reply: RpcReply, what: string) => {
+				if (!reply.success) throw new Error(reply.error ?? `The subagent refused the ${what}.`);
+			};
+			run.steer = async (message) => expectOk(await rpc({ type: "steer", message }), "message");
+			run.interrupt = async (message) => {
+				hold = true;
+				try {
+					expectOk(await rpc({ type: "abort" }), "interrupt");
+					const started = new Promise<void>((resolveStart) => startWaiters.push(resolveStart));
+					expectOk(await rpc({ type: "prompt", message }), "message");
+					await Promise.race([started, new Promise((resolveWait) => setTimeout(resolveWait, INTERRUPT_START_MS))]);
+				} finally {
+					hold = false;
+					if (idle) endInput();
+				}
+			};
 			let buffer = "";
 			const processLine = (line: string) => {
 				const text = stripTerminalEscapes(line.replace(/\r$/, ""));
@@ -251,7 +296,13 @@ export async function runAgent(request: RunRequest): Promise<LiveRun> {
 					return;
 				}
 				if (record?.type === "response") {
-					if (record.command === "prompt" && record.success === false) {
+					const reply = typeof record.id === "string" ? replies.get(record.id) : undefined;
+					if (reply) {
+						replies.delete(record.id);
+						reply({ success: record.success === true, error: typeof record.error === "string" ? record.error : undefined });
+						return;
+					}
+					if (record.id === "task" && record.command === "prompt" && record.success === false) {
 						run.snapshot.stopReason = "error";
 						run.snapshot.errorMessage = String(record.error ?? "The subagent rejected its task.");
 						endInput();
@@ -262,8 +313,14 @@ export async function runAgent(request: RunRequest): Promise<LiveRun> {
 					if (DIALOG_METHODS.has(record.method)) send({ type: "extension_ui_response", id: record.id, cancelled: true });
 					return;
 				}
+				if (record?.type === "agent_start") {
+					idle = false;
+					for (const resolveStart of startWaiters.splice(0)) resolveStart();
+					return;
+				}
 				if (record?.type === "agent_settled") {
-					endInput();
+					idle = true;
+					if (!hold) endInput();
 					return;
 				}
 				if (applyEvent(run, record)) changed();
@@ -277,7 +334,7 @@ export async function runAgent(request: RunRequest): Promise<LiveRun> {
 			proc.stderr.on("data", (data) => {
 				stderr = tail(stderr + data.toString(), MAX_STDERR * 2);
 			});
-			proc.stdin.write(taskCommand(request.task));
+			proc.stdin.write(taskCommand(request.prompt ?? `Task: ${request.task}`));
 			const timers: Array<ReturnType<typeof setTimeout>> = [];
 			const alive = () => proc.exitCode === null && proc.signalCode === null;
 			const stop = () => {
@@ -295,6 +352,10 @@ export async function runAgent(request: RunRequest): Promise<LiveRun> {
 			run.controller.signal.addEventListener("abort", stop, { once: true });
 			proc.on("close", (code) => {
 				for (const timer of timers) clearTimeout(timer);
+				run.steer = undefined;
+				run.interrupt = undefined;
+				for (const reply of replies.values()) reply({ success: false, error: "The subagent exited." });
+				replies.clear();
 				run.controller.signal.removeEventListener("abort", stop);
 				if (buffer.trim()) processLine(buffer);
 				resolve(code ?? 1);

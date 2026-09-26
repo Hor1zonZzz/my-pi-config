@@ -13,6 +13,7 @@ import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-c
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { BackgroundJobs } from "./background.ts";
 import { registerConfigCommand } from "./config.ts";
+import { registerControlTool } from "./control.ts";
 import { preview } from "./format.ts";
 import { RunPanel } from "./panel.ts";
 import { NOTICE_TYPE, type NoticeDetails, noticeComponent, watchRunNotices } from "./notices.ts";
@@ -161,6 +162,7 @@ export default function subagentExtension(pi: ExtensionAPI) {
 
 	registerConfigCommand(pi);
 	registerSubagentTool(pi, registry, background);
+	registerControlTool(pi, { registry, background });
 
 	pi.registerCommand("subagent-history", {
 		description: "Browse this session's subagent runs and their transcripts",

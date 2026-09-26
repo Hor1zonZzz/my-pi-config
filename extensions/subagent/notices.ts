@@ -51,9 +51,13 @@ export function watchRunNotices(pi: ExtensionAPI, registry: RunRegistry, options
 		const s = changed?.snapshot;
 		if (!s || s.mode !== "async" || !s.jobId || s.parentSessionId !== options.sessionId()) return;
 		// The dispatch result already said "running" for tasks that started at once.
-		const previous = lastSent.get(s.id) ?? initialStatus(s.group.kind, s.group.index);
+		// Keyed by job: a run continued with subagent_control starts over in a new job.
+		const key = `${s.jobId}:${s.id}`;
+		const previous = lastSent.get(key) ?? initialStatus(s.group.kind, s.group.index);
 		if (previous === s.status) return;
-		lastSent.set(s.id, s.status);
+		lastSent.set(key, s.status);
+		// The main agent learned about its own stop from subagent_control's result.
+		if (s.status === "cancelled" && changed?.stoppedBy === "agent") return;
 		if (s.status !== "running") {
 			const jobRuns = registry.list().map((run) => run.snapshot).filter((other) => other.jobId === s.jobId);
 			if (endsJob(s, jobRuns)) return;

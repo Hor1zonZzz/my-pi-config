@@ -33,7 +33,7 @@ subagent/
 ├── index.ts        # Wiring: tool, commands, panel, overlays, lifecycle
 ├── tool.ts         # The subagent tool: modes, sync/async, results
 ├── control.ts      # The subagent_control tool: list, inspect, read, wait
-├── status.ts       # Request-local <system_status> block for the main agent
+├── notices.ts      # One-line state notices for runs of multi-run background jobs
 ├── runner.ts       # Starts a child pi in RPC mode, sends the task, parses events, saves metadata
 ├── runs.ts         # Run snapshots and the in-memory registry of this process's runs
 ├── store.ts        # Child session directory, metadata, transcript reading
@@ -162,34 +162,29 @@ own; `wait` is for when the main agent has nothing else to do and needs the
 result now. A foreground run keeps the main agent inside its `subagent` call, so
 these actions matter mostly for background runs.
 
-### Live status in every request
+### State notices
 
-While subagents are active, every model request of the main agent ends with a
-`<system_status>` block, so the model knows their state without calling a tool:
+When a run inside a background job of several runs (parallel or chain)
+finishes while the job keeps going, one short message is appended to the main
+session, in the format Codex CLI uses:
 
 ```text
-<system_status>
-Subagents: 1 running, 1 just finished. This status is current for this request only and is not kept in the conversation.
-- a3f9c2e1 scout: running 1m 12s, background job subagent-1b2c3d4e, now: read src/auth.ts. Task: Find where tokens are refreshed
-- c02e9f17 reviewer: completed in 2m 40s. Task: Review the runner changes
-Use subagent_control to inspect, read, or wait for a run.
-</system_status>
+<subagent_notification>
+{"job":"subagent-fc664987","run":"f1dc6056","agent":"scout","status":"completed","done":"1/2","elapsed":"1s"}
+</subagent_notification>
 ```
 
-- It lists running runs, background jobs dispatched but not started yet
-  (`starting`), and runs that finished since the last status the model saw;
-  each finished run appears once. With nothing to report there is no block.
-- It is appended through Pi's `context` event as a separate last user message
-  of that request only. It is never written to the session, and the next request
-  replaces it, so earlier requests' statuses do not accumulate. Placing it after
-  every stable message keeps the prompt-cache prefix intact: on gpt-5.6-sol over
-  the Codex WebSocket transport, 18 requests with the block cached 69.6% of input
-  tokens against 70.1% without it.
-- [`codex-server-compaction`](../codex-server-compaction/README.md) recognizes
-  the tag: after a request that carried it, the next request sends full input
-  instead of continuing with `previous_response_id` (a continued response keeps
-  its request's input, stale status included), and remote compaction never
-  retains it.
+- It is sent with `triggerTurn: false`: while the main agent works, Pi appends it
+  at the end of the current turn; when it is idle, at once. It never starts a
+  turn, and it shows in the chat as one line.
+- It is stored like any message, so the prompt only grows at the end and prompt
+  caching and Codex continuation are unaffected. Each notice is about 40 tokens,
+  written once per qualifying run.
+- Nothing is sent for activity (such as the file being read), for foreground
+  runs (the tool result reports them), or for the run that ends a job (the
+  job's completion message reports it). `subagent_control` gives the details.
+- [`codex-server-compaction`](../codex-server-compaction/README.md) does not
+  retain these notices as user input during remote compaction.
 
 ## Configuring agents
 
@@ -263,8 +258,8 @@ Verified with Pi 0.87.1. The extension depends on:
   (how the panel tells the prompt apart from dialogs);
 - `ctx.ui.setWidget(..., { placement: "belowEditor" })` and overlay
   `ctx.ui.custom()`;
-- the `context` event, whose returned messages apply to one model request and
-  are not persisted.
+- `pi.sendMessage(..., { triggerTurn: false })` appending at the end of the
+  current turn while the agent streams, and at once while it is idle.
 
 Tests run with Node 24 against the installed Pi packages. Use a disposable copy
 whose `node_modules/@earendil-works` and `node_modules/typebox` point at the

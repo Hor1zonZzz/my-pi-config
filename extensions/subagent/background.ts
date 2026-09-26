@@ -28,11 +28,6 @@ export class BackgroundJobs {
 		}
 	}
 
-	/** Jobs that have been dispatched and not yet delivered, oldest first. */
-	active(): Array<{ id: string; task: string }> {
-		return [...this.jobs.values()].map((job) => ({ id: job.id, task: job.task }));
-	}
-
 	list(): string {
 		return [...this.jobs.values()].map((job) => `${job.id}: ${job.task.slice(0, 200)}`).join("\n") || "No background subagents running.";
 	}

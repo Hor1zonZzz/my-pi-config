@@ -11,7 +11,7 @@ Pi 进行手动或自动压缩时，扩展会并行启动两个请求：
 
 自定义 transport 会保存 canonical request/response items。live prefix 匹配时，压缩在线路上缩减为 `previous_response_id` 加 trigger；重连或 SSE fallback 则发送经过校验的完整历史。
 
-[subagent 扩展](../subagent/README.zh-CN.md#每次请求附带实时状态)可能会在请求末尾追加一条请求级的 `<system_status>` user 消息，下一次请求会把它去掉。由于用 `previous_response_id` 续接的回复会保留它那次请求的 input，transport 不会续接带有这条消息的请求所得到的回复（包括待回传工具输出的捷径），而是发送完整 input；V2 保留消息时也不会保留它。
+V2 只保留真实的用户消息：[subagent 扩展](../subagent/README.zh-CN.md#状态通知)的 `<subagent_notification>` 消息和 Codex CLI 中一样属于上下文，不会被保留。
 
 V2 成功后会返回一个 opaque `compaction` item。扩展按官方 64K 预算保留最近用户消息，并与该 item 一起保存到 `CompactionEntry.details.remoteCompaction`。扩展向完全相同的 Codex provider/API/model/账号提供精确原生历史，并删除压缩前可能残留的旧 `previous_response_id`。重放在 Pi payload hook 之后、自定义 transport 的实际请求 token 边界处完成，再交给 cached WebSocket 缩减：第一次请求或重连时在线路上发送显式 artifact history；live prefix 完全匹配后， Pi 会在线路上自动缩减为原生 `previous_response_id` 加新增 delta。其他模型正常使用 Pi 文本摘要和保留消息。
 

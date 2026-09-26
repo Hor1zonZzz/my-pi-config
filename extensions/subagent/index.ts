@@ -16,7 +16,7 @@ import { registerConfigCommand } from "./config.ts";
 import { registerControlTool } from "./control.ts";
 import { preview } from "./format.ts";
 import { RunPanel } from "./panel.ts";
-import { registerStatusInjection } from "./status.ts";
+import { NOTICE_TYPE, type NoticeDetails, noticeComponent, watchRunNotices } from "./notices.ts";
 import { completionComponent } from "./render.ts";
 import { interrupted, RunRegistry } from "./runs.ts";
 import { findSessionFile, listRuns, parentSessionDir, readSessionMessages } from "./store.ts";
@@ -46,7 +46,6 @@ function focusedEditor(tui: TUI | undefined): EditorLike | undefined {
 export default function subagentExtension(pi: ExtensionAPI) {
 	const registry = new RunRegistry();
 	const background = new BackgroundJobs(pi);
-	const status = registerStatusInjection(pi, registry, () => background.active());
 	let ctxRef: ExtensionContext | undefined;
 	let tui: TUI | undefined;
 	let animation: ReturnType<typeof setInterval> | undefined;
@@ -137,7 +136,6 @@ export default function subagentExtension(pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		teardown();
 		registry.reset();
-		status.reset();
 		ctxRef = ctx;
 		stopListening = registry.subscribe(syncAnimation);
 		if (ctx.mode !== "tui") return;
@@ -197,4 +195,7 @@ export default function subagentExtension(pi: ExtensionAPI) {
 	pi.registerMessageRenderer("subagent-completion", (message, { expanded }, theme) =>
 		completionComponent(theme, String(message.content), message.details, expanded),
 	);
+
+	watchRunNotices(pi, registry, { sessionId: () => ctxRef?.sessionManager.getSessionId() });
+	pi.registerMessageRenderer(NOTICE_TYPE, (message, _options, theme) => noticeComponent(theme, message.details as NoticeDetails | undefined));
 }

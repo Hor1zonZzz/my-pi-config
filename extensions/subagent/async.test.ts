@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { BackgroundJobs } from "./background.ts";
+import { FAKE_RPC } from "./fake-rpc.ts";
 import register from "./index.ts";
 import { toolDescription } from "./tool.ts";
 
@@ -126,20 +127,24 @@ test("subagent tool with real subprocesses and deterministic JSON output", async
 	writeFileSync(join(dir, ".pi", "agents", "scout.md"), "---\nname: scout\ndescription: test\n---\nInspect code.");
 	writeFileSync(script, `
 const fs = require('node:fs');
-const task = process.argv.at(-1).replace(/^Task: /, '');
-if (task === 'stubborn') {
-  process.on('SIGTERM', () => {});
-  fs.writeFileSync('ready', String(process.pid));
-  setInterval(() => {}, 1000);
-} else {
+${FAKE_RPC}
+onTask((task) => {
+  if (task === 'stubborn') {
+    globalThis.ignoreStdinEnd = true;
+    process.on('SIGTERM', () => {});
+    fs.writeFileSync('ready', String(process.pid));
+    setInterval(() => {}, 1000);
+    return;
+  }
   setTimeout(() => {
     if (task === 'fail') { process.stderr.write('child failed'); process.exit(2); }
-    console.log(JSON.stringify({ type: 'message_end', message: {
+    out({ type: 'message_end', message: {
       role: 'assistant', content: [{ type: 'text', text: 'result:' + task }],
       stopReason: 'stop', usage: { input: 1, output: 1 }
-    }}));
+    }});
+    settle();
   }, task === 'slow' ? 300 : 20);
-}
+});
 `);
 	process.argv[1] = script;
 	const h = harness(dir);

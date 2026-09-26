@@ -33,7 +33,7 @@ subagent/
 ├── index.ts        # Wiring: tool, commands, panel, overlays, lifecycle
 ├── tool.ts         # The subagent tool: modes, sync/async, results
 ├── control.ts      # The subagent_control tool: list, inspect, read, wait
-├── runner.ts       # Starts a child pi, parses its JSON events, saves metadata
+├── runner.ts       # Starts a child pi in RPC mode, sends the task, parses events, saves metadata
 ├── runs.ts         # Run snapshots and the in-memory registry of this process's runs
 ├── store.ts        # Child session directory, metadata, transcript reading
 ├── background.ts   # Background jobs and steer delivery
@@ -74,7 +74,8 @@ background:
   not repeat or poll the delegated work. At most 4 background jobs run at once;
   completion text is capped at 32 KB and 1,000 lines, and the full result is in
   the message details. Async needs a long-lived TUI or RPC session; print and
-  JSON modes reject it.
+  JSON modes reject it, and so does a subagent (its session ends when its own
+  task settles).
 
 Project-local agents (`.pi/agents/*.md`) run only with `agentScope: "project"` or
 `"both"`, and the tool always asks for confirmation first, even in trusted
@@ -98,6 +99,8 @@ editor with each run's current action and elapsed time.
 and multi-line editing keep working. Stopping a run affects only that run: other
 parallel tasks keep going, a chain stops at that step, and the tool or job
 reports the run as stopped. Work the subagent already did is not rolled back.
+Stopping sends the child Pi an `abort` and closes its input so it shuts down in
+order; a child still running 2 s later gets SIGTERM, and SIGKILL 5 s after that.
 
 The transcript view shows the task, thinking (first lines; `t` shows all), tool
 calls, tool results, and the answer as it streams. It follows new output until
@@ -209,10 +212,21 @@ by the previous version of this extension still render.
 
 Verified with Pi 0.87.1. The extension depends on:
 
-- `pi --mode json -p` with `--session-dir`, `--session-id`, `--name`, `--model`,
-  `--thinking`, `--tools`, and `--append-system-prompt`, and the JSON-mode events
-  `message_start`, `message_update`, `message_end`, `tool_execution_*`,
-  `auto_retry_start`, and `compaction_start`;
+- `pi --mode rpc` with `--session-dir`, `--session-id`, `--name`, `--model`,
+  `--thinking`, `--tools`, and `--append-system-prompt`; the task is the first
+  `prompt` command on stdin, and a `prompt` response with `success: false` fails
+  the run;
+- the session events `message_start`, `message_update`, `message_end`,
+  `tool_execution_*`, `auto_retry_start`, `compaction_start`, and
+  `agent_settled`, after which the runner closes stdin and Pi exits;
+- the `abort` command, and orderly shutdown when stdin closes;
+- RPC extension UI requests: `select`, `confirm`, `input`, and `editor` block
+  until answered, so the runner answers `cancelled: true` (a subagent has no one
+  to ask); notifications and status updates are ignored. In RPC mode child
+  extensions see `ctx.hasUI === true` and `ctx.mode === "rpc"`. Terminal escape
+  sequences an extension writes straight to stdout (such as `notify.ts`'s OSC
+  notification) are stripped before parsing. Children get `PI_SUBAGENT_CHILD=1`,
+  which makes the `subagent` tool refuse `async: true`;
 - the session file name `<timestamp>_<session id>.jsonl` and `message` entries;
 - `ctx.ui.onTerminalInput()` running before the focused component, the concrete
   TUI's `getFocusedComponent()`, and Pi's main editor carrying `actionHandlers`
@@ -228,8 +242,10 @@ installed packages:
 node --test subagent/*.test.ts
 ```
 
-They cover the runner with a fake child (session arguments, events, metadata,
-user stop versus parent abort, SIGKILL escalation), background jobs, the panel's
+They cover the runner with a fake RPC child (session arguments, the task
+prompt, events, metadata, user stop versus parent abort, the abort command,
+SIGKILL escalation, cancelled dialogs, ignored notifications, stray escape
+sequences, rejected prompts, and the child marker), background jobs, the panel's
 key handling, rendering at widths from 1 to 160 columns, legacy details, the
 transcript and history views, an end-to-end select → watch → stop → history
 flow, and `subagent_control` (listing, ID/prefix/job resolution, inspection,

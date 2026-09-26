@@ -13,7 +13,15 @@ import { ensureDir, parentSessionDir, writeMeta } from "./store.ts";
 
 const MAX_TOOL_CALLS = 200;
 const MAX_STDERR = 16 * 1024;
+/** After abort and closing stdin, how long Pi gets to shut down before SIGTERM. */
+const STOP_GRACE_MS = 2000;
 const KILL_GRACE_MS = 5000;
+/** Set in every child so a subagent cannot start background subagents of its own. */
+export const CHILD_ENV = "PI_SUBAGENT_CHILD";
+/** Pi's RPC dialogs; they block until answered, and a subagent has nobody to ask. */
+const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
+/** Terminal escape sequences an extension may write straight to stdout (for example OSC notifications). */
+const STRAY_ESCAPES = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 
 export interface DispatchDefaults {
 	model?: string;
@@ -58,8 +66,9 @@ async function writePromptToTempFile(agentName: string, prompt: string): Promise
 
 export function buildArgs(request: RunRequest, id: string, sessionDir: string, promptFile?: string): string[] {
 	const { agent, defaults } = request;
+	// RPC mode keeps stdin open for commands; the task arrives as the first prompt.
 	// Persist the child session instead of --no-session so /subagent-history can show it.
-	const args = ["--mode", "json", "-p", "--session-dir", sessionDir, "--session-id", id, "--name", `${agent.name} · ${preview(request.task, 60)}`];
+	const args = ["--mode", "rpc", "--session-dir", sessionDir, "--session-id", id, "--name", `${agent.name} · ${preview(request.task, 60)}`];
 	const inheritsDispatchModel = !agent.model;
 	const model = agent.model ?? defaults.model;
 	const thinkingLevel = agent.thinkingLevel ?? (inheritsDispatchModel ? defaults.thinkingLevel : undefined);
@@ -67,8 +76,12 @@ export function buildArgs(request: RunRequest, id: string, sessionDir: string, p
 	if (thinkingLevel) args.push("--thinking", thinkingLevel);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 	if (promptFile) args.push("--append-system-prompt", promptFile);
-	args.push(`Task: ${request.task}`);
 	return args;
+}
+
+/** The first RPC command: the task itself. */
+export function taskCommand(task: string): string {
+	return `${JSON.stringify({ id: "task", type: "prompt", message: `Task: ${task}` })}\n`;
 }
 
 /** Apply one JSON-mode event from the child to the live run. Returns true when state changed. */
@@ -214,19 +227,45 @@ export async function runAgent(request: RunRequest): Promise<LiveRun> {
 			const proc = spawn(invocation.command, invocation.args, {
 				cwd: request.cwd,
 				shell: false,
-				stdio: ["ignore", "pipe", "pipe"],
+				stdio: ["pipe", "pipe", "pipe"],
+				env: { ...process.env, [CHILD_ENV]: "1" },
 			});
+			// A child that exits early closes the pipe; its exit code tells the story.
+			proc.stdin.on("error", () => {});
+			const send = (record: object) => {
+				if (!proc.stdin.destroyed && proc.stdin.writable) proc.stdin.write(`${JSON.stringify(record)}\n`);
+			};
+			// Closing stdin asks Pi for an orderly shutdown once it has nothing left to do.
+			const endInput = () => {
+				if (!proc.stdin.destroyed && !proc.stdin.writableEnded) proc.stdin.end();
+			};
 			let buffer = "";
 			const processLine = (line: string) => {
-				const text = line.replace(/\r$/, "");
+				const text = line.replace(/\r$/, "").replace(STRAY_ESCAPES, "");
 				if (!text.trim()) return;
-				let event: unknown;
+				let record: any;
 				try {
-					event = JSON.parse(text);
+					record = JSON.parse(text);
 				} catch {
 					return;
 				}
-				if (applyEvent(run, event)) changed();
+				if (record?.type === "response") {
+					if (record.command === "prompt" && record.success === false) {
+						run.snapshot.stopReason = "error";
+						run.snapshot.errorMessage = String(record.error ?? "The subagent rejected its task.");
+						endInput();
+					}
+					return;
+				}
+				if (record?.type === "extension_ui_request") {
+					if (DIALOG_METHODS.has(record.method)) send({ type: "extension_ui_response", id: record.id, cancelled: true });
+					return;
+				}
+				if (record?.type === "agent_settled") {
+					endInput();
+					return;
+				}
+				if (applyEvent(run, record)) changed();
 			};
 			proc.stdout.on("data", (data) => {
 				buffer += data.toString();
@@ -237,18 +276,25 @@ export async function runAgent(request: RunRequest): Promise<LiveRun> {
 			proc.stderr.on("data", (data) => {
 				stderr = tail(stderr + data.toString(), MAX_STDERR * 2);
 			});
-			let killTimer: ReturnType<typeof setTimeout> | undefined;
-			const kill = () => {
-				proc.kill("SIGTERM");
-				killTimer = setTimeout(() => {
-					// kill() only sends a signal; escalate if the process is still alive.
-					if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
-				}, KILL_GRACE_MS);
+			proc.stdin.write(taskCommand(request.task));
+			const timers: Array<ReturnType<typeof setTimeout>> = [];
+			const alive = () => proc.exitCode === null && proc.signalCode === null;
+			const stop = () => {
+				send({ type: "abort" });
+				endInput();
+				// kill() only sends a signal; escalate while the process is still alive.
+				timers.push(setTimeout(() => {
+					if (!alive()) return;
+					proc.kill("SIGTERM");
+					timers.push(setTimeout(() => {
+						if (alive()) proc.kill("SIGKILL");
+					}, KILL_GRACE_MS));
+				}, STOP_GRACE_MS));
 			};
-			run.controller.signal.addEventListener("abort", kill, { once: true });
+			run.controller.signal.addEventListener("abort", stop, { once: true });
 			proc.on("close", (code) => {
-				if (killTimer) clearTimeout(killTimer);
-				run.controller.signal.removeEventListener("abort", kill);
+				for (const timer of timers) clearTimeout(timer);
+				run.controller.signal.removeEventListener("abort", stop);
 				if (buffer.trim()) processLine(buffer);
 				resolve(code ?? 1);
 			});

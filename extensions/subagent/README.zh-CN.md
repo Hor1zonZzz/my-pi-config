@@ -30,7 +30,7 @@ subagent/
 ├── index.ts        # 装配：工具、命令、面板、浮层、生命周期
 ├── tool.ts         # subagent 工具：三种模式、同步/异步、结果
 ├── control.ts      # subagent_control 工具：list、inspect、read、wait
-├── runner.ts       # 启动子 pi、解析 JSON 事件、写元数据
+├── runner.ts       # 以 RPC 模式启动子 pi、发送任务、解析事件、写元数据
 ├── runs.ts         # 运行快照，以及本进程运行的内存登记表
 ├── store.ts        # 子会话目录、元数据、读取对话记录
 ├── background.ts   # 后台任务和 steer 投递
@@ -66,7 +66,7 @@ subagent/
   `deliverAs: "steer"` 加 `triggerTurn: true`：主代理忙时在下一次模型调用前收到，空闲时
   会开始新的回复。主代理不应重复或轮询这项工作。最多同时 4 个后台任务；完成消息正文最多
   32 KB、1000 行，完整结果在消息详情里。异步需要长驻的 TUI 或 RPC 会话，print 和 JSON
-  模式会拒绝。
+  模式会拒绝；subagent 内部也会拒绝（它的会话在自己的任务结束时就退出了）。
 
 项目本地的 agent（`.pi/agents/*.md`）只在 `agentScope` 为 `"project"` 或 `"both"` 时运行，
 而且即使项目已被信任，运行前也一定会先确认，除非调用时设置了 `confirmProjectAgents: false`。
@@ -86,7 +86,8 @@ subagent/
 
 只有输入框为空并且有焦点时 `↓` 才会被接管，所以历史记录和多行编辑都不受影响。停止只影响
 这一个运行：并行中的其他任务继续，链式在这一步停下，工具或后台任务会把它报告为已停止。
-subagent 已经做完的改动不会回滚。
+subagent 已经做完的改动不会回滚。停止时先给子 Pi 发 `abort` 并关闭它的输入，让它有序退出；
+2 秒后仍在运行就发 SIGTERM，再过 5 秒发 SIGKILL。
 
 对话记录视图会显示任务、思考过程（前几行，按 `t` 显示全部）、工具调用、工具结果，以及
 正在流式输出的答案。它会自动跟随新输出，直到你往上滚；按 `G` 或 `End` 恢复跟随。按键：
@@ -186,9 +187,18 @@ agent 和任务，以及当前动作，或者耗时和输出 token 数。`Ctrl+O
 
 在 Pi 0.87.1 上验证。依赖：
 
-- `pi --mode json -p` 及 `--session-dir`、`--session-id`、`--name`、`--model`、`--thinking`、
-  `--tools`、`--append-system-prompt`，以及 JSON 模式事件 `message_start`、`message_update`、
-  `message_end`、`tool_execution_*`、`auto_retry_start`、`compaction_start`；
+- `pi --mode rpc` 及 `--session-dir`、`--session-id`、`--name`、`--model`、`--thinking`、
+  `--tools`、`--append-system-prompt`；任务作为 stdin 上的第一条 `prompt` 命令发送，
+  `prompt` 的响应为 `success: false` 时运行记为失败；
+- 会话事件 `message_start`、`message_update`、`message_end`、`tool_execution_*`、
+  `auto_retry_start`、`compaction_start` 和 `agent_settled`；收到 `agent_settled` 后关闭 stdin，
+  Pi 随即退出；
+- `abort` 命令，以及关闭 stdin 后的有序退出；
+- RPC 扩展 UI 请求：`select`、`confirm`、`input`、`editor` 会一直阻塞到收到回答，所以运行器
+  一律回答 `cancelled: true`（subagent 没有人可问）；通知和状态更新直接忽略。RPC 模式下子进程
+  里的扩展看到的是 `ctx.hasUI === true` 和 `ctx.mode === "rpc"`。扩展直接写到 stdout 的终端
+  转义序列（例如 `notify.ts` 的 OSC 通知）在解析前会被去掉。子进程带有 `PI_SUBAGENT_CHILD=1`，
+  `subagent` 工具看到它就拒绝 `async: true`；
 - 会话文件名 `<时间戳>_<会话 ID>.jsonl` 和其中的 `message` 条目；
 - `ctx.ui.onTerminalInput()` 在焦点组件之前执行、具体 TUI 实现的 `getFocusedComponent()`，
   以及 Pi 主输入框带有 `actionHandlers`（面板靠它区分主输入框和对话框）；
@@ -201,8 +211,9 @@ agent 和任务，以及当前动作，或者耗时和输出 token 数。`Ctrl+O
 node --test subagent/*.test.ts
 ```
 
-测试覆盖：用假子进程测试运行器（会话参数、事件、元数据、用户停止与主代理中断的区别、
-SIGKILL 升级）、后台任务、面板按键处理、1 到 160 列宽度下的渲染、旧格式兼容、对话记录和
+测试覆盖：用假 RPC 子进程测试运行器（会话参数、任务 prompt、事件、元数据、用户停止与主代理
+中断的区别、abort 命令、SIGKILL 升级、被取消的对话框、忽略的通知、混入的转义序列、被拒绝的
+prompt 和子进程标记）、后台任务、面板按键处理、1 到 160 列宽度下的渲染、旧格式兼容、对话记录和
 历史视图、“选中 → 查看 → 停止 → 历史”的端到端流程，以及 `subagent_control`（列表、按 ID/
 前缀/后台任务定位、查看、对话记录分页、等待及其取消、重载后从磁盘读取已结束的运行、不同
 父会话之间的隔离）。

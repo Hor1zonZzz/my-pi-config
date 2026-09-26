@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { FAKE_RPC } from "./fake-rpc.ts";
 import { type ControlEntry, readText, resolveRuns, waitUntil } from "./control.ts";
 import register from "./index.ts";
 import { LiveRun, newSnapshot, RunRegistry } from "./runs.ts";
@@ -16,23 +17,26 @@ mkdirSync(join(agentDir, "agents"), { recursive: true });
 writeFileSync(join(agentDir, "agents", "scout.md"), "---\nname: scout\ndescription: test scout\n---\nInspect code.");
 const cwd = join(root, "work");
 mkdirSync(cwd);
-// A stand-in for `pi --mode json -p`: "hang" keeps running, anything else answers at once.
+// A stand-in for `pi --mode rpc`: "hang" keeps running, anything else answers at once.
 const script = join(root, "fake-pi.cjs");
 writeFileSync(script, `
 const fs = require('node:fs'), path = require('node:path');
 const argv = process.argv, arg = (name) => argv[argv.indexOf(name) + 1];
-const task = argv.at(-1).replace(/^Task: /, '');
+${FAKE_RPC}
 // Pi writes <session dir>/<timestamp>_<session id>.jsonl; mirror that for message entries.
 const file = path.join(arg('--session-dir'), '2026-01-01T00-00-00-000Z_' + arg('--session-id') + '.jsonl');
-const out = (e) => {
-	process.stdout.write(JSON.stringify(e) + '\\n');
+const emit = (e) => {
+	out(e);
 	if (e.type === 'message_end') fs.appendFileSync(file, JSON.stringify({ type: 'message', message: e.message }) + '\\n');
 };
-out({ type: 'message_end', message: { role: 'user', content: [{ type: 'text', text: 'Task: ' + task }] } });
-out({ type: 'message_start', message: { role: 'assistant', content: [] } });
-out({ type: 'tool_execution_start', toolCallId: 'c', toolName: 'read', args: { path: 'src/auth.ts' } });
-if (task === 'hang') setInterval(() => {}, 1000);
-else out({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'toolCall', name: 'read', arguments: { path: 'src/auth.ts' } }, { type: 'text', text: 'found it: ' + task }], stopReason: 'stop', usage: { output: 7 } } });
+onTask((task) => {
+	emit({ type: 'message_end', message: { role: 'user', content: [{ type: 'text', text: 'Task: ' + task }] } });
+	emit({ type: 'message_start', message: { role: 'assistant', content: [] } });
+	emit({ type: 'tool_execution_start', toolCallId: 'c', toolName: 'read', args: { path: 'src/auth.ts' } });
+	if (task === 'hang') return void setInterval(() => {}, 1000);
+	emit({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'toolCall', name: 'read', arguments: { path: 'src/auth.ts' } }, { type: 'text', text: 'found it: ' + task }], stopReason: 'stop', usage: { output: 7 } } });
+	settle();
+});
 `);
 const originalScript = process.argv[1];
 process.argv[1] = script;

@@ -5,7 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AgentConfig } from "./agents.ts";
-import { applyEvent, buildArgs, runAgent } from "./runner.ts";
+import { FAKE_RPC } from "./fake-rpc.ts";
+import { applyEvent, buildArgs, runAgent, taskCommand } from "./runner.ts";
 import { LiveRun, newSnapshot, RunRegistry } from "./runs.ts";
 import { findSessionFile, listRuns, parentSessionDir, readSessionMessages } from "./store.ts";
 
@@ -16,25 +17,49 @@ const cwd = join(root, "work");
 const script = join(root, "fake-pi.cjs");
 mkdirSync(cwd, { recursive: true });
 
-// A stand-in for `pi --mode json -p`: JSON-mode records on stdout, a session file on disk.
+// A stand-in for `pi --mode rpc`: commands on stdin, JSON records on stdout, a session file on disk.
 writeFileSync(script, `
 const fs = require('node:fs');
 const path = require('node:path');
 const argv = process.argv;
 const arg = (name) => argv[argv.indexOf(name) + 1];
-const task = argv.at(-1).replace(/^Task: /, '');
-const out = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
+${FAKE_RPC}
 process.stderr.write("Warning: No project session found with id '" + arg('--session-id') + "'; creating a new session with that id.\\n");
-out({ type: 'session', version: 3, id: arg('--session-id'), cwd: process.cwd() });
-if (task === 'wait') {
-  fs.writeFileSync('started', '1');
-  out({ type: 'message_start', message: { role: 'assistant', content: [] } });
-  out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'partial' } });
-  setInterval(() => {}, 1000);
-} else if (task === 'fail') {
-  process.stderr.write('boom');
-  process.exit(3);
-} else {
+process.on('exit', () => fs.writeFileSync('received-' + arg('--session-id') + '.json', JSON.stringify(received)));
+const answer = (text) => ({ role: 'assistant', content: [{ type: 'text', text }], stopReason: 'stop', usage: { output: 1 } });
+onTask((task) => {
+  if (task === 'wait') {
+    fs.writeFileSync('started', '1');
+    out({ type: 'message_start', message: { role: 'assistant', content: [] } });
+    out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'partial' } });
+    setInterval(() => {}, 1000);
+    return;
+  }
+  if (task === 'fail') {
+    process.stderr.write('boom');
+    process.exit(3);
+  }
+  if (task === 'reject') return false;
+  if (task === 'env') {
+    out({ type: 'message_end', message: answer('child env ' + process.env.PI_SUBAGENT_CHILD) });
+    settle();
+    return;
+  }
+  if (task === 'dialog') {
+    out({ type: 'extension_ui_request', id: 'ui-1', method: 'notify', message: 'hello' });
+    out({ type: 'extension_ui_request', id: 'ui-2', method: 'confirm', title: 'Sure?', message: 'x' });
+    const poll = setInterval(() => {
+      const reply = received.find((c) => c.type === 'extension_ui_response' && c.id === 'ui-2');
+      if (!reply) return;
+      clearInterval(poll);
+      // An extension writing a terminal notification straight to stdout, as notify.ts does.
+      process.stdout.write('\\x1b]777;notify;Pi;Ready for input\\x07');
+      const notifyReplies = received.filter((c) => c.id === 'ui-1').length;
+      out({ type: 'message_end', message: answer('dialog ' + JSON.stringify(reply) + ' notify replies ' + notifyReplies) });
+      settle();
+    }, 5);
+    return;
+  }
   const user = { role: 'user', content: 'Task: ' + task };
   const call = { type: 'toolCall', id: 'c1', name: 'read', arguments: { path: 'a.ts' } };
   out({ type: 'message_end', message: user });
@@ -45,12 +70,13 @@ if (task === 'wait') {
   const result = { role: 'toolResult', toolCallId: 'c1', toolName: 'read', content: [{ type: 'text', text: 'x\\ny' }], isError: false };
   out({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'read', result, isError: false });
   out({ type: 'message_end', message: result });
-  const answer = { role: 'assistant', content: [{ type: 'text', text: 'done:' + task }], stopReason: 'stop', model: 'fake-model', usage: { input: 10, output: 20, totalTokens: 30, cost: { total: 0.002 } } };
-  out({ type: 'message_end', message: answer });
-  const lines = [{ type: 'session', id: arg('--session-id') }, { type: 'message', message: user }, { type: 'message', message: answer }, 'torn'];
+  const final = { role: 'assistant', content: [{ type: 'text', text: 'done:' + task }], stopReason: 'stop', model: 'fake-model', usage: { input: 10, output: 20, totalTokens: 30, cost: { total: 0.002 } } };
+  out({ type: 'message_end', message: final });
+  const lines = [{ type: 'session', id: arg('--session-id') }, { type: 'message', message: user }, { type: 'message', message: final }, 'torn'];
   fs.writeFileSync(path.join(arg('--session-dir'), '2026-01-01T00-00-00-000Z_' + arg('--session-id') + '.jsonl'),
     lines.map((l) => typeof l === 'string' ? l : JSON.stringify(l)).join('\\n'));
-}
+  settle();
+});
 `);
 const originalScript = process.argv[1];
 process.argv[1] = script;
@@ -93,11 +119,13 @@ test("builds a persisted child session instead of --no-session", () => {
 	const base = { agent, task: "find auth", cwd, defaults: { model: "p/m", thinkingLevel: "high" as const }, mode: "sync" as const, group: { kind: "single" as const, index: 0, total: 1 }, parentSessionId: "p", registry: new RunRegistry() };
 	const args = buildArgs(base, "run-1", "/sessions/p", "/tmp/prompt.md");
 	assert.ok(!args.includes("--no-session"));
-	assert.deepEqual(args.slice(0, 7), ["--mode", "json", "-p", "--session-dir", "/sessions/p", "--session-id", "run-1"]);
+	assert.deepEqual(args.slice(0, 6), ["--mode", "rpc", "--session-dir", "/sessions/p", "--session-id", "run-1"]);
 	assert.equal(args[args.indexOf("--name") + 1], "scout · find auth");
 	assert.equal(args[args.indexOf("--model") + 1], "p/m");
 	assert.equal(args[args.indexOf("--thinking") + 1], "high");
-	assert.equal(args.at(-1), "Task: find auth");
+	assert.ok(!args.some((arg) => arg.startsWith("Task:")), "RPC mode receives the task on stdin");
+	assert.deepEqual(JSON.parse(taskCommand("find auth")), { id: "task", type: "prompt", message: "Task: find auth" });
+	assert.ok(taskCommand("a\nb").endsWith("}\n") && taskCommand("a\nb").split("\n").length === 2, "one JSONL record");
 	const own = buildArgs({ ...base, agent: { ...agent, model: "x/y" } }, "run-2", "/s");
 	assert.equal(own[own.indexOf("--model") + 1], "x/y");
 	assert.ok(!own.includes("--thinking"), "an agent with its own model does not inherit the dispatch thinking level");
@@ -166,6 +194,21 @@ test("a user stop cancels only that run and resolves", async () => {
 	assert.match(run.snapshot.output ?? "", /Stopped by the user/);
 	assert.equal(run.stop(), false, "a finished run cannot be stopped again");
 	assert.equal(JSON.parse(readFileSync(join(run.snapshot.sessionDir, `${run.id}.meta.json`), "utf8")).status, "cancelled");
+	const received = JSON.parse(readFileSync(join(cwd, `received-${run.id}.json`), "utf8"));
+	assert.deepEqual(received.map((c: { type: string }) => c.type), ["prompt", "abort"], "stop asks Pi to abort before closing stdin");
+});
+
+test("answers dialogs with cancel, ignores notifications and stray escapes, and marks children", async () => {
+	const dialog = (await request("dialog").promise).snapshot;
+	assert.equal(dialog.status, "completed");
+	assert.equal(dialog.output, 'dialog {"type":"extension_ui_response","id":"ui-2","cancelled":true} notify replies 0');
+	assert.equal((await request("env").promise).snapshot.output, "child env 1");
+});
+
+test("a rejected task fails the run", async () => {
+	const run = (await request("reject").promise).snapshot;
+	assert.equal(run.status, "failed");
+	assert.equal(run.output, "prompt rejected");
 });
 
 test("aborting the parent kills the child, records cancelled, and throws", async () => {

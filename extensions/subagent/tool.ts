@@ -7,7 +7,7 @@ import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 import type { BackgroundJobs } from "./background.ts";
 import { preview, truncateBytes } from "./format.ts";
 import { readDetails, type PendingTask, type SubagentDetails, toolBodyComponent, toolCallComponent } from "./render.ts";
-import { type DispatchDefaults, runAgent } from "./runner.ts";
+import { CHILD_ENV, type DispatchDefaults, runAgent } from "./runner.ts";
 import type { GroupKind, LiveRun, RunMode, RunRegistry, RunSnapshot } from "./runs.ts";
 
 export const MAX_PARALLEL_TASKS = 8;
@@ -179,6 +179,10 @@ export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, ba
 			signal?.throwIfAborted();
 			if (params.async && (ctx.mode === "print" || ctx.mode === "json")) {
 				throw new Error("Async subagents require TUI or RPC mode. Use async: false in single-shot print/JSON mode.");
+			}
+			// A subagent's own RPC session ends when its task settles, so it could not receive a background result.
+			if (params.async && process.env[CHILD_ENV]) {
+				throw new Error("Async subagents are not available inside a subagent. Use async: false.");
 			}
 
 			const parentSessionId = ctx.sessionManager.getSessionId();

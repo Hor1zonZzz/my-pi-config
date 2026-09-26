@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { type ExtensionAPI, initTheme } from "@earendil-works/pi-coding-agent";
+import { FAKE_RPC } from "./fake-rpc.ts";
 import register from "./index.ts";
 
 initTheme("dark");
@@ -17,12 +18,14 @@ const cwd = join(root, "work");
 mkdirSync(cwd);
 const script = join(root, "fake-pi.cjs");
 writeFileSync(script, `
-const task = process.argv.at(-1).replace(/^Task: /, '');
-const out = (e) => process.stdout.write(JSON.stringify(e) + '\\n');
-out({ type: 'message_start', message: { role: 'assistant', content: [] } });
-out({ type: 'tool_execution_start', toolCallId: 'c', toolName: 'read', args: { path: 'src/auth.ts' } });
-if (task === 'wait') setInterval(() => {}, 1000);
-else out({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], stopReason: 'stop', usage: { output: 3 } } });
+${FAKE_RPC}
+onTask((task) => {
+  out({ type: 'message_start', message: { role: 'assistant', content: [] } });
+  out({ type: 'tool_execution_start', toolCallId: 'c', toolName: 'read', args: { path: 'src/auth.ts' } });
+  if (task === 'wait') return void setInterval(() => {}, 1000);
+  out({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], stopReason: 'stop', usage: { output: 3 } } });
+  settle();
+});
 `);
 const originalScript = process.argv[1];
 process.argv[1] = script;

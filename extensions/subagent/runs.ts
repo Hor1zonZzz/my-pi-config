@@ -42,6 +42,8 @@ export interface RunSnapshot {
 	toolCalls: string[];
 	/** Directory holding the child session JSONL and this run's metadata. */
 	sessionDir: string;
+	/** The child's session file, `<sessionDir>/<short id>.jsonl`. Runs recorded before it existed have none. */
+	sessionFile?: string;
 	jobId?: string;
 }
 

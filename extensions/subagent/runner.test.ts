@@ -8,7 +8,7 @@ import type { AgentConfig } from "./agents.ts";
 import { FAKE_RPC } from "./fake-rpc.ts";
 import { applyEvent, buildArgs, runAgent, taskCommand } from "./runner.ts";
 import { LiveRun, newSnapshot, RunRegistry } from "./runs.ts";
-import { findSessionFile, listRuns, parentSessionDir, readSessionMessages } from "./store.ts";
+import { findSessionFile, listRuns, parentSessionDir, readSessionMessages, releaseRun, reserveRun, sessionFileOf, shortRunId } from "./store.ts";
 
 // getAgentDir() reads this at call time; keep child sessions out of ~/.pi/agent.
 const root = mkdtempSync(join(tmpdir(), "subagent-runner-"));
@@ -24,8 +24,9 @@ const path = require('node:path');
 const argv = process.argv;
 const arg = (name) => argv[argv.indexOf(name) + 1];
 ${FAKE_RPC}
-process.stderr.write("Warning: No project session found with id '" + arg('--session-id') + "'; creating a new session with that id.\\n");
-process.on('exit', () => fs.writeFileSync('received-' + arg('--session-id') + '.json', JSON.stringify(received)));
+// Pi writes into the file passed with --session, named <short run id>.jsonl.
+const runId = path.basename(arg('--session'), '.jsonl');
+process.on('exit', () => fs.writeFileSync('received-' + runId + '.json', JSON.stringify(received)));
 const answer = (text) => ({ role: 'assistant', content: [{ type: 'text', text }], stopReason: 'stop', usage: { output: 1 } });
 onTask((task) => {
   if (task === 'wait') {
@@ -73,8 +74,8 @@ onTask((task) => {
   out({ type: 'message_end', message: result });
   const final = { role: 'assistant', content: [{ type: 'text', text: 'done:' + task }], stopReason: 'stop', model: 'fake-model', usage: { input: 10, output: 20, totalTokens: 30, cost: { total: 0.002 } } };
   out({ type: 'message_end', message: final });
-  const lines = [{ type: 'session', id: arg('--session-id') }, { type: 'message', message: user }, { type: 'message', message: final }, 'torn'];
-  fs.writeFileSync(path.join(arg('--session-dir'), '2026-01-01T00-00-00-000Z_' + arg('--session-id') + '.jsonl'),
+  const lines = [{ type: 'session', id: runId }, { type: 'message', message: user }, { type: 'message', message: final }, 'torn'];
+  fs.writeFileSync(arg('--session'),
     lines.map((l) => typeof l === 'string' ? l : JSON.stringify(l)).join('\\n'));
   settle();
 });
@@ -118,16 +119,16 @@ async function until(predicate: () => boolean, timeout = 5000): Promise<void> {
 
 test("builds a persisted child session instead of --no-session", () => {
 	const base = { agent, task: "find auth", cwd, defaults: { model: "p/m", thinkingLevel: "high" as const }, mode: "sync" as const, group: { kind: "single" as const, index: 0, total: 1 }, parentSessionId: "p", registry: new RunRegistry() };
-	const args = buildArgs(base, "run-1", "/sessions/p", "/tmp/prompt.md");
-	assert.ok(!args.includes("--no-session"));
-	assert.deepEqual(args.slice(0, 6), ["--mode", "rpc", "--session-dir", "/sessions/p", "--session-id", "run-1"]);
+	const args = buildArgs(base, "/sessions/p/run-1.jsonl", "/sessions/p", "/tmp/prompt.md");
+	assert.ok(!args.includes("--no-session") && !args.includes("--session-id"));
+	assert.deepEqual(args.slice(0, 6), ["--mode", "rpc", "--session", "/sessions/p/run-1.jsonl", "--session-dir", "/sessions/p"]);
 	assert.equal(args[args.indexOf("--name") + 1], "scout · find auth");
 	assert.equal(args[args.indexOf("--model") + 1], "p/m");
 	assert.equal(args[args.indexOf("--thinking") + 1], "high");
 	assert.ok(!args.some((arg) => arg.startsWith("Task:")), "RPC mode receives the task on stdin");
 	assert.deepEqual(JSON.parse(taskCommand("find auth")), { id: "task", type: "prompt", message: "Task: find auth" });
 	assert.ok(taskCommand("a\nb").endsWith("}\n") && taskCommand("a\nb").split("\n").length === 2, "one JSONL record");
-	const own = buildArgs({ ...base, agent: { ...agent, model: "x/y" } }, "run-2", "/s");
+	const own = buildArgs({ ...base, agent: { ...agent, model: "x/y" } }, "/s/run-2.jsonl", "/s");
 	assert.equal(own[own.indexOf("--model") + 1], "x/y");
 	assert.ok(!own.includes("--thinking"), "an agent with its own model does not inherit the dispatch thinking level");
 });
@@ -160,7 +161,7 @@ test("runs a child to completion and saves its session and metadata", async () =
 	assert.equal(s.usage.turns, 2);
 	assert.equal(s.model, "openai-codex/gpt-5.6-sol");
 	assert.deepEqual(s.toolCalls, ["read a.ts"]);
-	assert.equal(s.stderr, undefined, "the expected --session-id warning is dropped");
+	assert.equal(s.stderr, undefined);
 	assert.equal(s.activity, undefined);
 	assert.ok(changes.includes("running") && changes.at(-1) === "completed");
 	assert.equal(registry.get(s.id), run);
@@ -171,7 +172,8 @@ test("runs a child to completion and saves its session and metadata", async () =
 	const stored = listRuns(dir).find((r) => r.id === s.id);
 	assert.equal(stored?.status, "completed");
 	assert.equal((stored as { activity?: string } | undefined)?.activity, undefined);
-	const file = findSessionFile(dir, s.id);
+	const file = sessionFileOf(s);
+	assert.equal(file, join(dir, `${shortRunId(s.id)}.jsonl`), "the child writes the reserved <short id>.jsonl");
 	assert.ok(file && existsSync(file));
 	assert.deepEqual(readSessionMessages(file!).map((m) => m.role), ["user", "assistant"]);
 });
@@ -195,7 +197,7 @@ test("a user stop cancels only that run and resolves", async () => {
 	assert.match(run.snapshot.output ?? "", /Stopped by the user/);
 	assert.equal(run.stop(), false, "a finished run cannot be stopped again");
 	assert.equal(JSON.parse(readFileSync(join(run.snapshot.sessionDir, `${run.id}.meta.json`), "utf8")).status, "cancelled");
-	const received = JSON.parse(readFileSync(join(cwd, `received-${run.id}.json`), "utf8"));
+	const received = JSON.parse(readFileSync(join(cwd, `received-${shortRunId(run.id)}.json`), "utf8"));
 	assert.deepEqual(received.map((c: { type: string }) => c.type), ["prompt", "abort"], "stop asks Pi to abort before closing stdin");
 });
 
@@ -233,4 +235,21 @@ test("lists recorded runs newest first and skips unreadable metadata", async () 
 	for (let i = 1; i < runs.length; i++) assert.ok(runs[i - 1]!.startedAt >= runs[i]!.startedAt);
 	assert.deepEqual(listRuns(join(root, "missing")), []);
 	assert.equal(findSessionFile(join(root, "missing"), "x"), undefined);
+});
+
+test("reserves a unique short ID with an empty session file, and releases unused ones", () => {
+	const dir = join(root, "reserve");
+	const a = reserveRun(dir);
+	const b = reserveRun(dir);
+	assert.notEqual(shortRunId(a.id), shortRunId(b.id));
+	assert.equal(a.sessionFile, join(dir, `${shortRunId(a.id)}.jsonl`));
+	assert.equal(readFileSync(a.sessionFile, "utf8"), "", "the file exists before the child starts");
+	writeFileSync(b.sessionFile, '{"type":"session"}\n');
+	releaseRun(a);
+	releaseRun(b);
+	assert.equal(existsSync(a.sessionFile), false, "an unused reservation is removed");
+	assert.equal(existsSync(b.sessionFile), true, "a written session is kept");
+	// Runs recorded before sessionFile existed are found by Pi's own file name.
+	writeFileSync(join(dir, "2026-01-01T00-00-00-000Z_legacy-id.jsonl"), "");
+	assert.equal(sessionFileOf({ id: "legacy-id", sessionDir: dir }), join(dir, "2026-01-01T00-00-00-000Z_legacy-id.jsonl"));
 });

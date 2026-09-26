@@ -163,7 +163,7 @@ onTask((task) => {
 		});
 		await t.test("default synchronous mode still returns final output", async () => {
 			const response = await execute({ agent: "scout", task: "sync" });
-			assert.equal(response.content[0].text, "result:sync");
+			assert.match(response.content[0].text, /^result:sync\n\nTranscripts:\n[0-9a-f]{8} scout \/.*\/[0-9a-f]{8}\.jsonl$/);
 			assert.equal(h.messages.length, 1);
 		});
 		await t.test("async chain substitutes previous output; parallel failure is reported", async () => {

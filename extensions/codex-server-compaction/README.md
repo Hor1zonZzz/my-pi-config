@@ -11,7 +11,7 @@ When Pi runs manual or automatic compaction, the extension starts two requests i
 
 The custom transport records canonical request/response items. When the live prefix matches, the compaction wire request is reduced to `previous_response_id` plus the trigger; reconnects and SSE fallback send the validated full history instead.
 
-V2 retention keeps real user messages only: the [subagent extension](../subagent/README.md#state-notices)'s `<subagent_notification>` messages are context, as in Codex CLI, and are not retained.
+V2 retention keeps real user messages only: the [subagent extension](../subagent/README.md#what-the-main-agent-sees)'s `<subagent_notification>` messages are context, as in Codex CLI, and are not retained.
 
 A successful V2 response contributes one opaque `compaction` item. The extension retains up to the official 64K budget of recent user messages with that item and persists the result in `CompactionEntry.details.remoteCompaction`. The extension supplies this exact native history to the matching Codex provider/API/model/account and removes any stale pre-compaction `previous_response_id`. Replay is applied after Pi's payload hooks, at the custom transport boundary with the actual bound request token, before cached WebSocket reduction: the first request or a reconnect sends the explicit artifact history, while a matching live prefix is reduced on the wire to Pi's native `previous_response_id` plus the new delta. Other models use Pi's text summary and retained messages normally.
 

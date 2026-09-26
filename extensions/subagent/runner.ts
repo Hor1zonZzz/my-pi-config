@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,7 +8,7 @@ import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "./agents.ts";
 import { cleanStderr, describeToolCall, finalOutput, preview, stripTerminalEscapes, tail } from "./format.ts";
 import { LiveRun, newSnapshot, type RunGroup, type RunMode, type RunRegistry, type RunSnapshot } from "./runs.ts";
-import { ensureDir, parentSessionDir, writeMeta } from "./store.ts";
+import { ensureDir, parentSessionDir, type ReservedRun, reserveRun, writeMeta } from "./store.ts";
 
 const MAX_TOOL_CALLS = 200;
 const MAX_STDERR = 16 * 1024;
@@ -39,6 +38,8 @@ export interface RunRequest {
 	signal?: AbortSignal;
 	registry: RunRegistry;
 	onChange?: (run: LiveRun) => void;
+	/** The run ID and session file handed out at dispatch; reserved here when absent. */
+	reserved?: ReservedRun;
 }
 
 /** How to start the same Pi that runs this extension. */
@@ -62,11 +63,12 @@ async function writePromptToTempFile(agentName: string, prompt: string): Promise
 	return { dir, filePath };
 }
 
-export function buildArgs(request: RunRequest, id: string, sessionDir: string, promptFile?: string): string[] {
+export function buildArgs(request: RunRequest, sessionFile: string, sessionDir: string, promptFile?: string): string[] {
 	const { agent, defaults } = request;
 	// RPC mode keeps stdin open for commands; the task arrives as the first prompt.
-	// Persist the child session instead of --no-session so /subagent-history can show it.
-	const args = ["--mode", "rpc", "--session-dir", sessionDir, "--session-id", id, "--name", `${agent.name} · ${preview(request.task, 60)}`];
+	// --session on the empty reserved file makes Pi write its header at once and
+	// every later entry as it happens, at a path the parent already knows.
+	const args = ["--mode", "rpc", "--session", sessionFile, "--session-dir", sessionDir, "--name", `${agent.name} · ${preview(request.task, 60)}`];
 	const inheritsDispatchModel = !agent.model;
 	const model = agent.model ?? defaults.model;
 	const thinkingLevel = agent.thinkingLevel ?? (inheritsDispatchModel ? defaults.thinkingLevel : undefined);
@@ -178,8 +180,8 @@ function settle(run: LiveRun, exitCode: number, stderr: string, parentAborted = 
  */
 export async function runAgent(request: RunRequest): Promise<LiveRun> {
 	request.signal?.throwIfAborted();
-	const id = randomUUID();
 	const sessionDir = parentSessionDir(request.parentSessionId);
+	const { id, sessionFile } = request.reserved ?? reserveRun(sessionDir);
 	const run = new LiveRun(
 		newSnapshot({
 			id,
@@ -192,6 +194,7 @@ export async function runAgent(request: RunRequest): Promise<LiveRun> {
 			group: request.group,
 			model: request.agent.model ?? request.defaults.model,
 			sessionDir,
+			sessionFile,
 			jobId: request.jobId,
 		}),
 	);
@@ -221,7 +224,7 @@ export async function runAgent(request: RunRequest): Promise<LiveRun> {
 				resolve(1);
 				return;
 			}
-			const invocation = getPiInvocation(buildArgs(request, id, sessionDir, promptFile));
+			const invocation = getPiInvocation(buildArgs(request, sessionFile, sessionDir, promptFile));
 			const proc = spawn(invocation.command, invocation.args, {
 				cwd: request.cwd,
 				shell: false,

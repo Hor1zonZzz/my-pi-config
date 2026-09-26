@@ -32,8 +32,7 @@ Pi's official subagent example; the rest was rewritten.
 subagent/
 ├── index.ts        # Wiring: tool, commands, panel, overlays, lifecycle
 ├── tool.ts         # The subagent tool: modes, sync/async, results
-├── control.ts      # The subagent_control tool: list, inspect, read, wait
-├── notices.ts      # One-line state notices for runs of multi-run background jobs
+├── notices.ts      # One-line state notices for background runs
 ├── runner.ts       # Starts a child pi in RPC mode, sends the task, parses events, saves metadata
 ├── runs.ts         # Run snapshots and the in-memory registry of this process's runs
 ├── store.ts        # Child session directory, metadata, transcript reading
@@ -67,14 +66,13 @@ background:
 
 - **Foreground (sync).** The tool row updates live while the parent waits. The
   result is the subagent's answer, or for parallel runs one section per task
-  (each capped at 50 KB).
-- **Background (async).** The call returns a job ID immediately. When the job
-  finishes, the result arrives as a completion message delivered with
-  `deliverAs: "steer"` and `triggerTurn: true`: a busy parent receives it before
-  its next model call, an idle parent starts a new response. The parent should
-  not repeat or poll the delegated work. At most 4 background jobs run at once;
-  completion text is capped at 32 KB and 1,000 lines, and the full result is in
-  the message details. Async needs a long-lived TUI or RPC session; print and
+  (each capped at 50 KB), followed by a `Transcripts:` line per run with its
+  short ID and session file.
+- **Background (async).** The call returns at once with one line per task: its
+  short run ID, agent, first state (`running`, or `queued` for later chain steps
+  and parallel tasks beyond the 4 that start together), and session file. See
+  [the main agent's view](#what-the-main-agent-sees) for what follows. At most 4
+  background jobs run at once. Async needs a long-lived TUI or RPC session; print and
   JSON modes reject it, and so does a subagent (its session ends when its own
   task settles).
 
@@ -122,12 +120,17 @@ Each run saves Pi's own session file plus a metadata file:
 
 ```text
 <agent dir>/subagent-sessions/<parent session id>/
-├── <timestamp>_<run id>.jsonl   # the child session (written as it runs)
-└── <run id>.meta.json           # agent, task, mode, status, timing, usage, answer
+├── <short run id>.jsonl   # the child session, written entry by entry as it runs
+└── <run id>.meta.json     # agent, task, mode, status, timing, usage, answer
 ```
 
-The child is started with `--session-dir` and `--session-id` instead of
-`--no-session`. These files are kept permanently; delete the directory to free
+At dispatch the extension picks a run ID whose first 8 characters are unique in
+the directory and creates the empty `<short run id>.jsonl`. The child is started
+with `--session <that file>`: Pi fills an empty session file with its header at
+once and appends every later entry immediately, so the path handed to the main
+agent exists from the start. Tasks that never start (a stopped chain, a
+cancelled job) leave no file. Runs recorded before this used Pi's own name,
+`<timestamp>_<run id>.jsonl`, and are still found. These files are kept permanently; delete the directory to free
 space. They contain whatever the subagent read, like any Pi session, and they do
 not appear in `/resume`. A run whose Pi process exited before it finished is
 shown as interrupted.
@@ -135,56 +138,47 @@ shown as interrupted.
 `/subagent-jobs` opens the same list in the TUI. `/subagent-jobs cancel <id|all>`
 cancels background jobs from any mode.
 
-## Checking on subagents from the main agent
+## What the main agent sees
 
-The `subagent_control` tool lets the main agent look at the runs it started in
-this session, including finished runs from before `/reload` or a restart:
-
-```text
-subagent_control { action: "list" }
-2 runs · 1 running
-a3f9c2e1  scout  running · bg subagent-1b2c3d4e · 1m12s · ↓3.1k · now: read src/auth.ts
-          task: Find where tokens are refreshed
-c02e9f17  reviewer  completed · 2m40s · ↓5.4k
-          task: Review the runner changes
-```
-
-| Action | What it returns |
-|---|---|
-| `list` | Every run with its short ID, agent, status, job, elapsed time, output tokens, and current activity |
-| `inspect` | One run: task, usage, current activity, the last 8 tool calls, the text being written, the answer, and the transcript file |
-| `read` | A page of the transcript, messages numbered from 1; `from` and `limit` (default: the last 20). Long texts and tool results are shortened, and the page stays within Pi's 50KB / 2000-line limit |
-| `wait` | Blocks until the named run or background job finishes, or, with no `run`, until any running run finishes; `timeout` defaults to 60 s (max 600). Esc cancels the wait |
-
-`run` accepts a full run ID, a unique prefix, or a background job ID (`inspect`
-and `read` need a job with one run). Background results still arrive on their
-own; `wait` is for when the main agent has nothing else to do and needs the
-result now. A foreground run keeps the main agent inside its `subagent` call, so
-these actions matter mostly for background runs.
-
-### State notices
-
-When a run inside a background job of several runs (parallel or chain)
-finishes while the job keeps going, one short message is appended to the main
-session, in the format Codex CLI uses:
+For background runs the main agent gets three kinds of messages, and nothing
+while a run's state stays the same:
 
 ```text
-<subagent_notification>
-{"job":"subagent-fc664987","run":"f1dc6056","agent":"scout","status":"completed","done":"1/2","elapsed":"1s"}
-</subagent_notification>
+tool result   Started background job subagent-37690385. State changes arrive as …
+              67380226 scout running /…/subagent-sessions/<parent>/67380226.jsonl
+              8edb76e2 scout running /…/subagent-sessions/<parent>/8edb76e2.jsonl
+
+notice        <subagent_notification>
+              {"run":"67380226","status":"completed"}
+              </subagent_notification>
+
+final         Background job subagent-37690385 completed.
+              <subagent_result run="67380226" agent="scout" status="completed">
+              ONE
+              </subagent_result>
+              <subagent_result run="8edb76e2" agent="scout" status="completed">
+              …
+              </subagent_result>
 ```
 
-- It is sent with `triggerTurn: false`: while the main agent works, Pi appends it
-  at the end of the current turn; when it is idle, at once. It never starts a
-  turn, and it shows in the chat as one line.
-- It is stored like any message, so the prompt only grows at the end and prompt
-  caching and Codex continuation are unaffected. Each notice is about 40 tokens,
-  written once per qualifying run.
-- Nothing is sent for activity (such as the file being read), for foreground
-  runs (the tool result reports them), or for the run that ends a job (the
-  job's completion message reports it). `subagent_control` gives the details.
+- **Notice**: one per change of a run's state after dispatch: `queued →
+  running`, and `running → completed | failed | stopped`. It carries only the
+  run and its status (about 20 tokens), is stored in the session like any
+  message, and is sent with `triggerTurn: false`: while the main agent works,
+  Pi appends it at the end of the current turn; when it is idle, at once. It
+  never starts a turn and shows as one line in the chat. Activity (the file
+  being read, the tool being called), elapsed time, and usage are not changes.
+- **Final message**: the change that ends a job is not noticed separately. The
+  job's final message gives every task's status and answer (up to 16 KB each,
+  `not started` for chain steps that never ran) and is delivered with
+  `deliverAs: "steer"` and `triggerTurn: true`, so an idle main agent starts a
+  new response. The whole message is capped at 32 KB and 1,000 lines.
+- **Progress**: to see what a subagent did, the main agent reads its session
+  file with `read`. There is no separate inspection tool.
+- Foreground runs send no notices; the main agent is waiting inside the call.
 - [`codex-server-compaction`](../codex-server-compaction/README.md) does not
-  retain these notices as user input during remote compaction.
+  retain notices as user input during remote compaction. Because they only
+  append to the history, prompt caching and Codex continuation are unaffected.
 
 ## Configuring agents
 
@@ -237,7 +231,8 @@ by the previous version of this extension still render.
 
 Verified with Pi 0.87.1. The extension depends on:
 
-- `pi --mode rpc` with `--session-dir`, `--session-id`, `--name`, `--model`,
+- `pi --mode rpc` with `--session` (an empty file gets a header at once and
+  every entry as it happens), `--session-dir`, `--name`, `--model`,
   `--thinking`, `--tools`, and `--append-system-prompt`; the task is the first
   `prompt` command on stdin, and a `prompt` response with `success: false` fails
   the run;
@@ -252,7 +247,8 @@ Verified with Pi 0.87.1. The extension depends on:
   sequences an extension writes straight to stdout (such as `notify.ts`'s OSC
   notification) are stripped before parsing. Children get `PI_SUBAGENT_CHILD=1`,
   which makes the `subagent` tool refuse `async: true`;
-- the session file name `<timestamp>_<session id>.jsonl` and `message` entries;
+- `message` entries in the session file, and Pi's own name
+  `<timestamp>_<session id>.jsonl` for runs recorded before `--session`;
 - `ctx.ui.onTerminalInput()` running before the focused component, the concrete
   TUI's `getFocusedComponent()`, and Pi's main editor carrying `actionHandlers`
   (how the panel tells the prompt apart from dialogs);
@@ -275,9 +271,8 @@ SIGKILL escalation, cancelled dialogs, ignored notifications, stray escape
 sequences, rejected prompts, and the child marker), background jobs, the panel's
 key handling, rendering at widths from 1 to 160 columns, legacy details, the
 transcript and history views, an end-to-end select → watch → stop → history
-flow, and `subagent_control` (listing, ID/prefix/job resolution, inspection,
-transcript paging, waiting and its cancellation, finished runs read from disk
-after a reload, and isolation between parent sessions).
+flow, background state notices and final answers, reserved session files, and a
+real-process chain that releases the files of steps that never ran).
 
 For an interactive check, load the entry file directly. Passing the directory
 makes Pi treat it as a package because it contains `prompts/`:

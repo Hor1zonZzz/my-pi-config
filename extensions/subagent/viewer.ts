@@ -116,7 +116,7 @@ function headerLines(theme: Theme, run: RunSnapshot, width: number, now: number)
 	return [
 		top,
 		...wrap(theme.fg("dim", `Task: ${run.task}`), width, 2).slice(0, 3),
-		truncateToWidth(`  ${theme.fg("dim", [usage, shortenPath(run.sessionDir)].filter(Boolean).join(" · "))}`, width, "…"),
+		truncateToWidth(`  ${theme.fg("dim", [usage, shortenPath(run.sessionFile ?? run.sessionDir)].filter(Boolean).join(" · "))}`, width, "…"),
 		theme.fg("dim", "─".repeat(Math.max(0, width))),
 	];
 }

@@ -8,6 +8,7 @@ import type { BackgroundJobs } from "./background.ts";
 import { preview, truncateBytes } from "./format.ts";
 import { readDetails, type PendingTask, type SubagentDetails, toolBodyComponent, toolCallComponent } from "./render.ts";
 import { CHILD_ENV, type DispatchDefaults, runAgent } from "./runner.ts";
+import { parentSessionDir, type ReservedRun, releaseRun, reserveRun, shortRunId } from "./store.ts";
 import type { GroupKind, LiveRun, RunMode, RunRegistry, RunSnapshot } from "./runs.ts";
 
 export const MAX_PARALLEL_TASKS = 8;
@@ -70,6 +71,39 @@ function copy(snapshot: RunSnapshot): RunSnapshot {
 	return { ...snapshot, usage: { ...snapshot.usage }, toolCalls: [...snapshot.toolCalls], group: { ...snapshot.group } };
 }
 
+/** How a task starts when it is dispatched: chain steps and parallel tasks beyond the concurrency limit wait. */
+export function initialStatus(kind: GroupKind, index: number): "running" | "queued" {
+	if (kind === "chain") return index === 0 ? "running" : "queued";
+	if (kind === "parallel") return index < MAX_CONCURRENCY ? "running" : "queued";
+	return "running";
+}
+
+/** Status words the main agent sees in dispatch results, notices, and final answers. */
+export function modelStatus(status: RunSnapshot["status"] | "not started"): string {
+	return status === "cancelled" ? "stopped" : status;
+}
+
+/** `Transcripts:` lines appended to foreground results, one per run that started. */
+function transcriptLines(runs: RunSnapshot[]): string {
+	const lines = runs.filter((run) => run.sessionFile).map((run) => `${shortRunId(run.id)} ${run.agent} ${run.sessionFile}`);
+	return lines.length ? `\n\nTranscripts:\n${lines.join("\n")}` : "";
+}
+
+const FINAL_ANSWER_CAP = 16 * 1024;
+
+/** A background job's final message body: every task's status and answer, in task order. */
+export function finalAnswers(runs: RunSnapshot[], requested: Array<{ agent: string }>, reserved: ReservedRun[]): string {
+	return requested
+		.map((item, index) => {
+			const id = shortRunId(reserved[index]!.id);
+			const run = runs.find((r) => r.group.index === index);
+			if (!run) return `<subagent_result run="${id}" agent="${item.agent}" status="not started"/>`;
+			const answer = truncateBytes(run.output || "(no output)", FINAL_ANSWER_CAP, `The full text is in ${run.sessionFile ?? "the transcript"}.`);
+			return `<subagent_result run="${id}" agent="${run.agent}" status="${modelStatus(run.status)}">\n${answer}\n</subagent_result>`;
+		})
+		.join("\n");
+}
+
 function statusWord(run: RunSnapshot): string {
 	if (run.status === "failed") return `failed${run.stopReason && run.stopReason !== "stop" ? ` (${run.stopReason})` : ""}`;
 	return run.status === "cancelled" ? "stopped" : "completed";
@@ -120,7 +154,7 @@ export function toolDescription(userAgents: AgentConfig[]): string {
 		catalog,
 		`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 		`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
-		"Use subagent_control to check on runs: list, inspect progress, read transcripts, or wait for them.",
+		"Results name each run's ID and session JSONL file; read the file to see what the subagent did.",
 	].join(" ");
 }
 
@@ -187,18 +221,24 @@ export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, ba
 
 			const parentSessionId = ctx.sessionManager.getSessionId();
 			const agentFor = (name: string) => agents.find((a) => a.name === name)!;
+			// IDs and session files exist before any child starts, so the result can name them.
+			const sessionDir = parentSessionDir(parentSessionId);
+			const reserved = requested.map(() => reserveRun(sessionDir));
+			const ids = { runIds: reserved.map((r) => shortRunId(r.id)), sessionFiles: reserved.map((r) => r.sessionFile) };
 
 			const run = async (runSignal: AbortSignal | undefined, update: typeof onUpdate, runMode: RunMode, jobId?: string): Promise<Result> => {
 				const live: LiveRun[] = [];
+				const started = new Set<number>();
 				let pending: PendingTask[] = requested.map((item, index) => ({ agent: item.agent, task: item.task, index }));
 				const snapshot = () => live.map((r) => copy(r.snapshot)).sort((a, b) => a.group.index - b.group.index);
 				const emit = throttle(() => {
 					const runs = snapshot();
 					const text = mode === "single" ? runs[0]?.output || "(running...)" : `${mode}: ${runs.filter((r) => r.status !== "running").length}/${requested.length} done`;
-					update?.({ content: [{ type: "text", text }], details: details(runs, pending) });
+					update?.({ content: [{ type: "text", text }], details: details(runs, pending, ids) });
 				}, UPDATE_INTERVAL_MS);
 				const start = async (item: { agent: string; task: string; cwd?: string }, index: number): Promise<RunSnapshot> => {
 					pending = pending.filter((p) => p.index !== index);
+					started.add(index);
 					const liveRun = await runAgent({
 						agent: agentFor(item.agent),
 						task: item.task,
@@ -210,6 +250,7 @@ export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, ba
 						jobId,
 						signal: runSignal,
 						registry,
+						reserved: reserved[index],
 						onChange: (r) => {
 							if (!live.includes(r)) live.push(r);
 							emit.call();
@@ -228,56 +269,80 @@ export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, ba
 							if (result.status !== "completed") {
 								pending = [];
 								const verb = result.status === "cancelled" ? "was stopped" : "failed";
-								return {
-									content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent}) because it ${verb}: ${result.output ?? "(no output)"}` }],
-									details: details(snapshot()),
-									isError: true,
-									cancelled: result.status === "cancelled",
-								};
+								const text = runMode === "async"
+									? finalAnswers(snapshot(), requested, reserved)
+									: `Chain stopped at step ${i + 1} (${step.agent}) because it ${verb}: ${result.output ?? "(no output)"}${transcriptLines(snapshot())}`;
+								return { content: [{ type: "text", text }], details: details(snapshot(), [], ids), isError: true, cancelled: result.status === "cancelled" };
 							}
 							previous = result.output ?? "";
 						}
 						const runs = snapshot();
-						return { content: [{ type: "text", text: runs[runs.length - 1]?.output || "(no output)" }], details: details(runs) };
+						const text = runMode === "async" ? finalAnswers(runs, requested, reserved) : `${runs[runs.length - 1]?.output || "(no output)"}${transcriptLines(runs)}`;
+						return { content: [{ type: "text", text }], details: details(runs, [], ids) };
 					}
 
 					if (mode === "parallel") {
 						const results = await mapWithConcurrencyLimit(requested, MAX_CONCURRENCY, (item, index) => start(item, index));
 						const ok = results.filter((r) => r.status === "completed").length;
 						const summaries = results.map((r) => `### [${r.agent}] ${statusWord(r)}\n\n${truncateBytes(r.output || "(no output)", PER_TASK_OUTPUT_CAP)}`);
+						const text = runMode === "async"
+							? finalAnswers(snapshot(), requested, reserved)
+							: `Parallel: ${ok}/${results.length} succeeded\n\n${summaries.join("\n\n---\n\n")}${transcriptLines(snapshot())}`;
 						return {
-							content: [{ type: "text", text: `Parallel: ${ok}/${results.length} succeeded\n\n${summaries.join("\n\n---\n\n")}` }],
-							details: details(snapshot()),
+							content: [{ type: "text", text }],
+							details: details(snapshot(), [], ids),
 							isError: ok !== results.length,
 							cancelled: results.every((r) => r.status === "cancelled"),
 						};
 					}
 
 					const result = await start(requested[0]!, 0);
+					const transcripts = transcriptLines(snapshot());
+					if (runMode === "async") {
+						return {
+							content: [{ type: "text", text: finalAnswers(snapshot(), requested, reserved) }],
+							details: details(snapshot(), [], ids),
+							isError: result.status !== "completed",
+							cancelled: result.status === "cancelled",
+						};
+					}
 					if (result.status === "cancelled") {
 						return {
-							content: [{ type: "text", text: `Subagent ${result.agent} was stopped by the user before it finished. Its partial work may already be on disk; do not assume the task is done.` }],
-							details: details(snapshot()),
+							content: [{ type: "text", text: `Subagent ${result.agent} was stopped by the user before it finished. Its partial work may already be on disk; do not assume the task is done.${transcripts}` }],
+							details: details(snapshot(), [], ids),
 							isError: true,
 							cancelled: true,
 						};
 					}
 					if (result.status === "failed") {
-						return { content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${result.output ?? "(no output)"}` }], details: details(snapshot()), isError: true };
+						return { content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${result.output ?? "(no output)"}${transcripts}` }], details: details(snapshot(), [], ids), isError: true };
 					}
-					return { content: [{ type: "text", text: result.output || "(no output)" }], details: details(snapshot()) };
+					return { content: [{ type: "text", text: `${result.output || "(no output)"}${transcripts}` }], details: details(snapshot(), [], ids) };
 				} finally {
 					emit.cancel();
+					// Tasks that never started (a stopped chain, an aborted job) leave no empty files behind.
+					reserved.forEach((r, index) => {
+						if (!started.has(index)) releaseRun(r);
+					});
 				}
 			};
 
 			if (!params.async) return run(signal, onUpdate, "sync");
 			const label = requested.map((item) => `${item.agent}: ${preview(item.task, 200)}`).join("; ");
 			let jobId = "";
-			jobId = background.start(ctx, label, (backgroundSignal) => run(backgroundSignal, undefined, "async", jobId));
+			try {
+				jobId = background.start(ctx, label, (backgroundSignal) => run(backgroundSignal, undefined, "async", jobId));
+			} catch (error) {
+				for (const r of reserved) releaseRun(r);
+				throw error;
+			}
+			const lines = requested.map((item, index) => `${ids.runIds[index]} ${item.agent} ${initialStatus(mode, index)} ${ids.sessionFiles[index]}`);
 			return {
-				content: [{ type: "text", text: `Delegated to background job ${jobId}. Result will arrive via steer. Do not repeat this work or poll; continue independent work, or end your turn if none remains. If you need its progress before then, use subagent_control (inspect, or wait).` }],
-				details: details([], requested.map((item, index) => ({ agent: item.agent, task: item.task, index })), { async: true, jobId, dispatched: true }),
+				content: [{ type: "text", text: [
+					`Started background job ${jobId}. State changes arrive as <subagent_notification> messages and the final answers when the job ends; do not repeat or poll this work.`,
+					...lines,
+				].join("\n") }],
+				details: details([], requested.map((item, index) => ({ agent: item.agent, task: item.task, index })), { async: true, jobId, dispatched: true, ...ids }),
 			};
 		},
 

@@ -151,7 +151,7 @@ export function stripTerminalEscapes(text: string): string {
 	return text.replace(TERMINAL_ESCAPES, "");
 }
 
-/** Pi warns on stderr when `--session-id` creates a new session; that is expected here. */
+/** Pi warned on stderr when `--session-id` created a session (children used it before `--session`). */
 export function cleanStderr(stderr: string): string {
 	return stripTerminalEscapes(stderr)
 		.split("\n")

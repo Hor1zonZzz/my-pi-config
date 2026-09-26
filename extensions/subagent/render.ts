@@ -35,6 +35,10 @@ export interface SubagentDetails {
 	jobId?: string;
 	/** Set on the immediate result of an async dispatch. */
 	dispatched?: boolean;
+	/** Short run IDs by task index, handed out at dispatch. */
+	runIds?: string[];
+	/** Session files by task index, handed out at dispatch. */
+	sessionFiles?: string[];
 }
 
 type Status = RunStatus | "pending";
@@ -278,7 +282,7 @@ export function expandedComponent(theme: Theme, details: SubagentDetails): Compo
 			else container.addChild(new Markdown(run.output.trim(), 4, 0, markdown));
 		}
 		const usage = formatUsage(run.usage, run.model);
-		const where = run.sessionDir ? `transcript: /subagent-history · ${shortenPath(run.sessionDir)}` : "";
+		const where = run.sessionDir ? `transcript: /subagent-history · ${shortenPath(run.sessionFile ?? run.sessionDir)}` : "";
 		container.addChild(new Lines((width) => [usage, where].filter(Boolean).map((l) => truncateToWidth(`    ${theme.fg("dim", l)}`, width, "…"))));
 	}
 	if (details.pending.length > 0) {

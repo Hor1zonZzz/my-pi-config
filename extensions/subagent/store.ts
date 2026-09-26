@@ -1,12 +1,17 @@
 import * as fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { RunSnapshot } from "./runs.ts";
 
 // Child sessions live in <agent dir>/subagent-sessions/<parent session id>/:
-//   <timestamp>_<run id>.jsonl   Pi's own session file for the subagent
+//   <short id>.jsonl             Pi's session file for the subagent. The extension
+//                                creates it empty at dispatch and starts Pi with
+//                                --session <file>, so the path is known at once
+//                                and Pi writes every entry as it happens.
 //   <run id>.meta.json           RunSnapshot written at start and at the end
+// Runs recorded before that used Pi's own name, <timestamp>_<run id>.jsonl.
 
 export function sessionsRoot(): string {
 	return path.join(getAgentDir(), "subagent-sessions");
@@ -68,6 +73,49 @@ export function listRuns(dir: string): RunSnapshot[] {
 		}
 	}
 	return runs.sort((a, b) => b.startedAt - a.startedAt);
+}
+
+export function shortRunId(id: string): string {
+	return id.slice(0, 8);
+}
+
+export interface ReservedRun {
+	id: string;
+	sessionFile: string;
+}
+
+/**
+ * A new run ID whose 8-character prefix is unique in `dir`, with its empty
+ * session file created exclusively, so the path can be handed out before the
+ * child starts.
+ */
+export function reserveRun(dir: string): ReservedRun {
+	ensureDir(dir);
+	for (;;) {
+		const id = randomUUID();
+		const sessionFile = path.join(dir, `${shortRunId(id)}.jsonl`);
+		try {
+			fs.writeFileSync(sessionFile, "", { flag: "wx", mode: 0o600 });
+			return { id, sessionFile };
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		}
+	}
+}
+
+/** Removes a reserved session file that no run ever wrote to. */
+export function releaseRun(reserved: ReservedRun): void {
+	try {
+		if (fs.statSync(reserved.sessionFile).size === 0) fs.rmSync(reserved.sessionFile);
+	} catch {
+		// Already gone.
+	}
+}
+
+/** The run's session file, or the one Pi named itself for runs recorded before sessionFile existed. */
+export function sessionFileOf(snapshot: Pick<RunSnapshot, "id" | "sessionDir" | "sessionFile">): string | undefined {
+	if (snapshot.sessionFile) return fs.existsSync(snapshot.sessionFile) ? snapshot.sessionFile : undefined;
+	return findSessionFile(snapshot.sessionDir, snapshot.id);
 }
 
 export function findSessionFile(dir: string, runId: string): string | undefined {

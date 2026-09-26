@@ -29,8 +29,7 @@
 subagent/
 ├── index.ts        # 装配：工具、命令、面板、浮层、生命周期
 ├── tool.ts         # subagent 工具：三种模式、同步/异步、结果
-├── control.ts      # subagent_control 工具：list、inspect、read、wait
-├── notices.ts      # 多 run 后台 job 中单个 run 的一行状态通知
+├── notices.ts      # 后台运行的一行状态通知
 ├── runner.ts       # 以 RPC 模式启动子 pi、发送任务、解析事件、写元数据
 ├── runs.ts         # 运行快照，以及本进程运行的内存登记表
 ├── store.ts        # 子会话目录、元数据、读取对话记录
@@ -62,11 +61,10 @@ subagent/
 ```
 
 - **前台（同步）**：主代理等待期间，工具行实时刷新。结果是 subagent 的答案；并行模式下
-  每个任务一段，每段最多 50 KB。
-- **后台（异步）**：调用立即返回任务 ID。任务结束后，结果作为完成消息送达，投递方式是
-  `deliverAs: "steer"` 加 `triggerTurn: true`：主代理忙时在下一次模型调用前收到，空闲时
-  会开始新的回复。主代理不应重复或轮询这项工作。最多同时 4 个后台任务；完成消息正文最多
-  32 KB、1000 行，完整结果在消息详情里。异步需要长驻的 TUI 或 RPC 会话，print 和 JSON
+  每个任务一段，每段最多 50 KB；最后附 `Transcripts:`，每个运行一行，给出短 ID 和会话文件。
+- **后台（异步）**：调用立即返回，每个任务一行：短运行 ID、agent、初始状态（`running`；链式
+  后续步骤和并行中排在前 4 个之后的任务为 `queued`）和会话文件。之后的行为见
+  [主 agent 看到什么](#主-agent-看到什么)。最多同时 4 个后台任务。异步需要长驻的 TUI 或 RPC 会话，print 和 JSON
   模式会拒绝；subagent 内部也会拒绝（它的会话在自己的任务结束时就退出了）。
 
 项目本地的 agent（`.pi/agents/*.md`）只在 `agentScope` 为 `"project"` 或 `"both"` 时运行，
@@ -107,61 +105,54 @@ subagent 已经做完的改动不会回滚。停止时先给子 Pi 发 `abort` �
 
 ```text
 <agent 目录>/subagent-sessions/<主会话 ID>/
-├── <时间戳>_<运行 ID>.jsonl   # 子会话（运行过程中持续写入）
-└── <运行 ID>.meta.json        # agent、任务、模式、状态、时间、用量、答案
+├── <短运行 ID>.jsonl    # 子会话，运行时逐条写入
+└── <运行 ID>.meta.json  # agent、任务、模式、状态、时间、用量、答案
 ```
 
-子进程用 `--session-dir` 和 `--session-id` 启动，不再使用 `--no-session`。这些文件永久
+派发时，扩展选一个前 8 位在该目录中唯一的运行 ID，并创建空文件 `<短运行 ID>.jsonl`。子进程
+用 `--session <这个文件>` 启动：Pi 遇到空的会话文件会立即写入会话头，之后每条记录也立即追加，
+所以交给主 agent 的路径从一开始就存在。从未启动的任务（中途停止的链、被取消的任务）不会留下
+文件。在此之前记录的运行使用 Pi 自己的文件名 `<时间戳>_<运行 ID>.jsonl`，仍然能找到。这些文件永久
 保留，需要腾空间时直接删目录。它们和普通 Pi 会话一样，包含 subagent 读过的内容；它们
 不会出现在 `/resume` 里。Pi 进程在运行结束前退出的记录会显示为中断。
 
 在 TUI 里，`/subagent-jobs` 打开同一个列表；`/subagent-jobs cancel <id|all>` 在任何模式下都
 可以取消后台任务。
 
-## 主 agent 查看 subagent
+## 主 agent 看到什么
 
-`subagent_control` 工具让主 agent 查看它在本会话里启动的运行，包括 `/reload` 或重启之前
-已经结束的运行：
-
-```text
-subagent_control { action: "list" }
-2 runs · 1 running
-a3f9c2e1  scout  running · bg subagent-1b2c3d4e · 1m12s · ↓3.1k · now: read src/auth.ts
-          task: Find where tokens are refreshed
-c02e9f17  reviewer  completed · 2m40s · ↓5.4k
-          task: Review the runner changes
-```
-
-| 动作 | 返回内容 |
-|---|---|
-| `list` | 每个运行的短 ID、agent、状态、后台任务、耗时、输出 token 数和当前动作 |
-| `inspect` | 单个运行：任务、用量、当前动作、最近 8 次工具调用、正在输出的文字、答案和对话记录文件 |
-| `read` | 对话记录的一页，消息从 1 开始编号；参数 `from` 和 `limit`（默认最后 20 条）。长文本和工具结果会被截短，整页不超过 Pi 的 50KB / 2000 行上限 |
-| `wait` | 等到指定的运行或后台任务结束；不指定 `run` 时，等到任意一个运行中的任务结束。`timeout` 默认 60 秒（最多 600）。按 Esc 取消等待 |
-
-`run` 可以是完整运行 ID、唯一前缀或后台任务 ID（`inspect` 和 `read` 只接受只含一个运行
-的任务）。后台结果仍会自动送达；`wait` 用于主 agent 没有别的事可做、现在就需要结果的情况。
-前台运行期间主 agent 停在这次 `subagent` 调用里，所以这些动作主要用于后台运行。
-
-### 状态通知
-
-后台 job 包含多个 run（并行或链式）时，其中某个 run 结束而 job 还在继续，主会话里就会追加一条
-简短消息，格式与 Codex CLI 相同：
+对后台运行，主 agent 会收到三种消息；运行状态没变时什么都不收到：
 
 ```text
-<subagent_notification>
-{"job":"subagent-fc664987","run":"f1dc6056","agent":"scout","status":"completed","done":"1/2","elapsed":"1s"}
-</subagent_notification>
+工具结果   Started background job subagent-37690385. State changes arrive as …
+           67380226 scout running /…/subagent-sessions/<主会话>/67380226.jsonl
+           8edb76e2 scout running /…/subagent-sessions/<主会话>/8edb76e2.jsonl
+
+通知       <subagent_notification>
+           {"run":"67380226","status":"completed"}
+           </subagent_notification>
+
+最终消息   Background job subagent-37690385 completed.
+           <subagent_result run="67380226" agent="scout" status="completed">
+           ONE
+           </subagent_result>
+           <subagent_result run="8edb76e2" agent="scout" status="completed">
+           …
+           </subagent_result>
 ```
 
-- 它以 `triggerTurn: false` 发送：主 agent 工作时，Pi 在当前这一轮结束时追加；空闲时立即追加。
-  它从不触发新一轮对话，在聊天里显示为一行。
-- 它和普通消息一样写入历史，所以 prompt 只在末尾增长，前缀缓存和 Codex 续接都不受影响。每条
-  约 40 token，每个符合条件的 run 只写一次。
-- 以下情况不发：实时动作（例如正在读哪个文件）、前台 run（工具结果已经报告）、结束整个 job 的
-  那个 run（job 的完成消息已经报告）。需要细节时用 `subagent_control`。
-- [`codex-server-compaction`](../codex-server-compaction/README.zh-CN.md) 远程压缩时不会把这些
-  通知当作用户输入保留。
+- **通知**：派发之后，运行每次状态变化各一条：`queued → running`，以及 `running →
+  completed | failed | stopped`。只包含运行 ID 和状态（约 20 token），和普通消息一样写入会话，
+  以 `triggerTurn: false` 发送：主 agent 工作时，Pi 在当前这一轮结束时追加；空闲时立即追加。
+  它从不触发新一轮对话，在聊天里显示为一行。实时动作（正在读的文件、正在调用的工具）、耗时和
+  用量都不算状态变化。
+- **最终消息**：结束整个任务的那次变化不单独通知。任务的最终消息给出每个子任务的状态和回答
+  （每个最多 16 KB；链式中没运行的步骤为 `not started`），以 `deliverAs: "steer"` 加
+  `triggerTurn: true` 投递，空闲的主 agent 会开始新的回复。整条消息最多 32 KB、1000 行。
+- **过程**：想看 subagent 做了什么，主 agent 用 `read` 读它的会话文件。没有单独的查看工具。
+- 前台运行不发通知：主 agent 正在这次调用里等待。
+- [`codex-server-compaction`](../codex-server-compaction/README.zh-CN.md) 远程压缩时不会把通知
+  当作用户输入保留。通知只在历史末尾追加，所以前缀缓存和 Codex 续接都不受影响。
 
 ## 配置 agent
 
@@ -208,7 +199,8 @@ agent 和任务，以及当前动作，或者耗时和输出 token 数。`Ctrl+O
 
 在 Pi 0.87.1 上验证。依赖：
 
-- `pi --mode rpc` 及 `--session-dir`、`--session-id`、`--name`、`--model`、`--thinking`、
+- `pi --mode rpc` 及 `--session`（空文件会立即写入会话头，之后每条记录立即追加）、
+  `--session-dir`、`--name`、`--model`、`--thinking`、
   `--tools`、`--append-system-prompt`；任务作为 stdin 上的第一条 `prompt` 命令发送，
   `prompt` 的响应为 `success: false` 时运行记为失败；
 - 会话事件 `message_start`、`message_update`、`message_end`、`tool_execution_*`、
@@ -237,9 +229,8 @@ node --test subagent/*.test.ts
 测试覆盖：用假 RPC 子进程测试运行器（会话参数、任务 prompt、事件、元数据、用户停止与主代理
 中断的区别、abort 命令、SIGKILL 升级、被取消的对话框、忽略的通知、混入的转义序列、被拒绝的
 prompt 和子进程标记）、后台任务、面板按键处理、1 到 160 列宽度下的渲染、旧格式兼容、对话记录和
-历史视图、“选中 → 查看 → 停止 → 历史”的端到端流程，以及 `subagent_control`（列表、按 ID/
-前缀/后台任务定位、查看、对话记录分页、等待及其取消、重载后从磁盘读取已结束的运行、不同
-父会话之间的隔离）。
+历史视图、“选中 → 查看 → 停止 → 历史”的端到端流程、后台状态通知与最终回答、预留的会话
+文件，以及用真实子进程验证中途停止的链不会给未运行的步骤留下文件。
 
 交互检查时请直接加载入口文件。传目录的话，因为里面有 `prompts/`，Pi 会把它当成资源包：
 

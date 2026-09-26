@@ -13,13 +13,12 @@ import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-c
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { BackgroundJobs } from "./background.ts";
 import { registerConfigCommand } from "./config.ts";
-import { registerControlTool } from "./control.ts";
 import { preview } from "./format.ts";
 import { RunPanel } from "./panel.ts";
 import { NOTICE_TYPE, type NoticeDetails, noticeComponent, watchRunNotices } from "./notices.ts";
 import { completionComponent } from "./render.ts";
 import { interrupted, RunRegistry } from "./runs.ts";
-import { findSessionFile, listRuns, parentSessionDir, readSessionMessages } from "./store.ts";
+import { listRuns, parentSessionDir, readSessionMessages, sessionFileOf } from "./store.ts";
 import { registerSubagentTool } from "./tool.ts";
 import { type HistoryItem, HistoryView, type RunSource, RunView } from "./viewer.ts";
 
@@ -64,7 +63,7 @@ export default function subagentExtension(pi: ExtensionAPI) {
 			const live = item.live;
 			return () => ({ snapshot: live.snapshot, messages: live.messages, streaming: live.streaming });
 		}
-		const file = findSessionFile(item.snapshot.sessionDir, item.snapshot.id);
+		const file = sessionFileOf(item.snapshot);
 		const messages = file ? readSessionMessages(file) : [];
 		return () => ({ snapshot: item.snapshot, messages });
 	};
@@ -162,7 +161,6 @@ export default function subagentExtension(pi: ExtensionAPI) {
 
 	registerConfigCommand(pi);
 	registerSubagentTool(pi, registry, background);
-	registerControlTool(pi, registry);
 
 	pi.registerCommand("subagent-history", {
 		description: "Browse this session's subagent runs and their transcripts",

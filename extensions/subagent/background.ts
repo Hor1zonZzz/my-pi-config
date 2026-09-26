@@ -73,8 +73,8 @@ export class BackgroundJobs {
 					output = "Cancelled. Work may be partial; inspect any changes before relying on them.";
 				}
 				if (this.stopped || this.generation !== generation || ctx.sessionManager.getSessionId() !== sessionId) return;
-				const summary = truncateHead(task, { maxBytes: 2048, maxLines: 20 });
-				const text = `Subagent job ${job.id} ${status}.\nDelegated: ${summary.content}${summary.truncated ? "…" : ""}\n\n${output || "(no output)"}`;
+				// The dispatch result already named every run; this carries their final answers.
+				const text = `Background job ${job.id} ${status}.\n${output || "(no output)"}`;
 				const truncated = truncateHead(text, { maxBytes: 32 * 1024, maxLines: 1000 });
 				this.pi.sendMessage({
 					customType: "subagent-completion",

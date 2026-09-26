@@ -228,6 +228,11 @@ System prompt for the agent.
 
 用户 agent 在 `<agent 目录>/agents/`，项目 agent 在最近的 `.pi/agents/`。
 
+不写 `tools` 时，agent 拿到它的 Pi 加载的全部工具。`extensions: false` 让它以纯净的 Pi 启动
+（`--no-extensions`）：不加载任何自动发现或配置的扩展和包，因此也没有 `subagent` 工具。自带的
+`worker` 用了它，所以不会再派发自己的 subagent；`scout`、`planner`、`reviewer` 都列出了自己的
+工具，也不能派发。
+
 ## 工具行和消息
 
 折叠时每个运行一行：状态标记（spinner 运行中、`●` 完成、`✕` 失败、`○` 已停止、`·` 排队），

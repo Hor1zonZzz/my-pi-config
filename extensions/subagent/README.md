@@ -263,6 +263,12 @@ System prompt for the agent.
 User agents live in `<agent dir>/agents/`, project agents in the nearest
 `.pi/agents/`.
 
+Without `tools`, an agent gets every tool its Pi loads. `extensions: false` starts
+it as a plain Pi (`--no-extensions`): no discovered or configured extension or
+package, so no `subagent` tool either. The bundled `worker` uses it so it cannot
+start subagents of its own; `scout`, `planner`, and `reviewer` list their tools
+and cannot either.
+
 ## Tool rows and messages
 
 Collapsed rows show one line per run: a status mark (spinner, `●` done, `✕`

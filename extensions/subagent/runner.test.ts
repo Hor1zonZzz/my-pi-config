@@ -131,6 +131,9 @@ test("builds a persisted child session instead of --no-session", () => {
 	const own = buildArgs({ ...base, agent: { ...agent, model: "x/y" } }, "/s/run-2.jsonl", "/s");
 	assert.equal(own[own.indexOf("--model") + 1], "x/y");
 	assert.ok(!own.includes("--thinking"), "an agent with its own model does not inherit the dispatch thinking level");
+	assert.ok(!args.includes("--no-extensions"));
+	const plain = buildArgs({ ...base, agent: { ...agent, extensions: false } }, "/s/run-3.jsonl", "/s");
+	assert.ok(plain.includes("--no-extensions"), "extensions: false starts a plain Pi");
 });
 
 test("applies streaming, tool, and message events to the live run", () => {

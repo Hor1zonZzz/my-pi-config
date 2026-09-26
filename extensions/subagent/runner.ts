@@ -79,6 +79,8 @@ export function buildArgs(request: RunRequest, sessionFile: string, sessionDir: 
 	if (model) args.push("--model", model);
 	if (thinkingLevel) args.push("--thinking", thinkingLevel);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+	// A plain Pi: no discovered or configured extensions, so no subagent tools to nest with.
+	if (agent.extensions === false) args.push("--no-extensions");
 	if (promptFile) args.push("--append-system-prompt", promptFile);
 	return args;
 }

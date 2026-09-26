@@ -20,6 +20,8 @@ export interface AgentConfig {
 	tools?: string[];
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
+	/** `extensions: false` runs the agent as a plain Pi, without any extension or package. */
+	extensions?: boolean;
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -44,6 +46,7 @@ type AgentFrontmatter = {
 	tools?: unknown;
 	model?: unknown;
 	thinkingLevel?: unknown;
+	extensions?: unknown;
 };
 
 /**
@@ -121,6 +124,7 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			tools: parseToolList(frontmatter.tools),
 			model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
 			thinkingLevel: parseThinkingLevel(frontmatter.thinkingLevel),
+			...(frontmatter.extensions === false ? { extensions: false } : {}),
 			systemPrompt: body,
 			source,
 			filePath,

@@ -10,6 +10,8 @@ const CONTEXTUAL_USER_MARKERS: ReadonlyArray<readonly [string, string]> = [
 	["<user_shell_command>", "</user_shell_command>"],
 	["<turn_aborted>", "</turn_aborted>"],
 	["<subagent_notification>", "</subagent_notification>"],
+	// Request-local subagent status from this repository's subagent extension; never retained.
+	["<system_status>", "</system_status>"],
 	["<recommended_plugins>", "</recommended_plugins>"],
 ];
 

@@ -51,7 +51,24 @@ function getFunctionCallOutputId(item: unknown): string | undefined {
 		: undefined;
 }
 
+/**
+ * Opening tag of the request-local status that the subagent extension appends
+ * as the last user item of a request and drops from the next one.
+ */
+export const REQUEST_LOCAL_STATUS_TAG = "<system_status>";
+
+function isRequestLocalStatus(item: unknown): boolean {
+	if (!item || typeof item !== "object" || (item as { role?: unknown }).role !== "user") return false;
+	const content = (item as { content?: unknown }).content;
+	return Array.isArray(content) && content.some((part) =>
+		!!part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
+		&& (part as { text: string }).text.trimStart().startsWith(REQUEST_LOCAL_STATUS_TAG));
+}
+
 function getPendingToolOutputDelta(body: ResponsesBody, continuation: CachedWebSocketContinuationState): unknown[] | undefined {
+	// Chaining onto a response keeps its request's input on the server, so a
+	// request-local status would stay in context. Send the full input instead.
+	if ((continuation.lastRequestBody.input ?? []).some(isRequestLocalStatus)) return undefined;
 	const pendingCallIds = continuation.lastResponseItems.map(getFunctionCallId).filter((id): id is string => id !== undefined);
 	if (pendingCallIds.length === 0) return undefined;
 

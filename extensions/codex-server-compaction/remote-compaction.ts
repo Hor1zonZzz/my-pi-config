@@ -20,6 +20,7 @@ import {
 	sessionEntryToContextMessages,
 	type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
+import { REQUEST_LOCAL_STATUS_TAG } from "./vendor/howaboua/providers/openai-codex/websocket-continuation.ts";
 
 export type JsonRecord = Record<string, unknown>;
 export type ResponseItem = JsonRecord & { type?: string };
@@ -385,6 +386,8 @@ export function normalizeResponseItemsForPrompt(
 
 function isRealUserMessage(item: ResponseItem): boolean {
 	if ((item.type !== undefined && item.type !== "message") || item.role !== "user") return false;
+	// The subagent extension's request-local status is never part of the conversation.
+	if (responseMessageText({ ...item, type: "message" }).trimStart().startsWith(REQUEST_LOCAL_STATUS_TAG)) return false;
 	if (typeof item.content === "string") return item.content.trim().length > 0;
 	return Array.isArray(item.content) && item.content.length > 0;
 }

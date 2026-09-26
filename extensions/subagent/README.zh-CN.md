@@ -30,6 +30,7 @@ subagent/
 ├── index.ts        # 装配：工具、命令、面板、浮层、生命周期
 ├── tool.ts         # subagent 工具：三种模式、同步/异步、结果
 ├── control.ts      # subagent_control 工具：list、inspect、read、wait
+├── status.ts       # 给主 agent 的请求级 <system_status> 块
 ├── runner.ts       # 以 RPC 模式启动子 pi、发送任务、解析事件、写元数据
 ├── runs.ts         # 运行快照，以及本进程运行的内存登记表
 ├── store.ts        # 子会话目录、元数据、读取对话记录
@@ -142,6 +143,30 @@ c02e9f17  reviewer  completed · 2m40s · ↓5.4k
 的任务）。后台结果仍会自动送达；`wait` 用于主 agent 没有别的事可做、现在就需要结果的情况。
 前台运行期间主 agent 停在这次 `subagent` 调用里，所以这些动作主要用于后台运行。
 
+### 每次请求附带实时状态
+
+有 subagent 活动时，主 agent 的每次模型请求末尾都会带一个 `<system_status>` 块，模型不用调用
+工具也知道它们的状态：
+
+```text
+<system_status>
+Subagents: 1 running, 1 just finished. This status is current for this request only and is not kept in the conversation.
+- a3f9c2e1 scout: running 1m 12s, background job subagent-1b2c3d4e, now: read src/auth.ts. Task: Find where tokens are refreshed
+- c02e9f17 reviewer: completed in 2m 40s. Task: Review the runner changes
+Use subagent_control to inspect, read, or wait for a run.
+</system_status>
+```
+
+- 它列出运行中的 run、已派出但还没开始的后台任务（`starting`），以及模型上次看到状态之后结束
+  的 run；每个结束的 run 只出现一次。没有可报告的内容时不注入。
+- 它通过 Pi 的 `context` 事件作为本次请求单独的最后一条 user 消息追加，只存在于这一次请求，
+  从不写入 session；下一次请求会换成新的，旧状态不会累积。它放在所有稳定消息之后，不影响前缀
+  缓存：在 gpt-5.6-sol + Codex WebSocket transport 上各测 18 次请求，带状态块时输入缓存占比
+  69.6%，不带时 70.1%。
+- [`codex-server-compaction`](../codex-server-compaction/README.zh-CN.md) 认识这个标签：上一次
+  请求带了它，下一次请求就发送完整 input，不用 `previous_response_id` 续接（续接会保留上一次
+  请求的 input，旧状态也在其中）；远程压缩也不会保留它。
+
 ## 配置 agent
 
 ```text
@@ -202,7 +227,8 @@ agent 和任务，以及当前动作，或者耗时和输出 token 数。`Ctrl+O
 - 会话文件名 `<时间戳>_<会话 ID>.jsonl` 和其中的 `message` 条目；
 - `ctx.ui.onTerminalInput()` 在焦点组件之前执行、具体 TUI 实现的 `getFocusedComponent()`，
   以及 Pi 主输入框带有 `actionHandlers`（面板靠它区分主输入框和对话框）；
-- `ctx.ui.setWidget(..., { placement: "belowEditor" })` 和浮层形式的 `ctx.ui.custom()`。
+- `ctx.ui.setWidget(..., { placement: "belowEditor" })` 和浮层形式的 `ctx.ui.custom()`；
+- `context` 事件：它返回的消息只作用于一次模型请求，不会持久化。
 
 测试用 Node 24 针对已安装的 Pi 包运行。请在临时副本里运行，并让副本的
 `node_modules/@earendil-works` 和 `node_modules/typebox` 指向已安装的包：

@@ -208,6 +208,15 @@ test("v2 history retains recent user input plus one opaque artifact", () => {
 	assert.equal(history[0].role, "user");
 });
 
+test("v2 history never retains the request-local subagent status", () => {
+	const status = { type: "message", role: "user", content: [{ type: "input_text", text: "<system_status>\nSubagents: 1 running\n</system_status>" }] };
+	const history = buildRemoteCompactionV2History(
+		[{ type: "message", role: "user", content: [{ type: "input_text", text: "retain me" }] }, status],
+		{ type: "compaction", encrypted_content: "encrypted" },
+	);
+	assert.deepEqual(history.map((item) => (item.content as Array<{ text: string }> | undefined)?.[0]?.text ?? item.type), ["retain me", "compaction"]);
+});
+
 test("exact-model details survive model switches that produce no foreign reply", () => {
 	const details = buildRemoteCompactionDetails(
 		model,

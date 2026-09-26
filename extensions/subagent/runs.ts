@@ -83,6 +83,12 @@ export class LiveRun {
 	}
 }
 
+/** A run found on disk that this process is no longer running. */
+export function interrupted(snapshot: RunSnapshot): RunSnapshot {
+	if (snapshot.status !== "running") return snapshot;
+	return { ...snapshot, status: "cancelled", activity: undefined, output: snapshot.output || "Interrupted: Pi exited or reloaded before the run finished." };
+}
+
 type Listener = (run: LiveRun | undefined) => void;
 
 /** Runs started by this process, in start order, with change notifications for the UI. */

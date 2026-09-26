@@ -13,10 +13,11 @@ import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-c
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { BackgroundJobs } from "./background.ts";
 import { registerConfigCommand } from "./config.ts";
+import { registerControlTool } from "./control.ts";
 import { preview } from "./format.ts";
 import { RunPanel } from "./panel.ts";
 import { completionComponent } from "./render.ts";
-import { RunRegistry, type RunSnapshot } from "./runs.ts";
+import { interrupted, RunRegistry } from "./runs.ts";
 import { findSessionFile, listRuns, parentSessionDir, readSessionMessages } from "./store.ts";
 import { registerSubagentTool } from "./tool.ts";
 import { type HistoryItem, HistoryView, type RunSource, RunView } from "./viewer.ts";
@@ -39,12 +40,6 @@ function focusedEditor(tui: TUI | undefined): EditorLike | undefined {
 	if (typeof withFocus?.getFocusedComponent !== "function") return undefined;
 	const focused = withFocus.getFocusedComponent() as EditorLike | null;
 	return focused && focused.actionHandlers instanceof Map && typeof focused.getText === "function" ? focused : undefined;
-}
-
-/** A run found on disk that this process is no longer running. */
-function interrupted(snapshot: RunSnapshot): RunSnapshot {
-	if (snapshot.status !== "running") return snapshot;
-	return { ...snapshot, status: "cancelled", activity: undefined, output: snapshot.output || "Interrupted: Pi exited or reloaded before the run finished." };
 }
 
 export default function subagentExtension(pi: ExtensionAPI) {
@@ -166,6 +161,7 @@ export default function subagentExtension(pi: ExtensionAPI) {
 
 	registerConfigCommand(pi);
 	registerSubagentTool(pi, registry, background);
+	registerControlTool(pi, registry);
 
 	pi.registerCommand("subagent-history", {
 		description: "Browse this session's subagent runs and their transcripts",

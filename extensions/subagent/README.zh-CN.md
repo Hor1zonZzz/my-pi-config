@@ -29,6 +29,7 @@
 subagent/
 ├── index.ts        # 装配：工具、命令、面板、浮层、生命周期
 ├── tool.ts         # subagent 工具：三种模式、同步/异步、结果
+├── control.ts      # subagent_control 工具：list、inspect、read、wait
 ├── runner.ts       # 启动子 pi、解析 JSON 事件、写元数据
 ├── runs.ts         # 运行快照，以及本进程运行的内存登记表
 ├── store.ts        # 子会话目录、元数据、读取对话记录
@@ -115,6 +116,31 @@ subagent 已经做完的改动不会回滚。
 在 TUI 里，`/subagent-jobs` 打开同一个列表；`/subagent-jobs cancel <id|all>` 在任何模式下都
 可以取消后台任务。
 
+## 主 agent 查看 subagent
+
+`subagent_control` 工具让主 agent 查看它在本会话里启动的运行，包括 `/reload` 或重启之前
+已经结束的运行：
+
+```text
+subagent_control { action: "list" }
+2 runs · 1 running
+a3f9c2e1  scout  running · bg subagent-1b2c3d4e · 1m12s · ↓3.1k · now: read src/auth.ts
+          task: Find where tokens are refreshed
+c02e9f17  reviewer  completed · 2m40s · ↓5.4k
+          task: Review the runner changes
+```
+
+| 动作 | 返回内容 |
+|---|---|
+| `list` | 每个运行的短 ID、agent、状态、后台任务、耗时、输出 token 数和当前动作 |
+| `inspect` | 单个运行：任务、用量、当前动作、最近 8 次工具调用、正在输出的文字、答案和对话记录文件 |
+| `read` | 对话记录的一页，消息从 1 开始编号；参数 `from` 和 `limit`（默认最后 20 条）。长文本和工具结果会被截短，整页不超过 Pi 的 50KB / 2000 行上限 |
+| `wait` | 等到指定的运行或后台任务结束；不指定 `run` 时，等到任意一个运行中的任务结束。`timeout` 默认 60 秒（最多 600）。按 Esc 取消等待 |
+
+`run` 可以是完整运行 ID、唯一前缀或后台任务 ID（`inspect` 和 `read` 只接受只含一个运行
+的任务）。后台结果仍会自动送达；`wait` 用于主 agent 没有别的事可做、现在就需要结果的情况。
+前台运行期间主 agent 停在这次 `subagent` 调用里，所以这些动作主要用于后台运行。
+
 ## 配置 agent
 
 ```text
@@ -177,7 +203,9 @@ node --test subagent/*.test.ts
 
 测试覆盖：用假子进程测试运行器（会话参数、事件、元数据、用户停止与主代理中断的区别、
 SIGKILL 升级）、后台任务、面板按键处理、1 到 160 列宽度下的渲染、旧格式兼容、对话记录和
-历史视图，以及“选中 → 查看 → 停止 → 历史”的端到端流程。
+历史视图、“选中 → 查看 → 停止 → 历史”的端到端流程，以及 `subagent_control`（列表、按 ID/
+前缀/后台任务定位、查看、对话记录分页、等待及其取消、重载后从磁盘读取已结束的运行、不同
+父会话之间的隔离）。
 
 交互检查时请直接加载入口文件。传目录的话，因为里面有 `prompts/`，Pi 会把它当成资源包：
 

@@ -32,6 +32,7 @@ Pi's official subagent example; the rest was rewritten.
 subagent/
 ├── index.ts        # Wiring: tool, commands, panel, overlays, lifecycle
 ├── tool.ts         # The subagent tool: modes, sync/async, results
+├── control.ts      # The subagent_control tool: list, inspect, read, wait
 ├── runner.ts       # Starts a child pi, parses its JSON events, saves metadata
 ├── runs.ts         # Run snapshots and the in-memory registry of this process's runs
 ├── store.ts        # Child session directory, metadata, transcript reading
@@ -130,6 +131,33 @@ shown as interrupted.
 `/subagent-jobs` opens the same list in the TUI. `/subagent-jobs cancel <id|all>`
 cancels background jobs from any mode.
 
+## Checking on subagents from the main agent
+
+The `subagent_control` tool lets the main agent look at the runs it started in
+this session, including finished runs from before `/reload` or a restart:
+
+```text
+subagent_control { action: "list" }
+2 runs · 1 running
+a3f9c2e1  scout  running · bg subagent-1b2c3d4e · 1m12s · ↓3.1k · now: read src/auth.ts
+          task: Find where tokens are refreshed
+c02e9f17  reviewer  completed · 2m40s · ↓5.4k
+          task: Review the runner changes
+```
+
+| Action | What it returns |
+|---|---|
+| `list` | Every run with its short ID, agent, status, job, elapsed time, output tokens, and current activity |
+| `inspect` | One run: task, usage, current activity, the last 8 tool calls, the text being written, the answer, and the transcript file |
+| `read` | A page of the transcript, messages numbered from 1; `from` and `limit` (default: the last 20). Long texts and tool results are shortened, and the page stays within Pi's 50KB / 2000-line limit |
+| `wait` | Blocks until the named run or background job finishes, or, with no `run`, until any running run finishes; `timeout` defaults to 60 s (max 600). Esc cancels the wait |
+
+`run` accepts a full run ID, a unique prefix, or a background job ID (`inspect`
+and `read` need a job with one run). Background results still arrive on their
+own; `wait` is for when the main agent has nothing else to do and needs the
+result now. A foreground run keeps the main agent inside its `subagent` call, so
+these actions matter mostly for background runs.
+
 ## Configuring agents
 
 ```text
@@ -203,8 +231,10 @@ node --test subagent/*.test.ts
 They cover the runner with a fake child (session arguments, events, metadata,
 user stop versus parent abort, SIGKILL escalation), background jobs, the panel's
 key handling, rendering at widths from 1 to 160 columns, legacy details, the
-transcript and history views, and an end-to-end select → watch → stop → history
-flow.
+transcript and history views, an end-to-end select → watch → stop → history
+flow, and `subagent_control` (listing, ID/prefix/job resolution, inspection,
+transcript paging, waiting and its cancellation, finished runs read from disk
+after a reload, and isolation between parent sessions).
 
 For an interactive check, load the entry file directly. Passing the directory
 makes Pi treat it as a package because it contains `prompts/`:

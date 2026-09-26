@@ -120,6 +120,7 @@ export function toolDescription(userAgents: AgentConfig[]): string {
 		catalog,
 		`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 		`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
+		"Use subagent_control to check on runs: list, inspect progress, read transcripts, or wait for them.",
 	].join(" ");
 }
 
@@ -271,7 +272,7 @@ export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, ba
 			let jobId = "";
 			jobId = background.start(ctx, label, (backgroundSignal) => run(backgroundSignal, undefined, "async", jobId));
 			return {
-				content: [{ type: "text", text: `Delegated to background job ${jobId}. Result will arrive via steer. Do not repeat this work or poll; continue independent work, or end your turn if none remains.` }],
+				content: [{ type: "text", text: `Delegated to background job ${jobId}. Result will arrive via steer. Do not repeat this work or poll; continue independent work, or end your turn if none remains. If you need its progress before then, use subagent_control (inspect, or wait).` }],
 				details: details([], requested.map((item, index) => ({ agent: item.agent, task: item.task, index })), { async: true, jobId, dispatched: true }),
 			};
 		},

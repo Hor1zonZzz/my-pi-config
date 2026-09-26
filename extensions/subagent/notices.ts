@@ -1,16 +1,22 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import { formatDuration } from "./format.ts";
-import { glyph } from "./render.ts";
+import { glyph, type SubagentDetails } from "./render.ts";
 import type { LiveRun, RunRegistry, RunSnapshot } from "./runs.ts";
 import { shortRunId } from "./store.ts";
-import { initialStatus, modelStatus } from "./tool.ts";
+import { initialStatus, modelStatus, resultBlock } from "./tool.ts";
 
-// State notices for background runs. The dispatch result names every run with
-// its initial state (running or queued); after that, each change of state
-// appends one persisted line to the main session, and nothing is appended
-// while the state stays the same. The change that ends a job is carried by the
-// job's final message with the answers instead. Notices never start a turn.
+// What a background job tells the main agent between its dispatch result and
+// its final message:
+// - parallel: a run that finishes while others still run delivers its own
+//   <subagent_result> at once and wakes the main agent; the job's final message
+//   then carries only the answers not delivered yet.
+// - chain: a step that completes while later steps follow appends a one-line
+//   <subagent_notification> (its answer feeds the next step), and a later step
+//   starting appends one too. Notices never start a turn.
+// Nothing is sent while a state holds, for the change that ends a job (the
+// final message reports it), for the main agent's own stops, or for runs
+// cancelled with their whole job.
 
 export const NOTICE_TYPE = "subagent-status";
 /** Codex CLI's tag for the same purpose; codex-server-compaction never retains it as user input. */
@@ -44,7 +50,20 @@ export interface NoticeOptions {
 	sessionId(): string | undefined;
 }
 
-/** Watches the registry and appends a notice for each change of a background run's state. */
+/** One run's answer, delivered ahead of its job's final message; rendered like a completion card. */
+function deliverResult(pi: ExtensionAPI, run: LiveRun): void {
+	const s = run.snapshot;
+	const snapshot = { ...s, usage: { ...s.usage }, toolCalls: [...s.toolCalls], group: { ...s.group } };
+	const details: SubagentDetails = { version: 2, mode: "single", agentScope: "user", projectAgentsDir: null, runs: [snapshot], pending: [] };
+	const text = resultBlock(snapshot);
+	run.delivered = true;
+	pi.sendMessage(
+		{ customType: "subagent-completion", content: text, display: true, details: { jobId: s.jobId, status: modelStatus(s.status), result: { content: [{ type: "text", text }], details } } },
+		{ deliverAs: "steer", triggerTurn: true },
+	);
+}
+
+/** Watches the registry and reports background runs' changes of state as described above. */
 export function watchRunNotices(pi: ExtensionAPI, registry: RunRegistry, options: NoticeOptions): () => void {
 	const lastSent = new Map<string, RunSnapshot["status"]>();
 	return registry.subscribe((changed: LiveRun | undefined) => {
@@ -56,11 +75,17 @@ export function watchRunNotices(pi: ExtensionAPI, registry: RunRegistry, options
 		const previous = lastSent.get(key) ?? initialStatus(s.group.kind, s.group.index);
 		if (previous === s.status) return;
 		lastSent.set(key, s.status);
-		// The main agent learned about its own stop from subagent_control's result.
-		if (s.status === "cancelled" && changed?.stoppedBy === "agent") return;
+		// The main agent learned about its own stop from subagent_control's result;
+		// a run cancelled without a stop went down with its whole job.
+		if (s.status === "cancelled" && changed?.stoppedBy !== "user") return;
+		if (s.status === "running" && s.group.kind !== "chain") return;
 		if (s.status !== "running") {
 			const jobRuns = registry.list().map((run) => run.snapshot).filter((other) => other.jobId === s.jobId);
 			if (endsJob(s, jobRuns)) return;
+			if (s.group.kind === "parallel" && changed) {
+				deliverResult(pi, changed);
+				return;
+			}
 		}
 		const details: NoticeDetails = {
 			run: shortRunId(s.id),

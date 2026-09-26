@@ -91,16 +91,24 @@ function transcriptLines(runs: RunSnapshot[]): string {
 
 const FINAL_ANSWER_CAP = 16 * 1024;
 
-/** A background job's final message body: every task's status and answer, in task order. */
-export function finalAnswers(runs: RunSnapshot[], requested: Array<{ agent: string }>, reserved: ReservedRun[]): string {
+/** One run's status and answer, as the main agent receives it. */
+export function resultBlock(run: RunSnapshot): string {
+	const answer = truncateBytes(run.output || "(no output)", FINAL_ANSWER_CAP, `The full text is in ${run.sessionFile ?? "the transcript"}.`);
+	return `<subagent_result run="${shortRunId(run.id)}" agent="${run.agent}" status="${modelStatus(run.status)}">\n${answer}\n</subagent_result>`;
+}
+
+/**
+ * A background job's final message body: every task's status and answer, in
+ * task order, except runs whose answer was already delivered on its own.
+ */
+export function finalAnswers(runs: RunSnapshot[], requested: Array<{ agent: string }>, reserved: ReservedRun[], delivered: ReadonlySet<string> = new Set()): string {
 	return requested
 		.map((item, index) => {
-			const id = shortRunId(reserved[index]!.id);
 			const run = runs.find((r) => r.group.index === index);
-			if (!run) return `<subagent_result run="${id}" agent="${item.agent}" status="not started"/>`;
-			const answer = truncateBytes(run.output || "(no output)", FINAL_ANSWER_CAP, `The full text is in ${run.sessionFile ?? "the transcript"}.`);
-			return `<subagent_result run="${id}" agent="${run.agent}" status="${modelStatus(run.status)}">\n${answer}\n</subagent_result>`;
+			if (!run) return `<subagent_result run="${shortRunId(reserved[index]!.id)}" agent="${item.agent}" status="not started"/>`;
+			return delivered.has(run.id) ? "" : resultBlock(run);
 		})
+		.filter(Boolean)
 		.join("\n");
 }
 
@@ -296,8 +304,10 @@ export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, ba
 						const results = await mapWithConcurrencyLimit(requested, MAX_CONCURRENCY, (item, index) => start(item, index));
 						const ok = results.filter((r) => r.status === "completed").length;
 						const summaries = results.map((r) => `### [${r.agent}] ${statusWord(r)}\n\n${truncateBytes(r.output || "(no output)", PER_TASK_OUTPUT_CAP)}`);
+						// Runs that finished while others were still going already delivered their answers.
+						const delivered = new Set(live.filter((r) => r.delivered).map((r) => r.id));
 						const text = runMode === "async"
-							? finalAnswers(snapshot(), requested, reserved)
+							? finalAnswers(snapshot(), requested, reserved, delivered)
 							: `Parallel: ${ok}/${results.length} succeeded\n\n${summaries.join("\n\n---\n\n")}${transcriptLines(snapshot())}`;
 						return {
 							content: [{ type: "text", text }],
@@ -355,7 +365,9 @@ export function registerSubagentTool(pi: ExtensionAPI, registry: RunRegistry, ba
 			const lines = requested.map((item, index) => `${ids.runIds[index]} ${item.agent} ${initialStatus(mode, index)} ${ids.sessionFiles[index]}`);
 			return {
 				content: [{ type: "text", text: [
-					`Started background job ${jobId}. State changes arrive as <subagent_notification> messages and the final answers when the job ends; do not repeat or poll this work.`,
+					`Started background job ${jobId}. ${mode === "chain"
+						? "The answers arrive as <subagent_result> messages when the chain ends, and a <subagent_notification> line marks each step"
+						: mode === "parallel" ? "Each run's answer arrives as a <subagent_result> message when it finishes" : "The answer arrives as a <subagent_result> message when it finishes"}; do not repeat or poll this work.`,
 					...lines,
 				].join("\n") }],
 				details: details([], requested.map((item, index) => ({ agent: item.agent, task: item.task, index })), { async: true, jobId, dispatched: true, ...ids }),

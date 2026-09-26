@@ -62,6 +62,8 @@ export class LiveRun {
 	readonly messages: Message[] = [];
 	streaming: StreamingMessage | undefined;
 	readonly controller = new AbortController();
+	/** Set once this run's answer went to the main agent ahead of its job's final message. */
+	delivered = false;
 	/** Who stopped the run: the user from the panel, or the main agent with subagent_control. */
 	stoppedBy: "user" | "agent" | undefined;
 	/**

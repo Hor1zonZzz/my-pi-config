@@ -29,7 +29,7 @@
 subagent/
 ├── index.ts        # 装配：工具、命令、面板、浮层、生命周期
 ├── tool.ts         # subagent 工具：三种模式、同步/异步、结果
-├── notices.ts      # 后台运行的一行状态通知
+├── notices.ts      # 并行运行的提前交付与链式步骤通知
 ├── control.ts      # subagent_control：send（插话、打断、继续）和 stop
 ├── runner.ts       # 以 RPC 模式启动子 pi、发送任务、解析事件、写元数据
 ├── runs.ts         # 运行快照，以及本进程运行的内存登记表
@@ -126,39 +126,44 @@ subagent 已经做完的改动不会回滚。停止时先给子 Pi 发 `abort` �
 
 ## 主 agent 看到什么
 
-对后台运行，主 agent 会收到三种消息；运行状态没变时什么都不收到：
+对后台任务，主 agent 先收到派发结果，之后每个回答以 `<subagent_result>` 消息送达；运行状态不变时
+什么都不收到。以三个并行任务、`a` 最先完成为例：
 
 ```text
-工具结果   Started background job subagent-37690385. State changes arrive as …
-           67380226 scout running /…/subagent-sessions/<主会话>/67380226.jsonl
-           8edb76e2 scout running /…/subagent-sessions/<主会话>/8edb76e2.jsonl
+工具结果   Started background job subagent-49822691. Each run's answer arrives as …
+           a3f9c2e1 scout running /…/subagent-sessions/<主会话>/a3f9c2e1.jsonl
+           b7c8d9e0 scout running /…/subagent-sessions/<主会话>/b7c8d9e0.jsonl
+           c1d2e3f4 worker running /…/subagent-sessions/<主会话>/c1d2e3f4.jsonl
 
-通知       <subagent_notification>
-           {"run":"67380226","status":"completed"}
-           </subagent_notification>
+a 完成     <subagent_result run="a3f9c2e1" agent="scout" status="completed">
+           …a 的回答…
+           </subagent_result>
 
-最终消息   Background job subagent-37690385 completed.
-           <subagent_result run="67380226" agent="scout" status="completed">
-           ONE
+b 失败     <subagent_result run="b7c8d9e0" agent="scout" status="failed">
+           …失败原因…
            </subagent_result>
-           <subagent_result run="8edb76e2" agent="scout" status="completed">
-           …
+
+c 完成     <subagent_result run="c1d2e3f4" agent="worker" status="completed">
+           …c 的回答…
            </subagent_result>
+           Background job subagent-49822691 completed.
 ```
 
-- **通知**：派发之后，运行每次状态变化各一条：`queued → running`，以及 `running →
-  completed | failed | stopped`。只包含运行 ID 和状态（约 20 token），和普通消息一样写入会话，
-  以 `triggerTurn: false` 发送：主 agent 工作时，Pi 在当前这一轮结束时追加；空闲时立即追加。
-  它从不触发新一轮对话，在聊天里显示为一行。实时动作（正在读的文件、正在调用的工具）、耗时和
-  用量都不算状态变化。
-- **最终消息**：结束整个任务的那次变化不单独通知。任务的最终消息给出每个子任务的状态和回答
-  （每个最多 16 KB；链式中没运行的步骤为 `not started`），以 `deliverAs: "steer"` 加
-  `triggerTurn: true` 投递，空闲的主 agent 会开始新的回复。整条消息最多 32 KB、1000 行。
+- **每个回答只送一次，一有结果就送。** 并行任务中，其他任务还在运行时完成（或失败、或被面板停止）的
+  运行立即送达自己的 `<subagent_result>`。任务的最终消息只包含还没送达的回答（从未运行的任务为
+  `not started`），最后一行是任务状态。它们都以 `deliverAs: "steer"` 加 `triggerTurn: true` 发送，
+  空闲的主 agent 每收到一条就开始新的回复。每个回答最多 16 KB（其余在会话文件里），每条消息最多
+  32 KB、1000 行。
+- **链式**在整条链结束时送达回答，因为每一步的回答是下一步的输入。期间每一步完成或开始时追加一行
+  `<subagent_notification>{"run","status"}</subagent_notification>`，以 `triggerTurn: false` 发送
+  （当前这一轮结束时追加，空闲时立即追加），从不触发新一轮对话。
+- **不报告：** 排队的并行任务开始运行、实时动作（正在读的文件、正在调用的工具）、耗时、用量、主 agent
+  自己发起的停止（工具结果已说明），以及随整个任务一起取消的运行。
 - **过程**：想看 subagent 做了什么，主 agent 用 `read` 读它的会话文件。没有单独的查看工具；
   `subagent_control` 只负责操作运行（见下）。
-- 前台运行不发通知：主 agent 正在这次调用里等待。
+- 前台运行不额外报告：主 agent 正在这次调用里等待，所有回答都在工具结果里。
 - [`codex-server-compaction`](../codex-server-compaction/README.zh-CN.md) 远程压缩时不会把通知
-  当作用户输入保留。通知只在历史末尾追加，所以前缀缓存和 Codex 续接都不受影响。
+  当作用户输入保留。这里的一切都追加在历史末尾，所以前缀缓存和 Codex 续接都不受影响。
 
 ### 给运行发消息和停止运行
 

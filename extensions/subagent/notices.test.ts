@@ -60,48 +60,83 @@ test("a notice carries only the run and its status", () => {
 	assert.equal(noticeText("a3f9c2e1", "running"), '<subagent_notification>\n{"run":"a3f9c2e1","status":"running"}\n</subagent_notification>');
 });
 
-test("each change of a background run's state is noticed once; unchanged states and other sessions are not", () => {
+test("a parallel run that finishes early delivers its answer at once; starts, the job's end, and cancels send nothing", () => {
 	const sent: Array<{ message: any; options: any }> = [];
 	const pi = { sendMessage: (message: any, options: any) => sent.push({ message, options }) } as unknown as ExtensionAPI;
 	const registry = new RunRegistry();
 	let session = "s";
 	watchRunNotices(pi, registry, { sessionId: () => session });
-	const texts = () => sent.map((m) => JSON.parse(m.message.content.split("\n")[1]));
-	// Five parallel tasks: four start at once, the fifth waits for a slot.
+	// Five parallel tasks: four start together, the fifth waits for a slot.
 	const live = (index: number) => {
-		const run = new LiveRun(snapshot({ id: `run0000${index}-x`, status: "running", group: { kind: "parallel", index, total: 5 } }));
+		const run = new LiveRun(snapshot({ id: `run0000${index}-x`, status: "running", group: { kind: "parallel", index, total: 5 }, output: `answer ${index}` }));
 		registry.add(run);
 		return run;
 	};
 	const runs = [0, 1, 2, 3].map(live);
-	assert.equal(sent.length, 0, "the dispatch result already said running");
 	registry.emit(runs[0]);
-	assert.equal(sent.length, 0, "activity is not a change of state");
+	assert.equal(sent.length, 0, "starting and activity send nothing");
 
 	runs[0]!.snapshot.status = "completed";
 	registry.emit(runs[0]);
 	registry.emit(runs[0]);
+	assert.equal(sent.length, 1, "delivered once");
+	assert.equal(sent[0]!.message.customType, "subagent-completion");
+	assert.equal(sent[0]!.message.content, '<subagent_result run="run00000" agent="scout" status="completed">\nanswer 0\n</subagent_result>');
+	assert.deepEqual(sent[0]!.options, { deliverAs: "steer", triggerTurn: true }, "it wakes the main agent");
+	assert.equal(runs[0]!.delivered, true);
+
 	const fifth = live(4);
-	assert.deepEqual(texts(), [{ run: "run00000", status: "completed" }, { run: "run00004", status: "running" }], "the queued task's start is a change");
-	assert.deepEqual(sent[0]!.options, { triggerTurn: false });
-	assert.equal(sent[0]!.message.customType, NOTICE_TYPE);
+	assert.equal(sent.length, 1, "a queued task starting is not reported");
 
 	session = "other";
 	runs[1]!.snapshot.status = "failed";
 	registry.emit(runs[1]);
-	assert.equal(sent.length, 2, "a replaced session gets no notices for the old one's runs");
+	assert.equal(sent.length, 1, "a replaced session gets nothing for the old one's runs");
 	session = "s";
 
-	for (const run of [runs[2]!, runs[3]!]) {
-		run.snapshot.status = "cancelled";
-		registry.emit(run);
-	}
+	runs[2]!.stoppedBy = "user";
+	runs[2]!.snapshot.status = "cancelled";
+	registry.emit(runs[2]);
+	assert.match(sent[1]!.message.content, /run="run00002" agent="scout" status="stopped"/, "a stop from the panel is news to the main agent");
+	runs[3]!.stoppedBy = "agent";
+	runs[3]!.snapshot.status = "cancelled";
+	registry.emit(runs[3]);
+	assert.equal(sent.length, 2, "the main agent's own stop is already in its tool result");
+
 	fifth.snapshot.status = "completed";
 	registry.emit(fifth);
-	assert.deepEqual(texts().slice(2), [{ run: "run00002", status: "stopped" }, { run: "run00003", status: "stopped" }], "the job-ending finish is left to the final message");
+	assert.equal(sent.length, 2, "the run that ends the job is left to the final message");
 });
 
-test("a parallel background job notices the early finisher, then delivers its completion", async () => {
+test("chain steps keep their one-line notices", () => {
+	const sent: Array<{ message: any; options: any }> = [];
+	const pi = { sendMessage: (message: any, options: any) => sent.push({ message, options }) } as unknown as ExtensionAPI;
+	const registry = new RunRegistry();
+	watchRunNotices(pi, registry, { sessionId: () => "s" });
+	const step = (index: number) => {
+		const run = new LiveRun(snapshot({ id: `step000${index}-x`, status: "running", group: { kind: "chain", index, total: 3 } }));
+		registry.add(run);
+		return run;
+	};
+	const first = step(0);
+	first.snapshot.status = "completed";
+	registry.emit(first);
+	const second = step(1);
+	second.snapshot.status = "completed";
+	registry.emit(second);
+	const last = step(2);
+	last.snapshot.status = "completed";
+	registry.emit(last);
+	assert.deepEqual(sent.map((m) => JSON.parse(m.message.content.split("\n")[1])), [
+		{ run: "step0000", status: "completed" },
+		{ run: "step0001", status: "running" },
+		{ run: "step0001", status: "completed" },
+		{ run: "step0002", status: "running" },
+	]);
+	assert.ok(sent.every((m) => m.message.customType === NOTICE_TYPE && m.options.triggerTurn === false));
+});
+
+test("a parallel background job delivers the early finisher's answer, then the rest with the job's end", async () => {
 	const handlers = new Map<string, Array<(event: any, ctx: any) => unknown>>();
 	const tools = new Map<string, any>();
 	const commands = new Map<string, any>();
@@ -130,25 +165,28 @@ test("a parallel background job notices the early finisher, then delivers its co
 	try {
 		const dispatched = await tools.get("subagent").execute("s1", { tasks: [{ agent: "scout", task: "quick" }, { agent: "scout", task: "hang" }], async: true }, undefined, undefined, ctx);
 		const deadline = Date.now() + 5000;
-		while (!messages.some((m) => m.message.customType === NOTICE_TYPE)) {
-			assert.ok(Date.now() < deadline, "no notice for the early finisher");
+		while (!messages.some((m) => m.message.customType === "subagent-completion")) {
+			assert.ok(Date.now() < deadline, "no early answer");
 			await delay(10);
 		}
 		const [quickId, hangId] = dispatched.details.runIds as string[];
 		const [quickFile, hangFile] = dispatched.details.sessionFiles as string[];
+		assert.match(dispatched.content[0].text, /^Started background job subagent-[0-9a-f]{8}\. Each run's answer arrives as a <subagent_result> message when it finishes; do not repeat or poll this work\./);
 		// The dispatch result names each run, its first state, and its session file.
 		assert.equal(dispatched.content[0].text.split("\n").slice(1).join("\n"), `${quickId} scout running ${quickFile}\n${hangId} scout running ${hangFile}`);
 		assert.ok(existsSync(quickFile!) && existsSync(hangFile!), "the files exist as soon as the result is returned");
-		const notice = messages.find((m) => m.message.customType === NOTICE_TYPE)!;
-		assert.equal(notice.message.content, `<subagent_notification>\n{"run":"${quickId}","status":"completed"}\n</subagent_notification>`);
-		assert.deepEqual(notice.options, { triggerTurn: false });
+		const early = messages[0]!;
+		assert.equal(early.message.content, `<subagent_result run="${quickId}" agent="scout" status="completed">\ndone quick\n</subagent_result>`);
+		assert.deepEqual(early.options, { deliverAs: "steer", triggerTurn: true });
 
 		await commands.get("subagent-jobs").handler(`cancel ${dispatched.details.jobId}`, ctx);
-		while (!messages.some((m) => m.message.customType === "subagent-completion")) {
-			assert.ok(Date.now() < deadline + 10_000, "no completion message");
+		while (messages.length < 2) {
+			assert.ok(Date.now() < deadline + 10_000, "no final message");
 			await delay(10);
 		}
-		assert.deepEqual(messages.map((m) => m.message.customType), [NOTICE_TYPE, "subagent-completion"], "no notice duplicates the completion");
+		assert.equal(messages.length, 2);
+		assert.match(messages[1]!.message.content, new RegExp(`Background job ${dispatched.details.jobId} cancelled\\.$`));
+		assert.doesNotMatch(messages[1]!.message.content, /done quick/, "the early answer is not repeated");
 	} finally {
 		await emit("session_shutdown");
 	}
@@ -169,6 +207,7 @@ test("a background job's final message gives every task's status and answer", ()
 		"</subagent_result>",
 		'<subagent_result run="cccccccc" agent="reviewer" status="not started"/>',
 	].join("\n"));
+	assert.equal(finalAnswers(runs, [{ agent: "scout" }, { agent: "worker" }, { agent: "reviewer" }], reserved, new Set(["aaaaaaaa-1"])).split("\n")[0], '<subagent_result run="bbbbbbbb" agent="worker" status="failed">', "an answer delivered early is not repeated");
 	const long = finalAnswers([snapshot({ id: "aaaaaaaa-1", group: { kind: "single", index: 0, total: 1 }, output: "x".repeat(20_000), sessionFile: "/d/aaaaaaaa.jsonl" })], [{ agent: "scout" }], reserved);
 	assert.match(long, /Output truncated: \d+ bytes omitted\. The full text is in \/d\/aaaaaaaa\.jsonl\./);
 });

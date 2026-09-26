@@ -32,7 +32,7 @@ Pi's official subagent example; the rest was rewritten.
 subagent/
 ├── index.ts        # Wiring: tool, commands, panel, overlays, lifecycle
 ├── tool.ts         # The subagent tool: modes, sync/async, results
-├── notices.ts      # One-line state notices for background runs
+├── notices.ts      # Early answers of parallel runs and chain step notices
 ├── control.ts      # subagent_control: send (steer, interrupt, continue) and stop
 ├── runner.ts       # Starts a child pi in RPC mode, sends the task, parses events, saves metadata
 ├── runs.ts         # Run snapshots and the in-memory registry of this process's runs
@@ -147,46 +147,55 @@ cancels background jobs from any mode.
 
 ## What the main agent sees
 
-For background runs the main agent gets three kinds of messages, and nothing
-while a run's state stays the same:
+For a background job the main agent gets its dispatch result, then each answer
+as a `<subagent_result>` message; nothing arrives while a run's state holds.
+Three parallel tasks where `a` finishes first:
 
 ```text
-tool result   Started background job subagent-37690385. State changes arrive as …
-              67380226 scout running /…/subagent-sessions/<parent>/67380226.jsonl
-              8edb76e2 scout running /…/subagent-sessions/<parent>/8edb76e2.jsonl
+tool result   Started background job subagent-49822691. Each run's answer arrives as …
+              a3f9c2e1 scout running /…/subagent-sessions/<parent>/a3f9c2e1.jsonl
+              b7c8d9e0 scout running /…/subagent-sessions/<parent>/b7c8d9e0.jsonl
+              c1d2e3f4 worker running /…/subagent-sessions/<parent>/c1d2e3f4.jsonl
 
-notice        <subagent_notification>
-              {"run":"67380226","status":"completed"}
-              </subagent_notification>
+a finishes    <subagent_result run="a3f9c2e1" agent="scout" status="completed">
+              …a's answer…
+              </subagent_result>
 
-final         Background job subagent-37690385 completed.
-              <subagent_result run="67380226" agent="scout" status="completed">
-              ONE
+b fails       <subagent_result run="b7c8d9e0" agent="scout" status="failed">
+              …why…
               </subagent_result>
-              <subagent_result run="8edb76e2" agent="scout" status="completed">
-              …
+
+c finishes    <subagent_result run="c1d2e3f4" agent="worker" status="completed">
+              …c's answer…
               </subagent_result>
+              Background job subagent-49822691 completed.
 ```
 
-- **Notice**: one per change of a run's state after dispatch: `queued →
-  running`, and `running → completed | failed | stopped`. It carries only the
-  run and its status (about 20 tokens), is stored in the session like any
-  message, and is sent with `triggerTurn: false`: while the main agent works,
-  Pi appends it at the end of the current turn; when it is idle, at once. It
-  never starts a turn and shows as one line in the chat. Activity (the file
-  being read, the tool being called), elapsed time, and usage are not changes.
-- **Final message**: the change that ends a job is not noticed separately. The
-  job's final message gives every task's status and answer (up to 16 KB each,
-  `not started` for chain steps that never ran) and is delivered with
+- **Each answer once, as soon as it exists.** In a parallel job a run that
+  finishes (or fails, or is stopped from the panel) while others still run
+  delivers its own `<subagent_result>` at once. The job's final message then
+  carries only the answers not delivered yet (`not started` for tasks that
+  never ran) and ends with the job's status. Every one of these is sent with
   `deliverAs: "steer"` and `triggerTurn: true`, so an idle main agent starts a
-  new response. The whole message is capped at 32 KB and 1,000 lines.
+  new response for each. Answers are capped at 16 KB each (the rest stays in the
+  session file) and a message at 32 KB and 1,000 lines.
+- **Chains** deliver their answers when the chain ends, since each step's
+  answer is the next step's input. Meanwhile a one-line
+  `<subagent_notification>{"run","status"}</subagent_notification>` marks each
+  step that completes or starts; these use `triggerTurn: false` (appended at the
+  end of the current turn, or at once when idle) and never start a turn.
+- **Not reported:** a queued parallel task starting, activity (the file being
+  read, the tool being called), elapsed time, usage, the main agent's own stops
+  (its tool result says so), and runs cancelled with their whole job.
 - **Progress**: to see what a subagent did, the main agent reads its session
   file with `read`. There is no separate inspection tool; `subagent_control`
   only acts on runs (below).
-- Foreground runs send no notices; the main agent is waiting inside the call.
+- Foreground runs report nothing extra; the main agent is waiting inside the
+  call and gets every answer in its tool result.
 - [`codex-server-compaction`](../codex-server-compaction/README.md) does not
-  retain notices as user input during remote compaction. Because they only
-  append to the history, prompt caching and Codex continuation are unaffected.
+  retain notices as user input during remote compaction. Everything here is
+  appended to the history, so prompt caching and Codex continuation are
+  unaffected.
 
 ### Messaging and stopping a run
 

@@ -6,10 +6,23 @@
           "contextWindow": 372000
         },
         "gpt-5.6-sol": {
-          "contextWindow": 372000
+          "contextWindow": 920000
         },
         "gpt-5.6-terra": {
           "contextWindow": 372000
+        },
+        "gpt-6.1-sol": {
+          "contextWindow": 920000
+        },
+        "gpt-6-astra": {
+          "contextWindow": 920000
+        }
+      }
+    },
+    "openai": {
+      "modelOverrides": {
+        "gpt-6.1-sol": {
+          "contextWindow": 920000
         }
       }
     }

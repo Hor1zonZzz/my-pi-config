@@ -1,7 +1,7 @@
 ---
 name: worker
 description: General-purpose subagent with full capabilities, isolated context
-model: openai-codex/gpt-6-sol
+model: openai/gpt-6.1-sol
 extensions: false
 ---
 

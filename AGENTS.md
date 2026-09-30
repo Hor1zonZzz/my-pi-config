@@ -18,7 +18,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `extensions/` — user-level TypeScript extensions loaded by Pi.
   - `questionnaire.ts` — registers the TUI-only `questionnaire` tool for one or more interactive questions.
   - `notify.ts` — emits a terminal notification after an agent run ends.
-  - `tools.ts` — Pi's official `/tools` example: lists registered tools and toggles the active set, persisted as `tools-config` session entries.
+  - `tools.ts` — Pi's official `/tools` example: lists registered tools with their exposure and source and toggles the active set, persisted as `tools-config` session entries.
   - `herdr/` — owns the repository-managed Herdr integration checker, the asynchronous official `herdr_agent prompt` monitor, and the source for the installed `herdr-pi-reference` skill. It uses the public Herdr CLI and does not modify Herdr-managed integration files.
   - `subagent/` — this repository's subagent implementation: single/parallel/chain delegation to `pi` subprocesses, sync or `async: true` background jobs, persisted child sessions under `<agent-dir>/subagent-sessions/`, run IDs and session files reserved at dispatch and returned in tool results, early `<subagent_result>` delivery for parallel background runs and one-line `<subagent_notification>` chain step notices, the `subagent_control` tool (send: steer, interrupt, or continue on the run's session file; stop, including before a queued task starts), a below-editor run panel with keyboard selection, live transcript and `/subagent-history` overlays, strict project-agent confirmation, and the `/subagent` TUI that updates user-agent model/thinking frontmatter. `agents.ts` and part of `runner.ts` are derived from Pi's example.
     - `agents/` — user-level subagent definitions.
@@ -56,6 +56,7 @@ The following areas closely track official examples:
 Local behavior that must be preserved during an upstream refresh includes:
 
 - local model choices in `extensions/subagent/agents/*.md`;
+- the exposure and source columns and the selected-row source/description in `extensions/tools.ts` (the status leads each value so narrow terminals truncate the metadata, not the status);
 - strict confirmation before running project-local agents, even in trusted projects;
 - the `/subagent` user-agent model/thinking TUI and its available/scoped-model filtering;
 - the custom Codex Fast implementation and its retained upstream attribution;
@@ -89,6 +90,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - `codex-accounts` uses public command/OAuth APIs but relies on Pi's installed `proper-lockfile` dependency and `auth.json.lock` (`realpath:false`) protocol because no public extension auth transaction exists. Recheck this protocol and auth-file revision detection on Pi upgrades. Preserve lock serialization with OAuth rotation, vault-before-auth atomic writes, same-account no-op, cancellation, and global—not session-specific—selection. Never force `expires: 0` or replace the provider.
 - `codex-statusline` depends on public Pi auth resolution, Codex JWT account/profile claims, the `/wham/usage` response shape, session/model lifecycle events, and atomic local filesystem operations. Preserve account/user cache isolation, the shared five-minute failure cooldown, no polling outside Codex TUI sessions, and rejection of late account/session results. It is not an account manager.
 - `hairline` depends on `CustomEditor`'s protected `renderTopBorder()`/`renderBottomBorder()` hooks, `embedWorkingStatus` and the unexported status indicator's `kind`/`renderInBorder()`, header/footer/widget factories, `ReadonlyFooterDataProvider`, the tool-renderer contract (`renderShell: "self"`, shared `context.state`, `lastComponent`), Pi's own tool renderers and their private state (the bash renderer's refresh interval is settled by passing it the final result), `createReadToolDefinition()`/`createBashToolDefinition()` options mirrored from `AgentSession`, `SettingsManager.create()` with `ctx.isProjectTrusted()`, message/tool lifecycle events for speed and working labels, and `codex-statusline`'s status wording for the weekly bar. Re-run its tests and `tsc` in a disposable copy on every Pi upgrade.
+- `tools` depends on `pi.getAllTools()` reporting `exposure` and `sourceInfo`, and on `SettingsList` cycling `values` and showing the selected item's `description`.
 - `questionnaire` depends on TUI component, key handling, autocomplete, theming, and invalidation contracts.
 
 ## Editing Guidelines

@@ -3,6 +3,8 @@
  *
  * Provides a /tools command to enable/disable tools interactively.
  * Tool selection persists across session reloads and respects branch navigation.
+ * Local change: each row also shows the tool's exposure and source, and the
+ * selected row shows its full source path and description.
  *
  * Usage:
  * 1. Copy this file to ~/.pi/agent/extensions/ or your project's .pi/extensions/
@@ -11,11 +13,32 @@
 
 import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList } from "@earendil-works/pi-tui";
+import { Container, type SettingItem, SettingsList, truncateToWidth } from "@earendil-works/pi-tui";
+import * as path from "node:path";
 
 // State persisted to session
 interface ToolsState {
 	enabledTools: string[];
+}
+
+const DESCRIPTION_LIMIT = 240;
+
+// Short source for the row: "builtin", a package source such as "npm:...", or the extension's name
+function sourceLabel(tool: ToolInfo): string {
+	const info = tool.sourceInfo;
+	if (info.source === "builtin") return "builtin";
+	if (info.origin === "package") return info.source;
+	const base = path.basename(info.path);
+	const name = /^index\.[cm]?[jt]s$/.test(base) ? path.basename(path.dirname(info.path)) : base;
+	return info.scope === "project" ? `${name} (project)` : name;
+}
+
+function describeTool(tool: ToolInfo): string {
+	const info = tool.sourceInfo;
+	const source = `source: ${info.source} · scope: ${info.scope} · ${info.path}`;
+	const text = (tool.description ?? "").split(/\n\s*\n/)[0].replace(/\s+/g, " ").trim();
+	if (!text) return source;
+	return `${source}\n${text.length > DESCRIPTION_LIMIT ? `${text.slice(0, DESCRIPTION_LIMIT - 1)}…` : text}`;
 }
 
 export default function toolsExtension(pi: ExtensionAPI) {
@@ -76,19 +99,30 @@ export default function toolsExtension(pi: ExtensionAPI) {
 			allTools = pi.getAllTools();
 
 			await ctx.ui.custom((tui, theme, _kb, done) => {
-				// Build settings items for each tool
-				const items: SettingItem[] = allTools.map((tool) => ({
-					id: tool.name,
-					label: tool.name,
-					currentValue: enabledTools.has(tool.name) ? "enabled" : "disabled",
-					values: ["enabled", "disabled"],
-				}));
+				// Build settings items for each tool. The status leads the value so a narrow
+				// terminal truncates the exposure and source instead of the status.
+				const exposureWidth = Math.max(0, ...allTools.map((tool) => tool.exposure.length));
+				const items: SettingItem[] = allTools.map((tool) => {
+					const details = `${tool.exposure.padEnd(exposureWidth)}  ${sourceLabel(tool)}`;
+					const values = [`enabled   ${details}`, `disabled  ${details}`];
+					return {
+						id: tool.name,
+						label: tool.name,
+						description: describeTool(tool),
+						currentValue: enabledTools.has(tool.name) ? values[0] : values[1],
+						values,
+					};
+				});
 
 				const container = new Container();
 				container.addChild(
 					new (class {
-						render(_width: number) {
-							return [theme.fg("accent", theme.bold("Tool Configuration")), ""];
+						render(width: number) {
+							return [
+								truncateToWidth(theme.fg("accent", theme.bold("Tool Configuration")), width),
+								truncateToWidth(theme.fg("dim", "tool · status · exposure · source"), width),
+								"",
+							];
 						}
 						invalidate() {}
 					})(),
@@ -100,7 +134,7 @@ export default function toolsExtension(pi: ExtensionAPI) {
 					getSettingsListTheme(),
 					(id, newValue) => {
 						// Update enabled state and apply immediately
-						if (newValue === "enabled") {
+						if (newValue.startsWith("enabled")) {
 							enabledTools.add(id);
 						} else {
 							enabledTools.delete(id);

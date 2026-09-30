@@ -17,7 +17,7 @@
 
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
 - `notify.ts` — 整个运行结束（`agent_settled`）后的终端通知
-- `tools.ts` — Pi 官方的 `/tools` 示例：列出所有已注册工具，并按当前会话分支逐个启用或禁用
+- `tools.ts` — Pi 官方的 `/tools` 示例：列出所有已注册工具及其暴露方式（如何发给模型）和来源，并按当前会话分支逐个启用或禁用；选中行显示完整来源路径和说明
 - `herdr/` — 统一持有本地 Herdr 集成检查器、异步 `herdr_agent prompt` 监控器和 `herdr-pi-reference` 技能源码；它让显式 `wait: false` 调用保持非阻塞，并注入会话级完成 follow-up
 - `subagent/` — 把任务交给 `pi` 子进程，支持单个、并行、链式三种模式，可前台运行，也可用 `async: true` 在后台运行；保存每个子会话，在输入框下方列出运行中的 subagent（光标在输入框最后一行时按 `↓` 选中后可查看或停止），返回每个运行的短 ID 和会话文件，主 agent 可以直接 `read` 查看进度，并用 `subagent_control` 给运行发消息、打断、继续或停止；后台运行一完成就以 `<subagent_result>` 送达它的回答，并提供 `/subagent-history` 和 `/subagent` 模型/思考级别选择器（[详细说明](extensions/subagent/README.zh-CN.md)）
 - `codex-fast-toggle/` — 使用 Pi 原生命令 `/fast on|off`，仅在 Codex 下显示补全，按 session 切换优先级；Codex transport 让普通请求和压缩请求的路由提示与最终 tier 一致，不改变提供方身份

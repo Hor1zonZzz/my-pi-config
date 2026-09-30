@@ -5,7 +5,7 @@ English | [中文](README.zh-CN.md)
 Automatically adds `person@example.com · weekly 82% left` to Pi's existing
 footer while an `openai-codex` model is active in the TUI. There is no command
 or configuration step. Other models and non-TUI sessions do not poll or display
-this status. Existing Fast and other footer entries remain unchanged.
+this status. Other footer entries remain unchanged.
 
 ## Account and quota
 

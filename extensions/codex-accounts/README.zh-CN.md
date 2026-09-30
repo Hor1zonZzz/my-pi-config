@@ -7,9 +7,9 @@
 （`openai-codex`）。也可用 `/codex-accounts openai` 或
 `/codex-accounts openai-codex` 直接打开。
 切换作用于**同一 Pi agent 目录内所选 provider 的全局登录**，不保存 session 专属账号选择，
-不自动改变当前 provider、模型、thinking 或 Fast。要使用新版登录，请另外选择 `openai/*` 模型。
-安装时应同步更新本仓库的 `codex-statusline` 和 `codex-server-compaction` 目录，
-它们提供共享身份解析、quota 即时更新和原生历史的账号隔离。本目录不是独立发布的第三方包替代品。
+不自动改变当前 provider、模型或 thinking。要使用新版登录，请另外选择 `openai/*` 模型。
+安装时应同步更新本仓库的 `codex-statusline` 目录，
+它提供共享身份解析和 quota 即时更新。本目录不是独立发布的第三方包替代品。
 
 ## 菜单
 
@@ -48,8 +48,7 @@
 
 两种入口需要分别授权，不会把旧 Codex 凭据复制成新版登录。新版使用 Pi 原生 OAuth 登录和刷新，
 完整保留 `clientId` 与授权 scopes，并通过 Pi 的全局 settings API 获取稳定 `deviceId`。
-安装脚本会保留该身份，仓库不保存机器 ID。此次账号管理适配不扩展额度、Fast 或远程压缩插件
-到 `openai`；原有原生历史账号隔离继续作用于旧 Codex。
+安装脚本会保留该身份，仓库不保存机器 ID。
 
 账号库含有敏感 OAuth token，只保存在本机，已加入 `.gitignore`，安装脚本不复制或重置它。
 文件使用 `0600` 权限，不能分享或提交。auth 和账号库均先写临时文件再原子替换，保留其他
@@ -72,11 +71,6 @@ provider 凭据；遇到文件损坏或无法读取时拒绝操作，不会把�
 Pi 0.86.0 会检查认证文件 revision，因此无需伪造 `expires: 0`，也无需每次切换都 reload。
 仅刷新本进程的模型可用性，不请求远端模型目录。
 
-配套压缩扩展给新 opaque artifact 标注账号指纹，按**该请求实际绑定的 token**验证重放。
-旧 artifact 归属未知或存在其他账号回合时使用 Pi 文本回退，去除外来 opaque reasoning
-和 response 引用；同账号的 Fast 与 V2 continuation 行为保持不变。
-这类 session 指纹是历史归属记录，不是账号选择偏好，更不包含凭据。
-
 ## 测试与参考
 
 Node 测试需在可解析 Pi host 依赖的临时副本中运行，覆盖导入、添加、切换、取消、损坏文件、
@@ -88,4 +82,4 @@ transport 测试验证 A/B/A 重放和“请求已绑定 token 后全局登录�
 全局快照工作流参考了
 [fadilsflow/pi-codex-account](https://github.com/fadilsflow/pi-codex-account)
 （MIT，检视 commit `35b77b8`），代码独立实现，未复制其源码。
-这里增加了共享认证锁、原子提交、原生 OAuth 添加和账号感知的 quota/压缩联动，不采用强制过期策略。
+这里增加了共享认证锁、原子提交、原生 OAuth 添加和账号感知的 quota 联动，不采用强制过期策略。

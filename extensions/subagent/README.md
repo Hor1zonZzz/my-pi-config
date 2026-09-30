@@ -192,10 +192,8 @@ c finishes    <subagent_result run="c1d2e3f4" agent="worker" status="completed">
   only acts on runs (below).
 - Foreground runs report nothing extra; the main agent is waiting inside the
   call and gets every answer in its tool result.
-- [`codex-server-compaction`](../codex-server-compaction/README.md) does not
-  retain notices as user input during remote compaction. Everything here is
-  appended to the history, so prompt caching and Codex continuation are
-  unaffected.
+- Everything here is appended to the history, so prompt caching and Codex
+  continuation are unaffected.
 
 ### Messaging and stopping a run
 

@@ -162,8 +162,7 @@ c 完成     <subagent_result run="c1d2e3f4" agent="worker" status="completed">
 - **过程**：想看 subagent 做了什么，主 agent 用 `read` 读它的会话文件。没有单独的查看工具；
   `subagent_control` 只负责操作运行（见下）。
 - 前台运行不额外报告：主 agent 正在这次调用里等待，所有回答都在工具结果里。
-- [`codex-server-compaction`](../codex-server-compaction/README.zh-CN.md) 远程压缩时不会把通知
-  当作用户输入保留。这里的一切都追加在历史末尾，所以前缀缓存和 Codex 续接都不受影响。
+- 这里的一切都追加在历史末尾，所以前缀缓存和 Codex 续接都不受影响。
 
 ### 给运行发消息和停止运行
 

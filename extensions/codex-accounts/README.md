@@ -7,11 +7,10 @@ English | [中文](README.zh-CN.md)
 (`openai-codex`). Use `/codex-accounts openai` or `/codex-accounts openai-codex`
 to open either menu directly. This is a **global login switch for the selected
 provider in one Pi agent directory**. It does not select a model or change the
-session's provider, thinking, or Fast settings. Select an `openai/*` model separately
+session's provider or thinking settings. Select an `openai/*` model separately
 to use the new login.
-Install it together with this repository's updated `codex-statusline` and
-`codex-server-compaction` directories: they provide the shared identity decoder,
-immediate quota updates, and account-safe native history. This directory is not
+Install it together with this repository's `codex-statusline` directory: it
+provides the shared identity decoder and immediate quota updates. This directory is not
 an independently packaged replacement for the third-party switcher.
 
 ## Menu
@@ -68,8 +67,6 @@ The two providers require separate authorization. Old Codex credentials are neve
 copied into the new OpenAI login. New login and refresh use Pi's native OAuth and
 preserve `clientId` and all scopes. The native `deviceId` comes from Pi's global
 settings API; the installer preserves it, and it is never stored in this repository.
-This account menu does not extend the Codex quota, Fast, or remote-compaction
-plugins to `openai`. The existing native-history isolation applies to legacy Codex.
 
 The vaults contain sensitive OAuth tokens. They are runtime-only, excluded from Git,
 never copied/reset by the installer, and written with `0600` permissions. Do not
@@ -99,12 +96,6 @@ Pi 0.86.0 re-reads credentials when the auth file revision changes. Therefore th
 extension neither fabricates `expires: 0` nor reloads the session on each switch.
 It refreshes local model availability without network catalog requests.
 
-The repository's companion compaction extension tags new opaque artifacts with an
-account fingerprint and validates replay using the **actual request token**. Unknown
-legacy ownership or a foreign-account turn uses Pi's text fallback; foreign opaque
-reasoning and response references are removed. Same-account Fast and V2 continuation
-behavior is preserved. This provenance is not a session account preference.
-
 ## Tests and reference
 
 The focused Node tests require Pi's host dependencies in module resolution; use a
@@ -122,4 +113,4 @@ The global snapshot workflow was informed by
 [fadilsflow/pi-codex-account](https://github.com/fadilsflow/pi-codex-account)
 (MIT, reviewed at `35b77b8`); this is an independent implementation, not a vendored
 copy. It adds shared auth locking, atomic commits, native OAuth addition, and
-account-aware quota/compaction integration rather than its forced-expiry approach.
+account-aware quota integration rather than its forced-expiry approach.

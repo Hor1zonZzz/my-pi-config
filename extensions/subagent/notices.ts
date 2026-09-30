@@ -19,7 +19,7 @@ import { initialStatus, modelStatus, resultBlock } from "./tool.ts";
 // cancelled with their whole job.
 
 export const NOTICE_TYPE = "subagent-status";
-/** Codex CLI's tag for the same purpose; codex-server-compaction never retains it as user input. */
+/** Codex CLI's tag for the same purpose. */
 export const NOTICE_OPEN = "<subagent_notification>";
 export const NOTICE_CLOSE = "</subagent_notification>";
 

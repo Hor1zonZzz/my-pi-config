@@ -142,7 +142,7 @@ export default function codexAccounts(pi: ExtensionAPI): void {
 					if (!ctx.isIdle()) { ctx.ui.notify("Pi became busy; switch cancelled.", "warning"); return; }
 					ctx.ui.notify(`Validating the account and updating the global ${selected} login…`, "info");
 					changed = await store.switchTo(account.key, list.currentKey, signal);
-					ctx.ui.notify(`Global ${selected} login changed. Model, thinking, and Fast are unchanged.`, "info");
+					ctx.ui.notify(`Global ${selected} login changed. Model and thinking are unchanged.`, "info");
 				}
 				if (changed && !signal.aborted) {
 					// Pi 0.86.0 detects atomic auth-file replacement on the next read.

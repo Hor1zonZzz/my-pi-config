@@ -9,7 +9,7 @@ person@example.com · weekly 82% left
 ```
 
 无需命令或额外配置。其他模型和非 TUI session 不显示、不轮询；不替换 footer，
-不影响现有 Fast 等状态项。
+不影响其他状态项。
 
 ## 账号与额度含义
 

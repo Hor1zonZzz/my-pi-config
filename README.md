@@ -21,17 +21,14 @@ English | [中文文档](README.zh-CN.md)
 - `tools.ts` — Pi's official `/tools` example: lists every registered tool with its exposure (how it reaches the model) and source, and enables or disables each one for the current session branch; the selected row shows the full source path and description
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
 - `subagent/` — delegates tasks to `pi` subprocesses in single, parallel, or chain mode, in the foreground or with `async: true` in the background; saves every child session, lists running subagents below the editor (`↓` from the prompt's last line selects one to watch or stop), returns each run's short ID and session file so the main agent can `read` its progress and message, interrupt, continue, or stop a run with `subagent_control`, delivers each background answer as a `<subagent_result>` as soon as that run finishes, and adds `/subagent-history` plus the `/subagent` model/thinking selector ([details](extensions/subagent/README.md))
-- `codex-fast-toggle/` — native Pi `/fast on|off` command with Codex-only autocomplete and session-scoped priority tier; the Codex transport keeps ordinary and compaction routing hints aligned with the final tier without changing provider identity
-- `codex-server-compaction/` — runs Pi's built-in text compaction and Codex Remote Compaction V2 in parallel, persists opaque native history, follows the current Fast service tier, and uses the Pi result on remote failure
 - `codex-accounts/` — `/codex-accounts [openai|openai-codex]` imports, adds, and globally switches new ChatGPT or legacy Codex logins in separate vaults, without changing the current provider/model; Esc cancels device login. Credentials remain local and shared within one agent directory ([details](extensions/codex-accounts/README.md))
 - `codex-statusline/` — automatically shows the current Codex account and weekly quota remaining in the TUI, and for the `openai` ChatGPT login its account, the matching Codex login's weekly quota, and a reached usage limit; sessions sharing an agent directory reuse a five-minute per-account/user quota cache ([details](extensions/codex-statusline/README.md))
 
 ## Pi compatibility
 
-The local extensions target Pi 0.87.0. Codex remote compaction honors context edits and falls back to Pi's edited text context after an edit invalidates a native checkpoint; the next successful compaction enables native replay again. See [compatibility details](extensions/codex-server-compaction/README.md#context-edits-pi-0870).
+The local extensions target Pi 0.87.0. Every provider, including `openai-codex`, uses Pi's built-in compaction.
 
-The dual-provider account menu is verified on Pi 0.99.1. The new `openai` ChatGPT
-login does not enable the Codex-only quota, Fast, or remote-compaction extensions.
+The dual-provider account menu is verified on Pi 0.99.1.
 
 ## Install
 
@@ -54,10 +51,10 @@ used when the remote is temporarily unavailable. When Pi starts inside Herdr,
 the local integration checker warns if Herdr's Pi integration is missing or
 outdated; it never installs or updates the Herdr-managed integration
 automatically. During migration the installer also backs up and removes the
-retired `extensions/plan-mode/`, `extensions/code-mode/`, and `extensions/hairline/`, the former global `codex-fast.json` state
-file, and the retired external
-`pi-openai-server-compaction` Git package checkout; the repository-managed
-Codex-only extension replaces that dependency. Restart Pi or run:
+retired `extensions/plan-mode/`, `extensions/code-mode/`, `extensions/hairline/`,
+`extensions/codex-fast-toggle/`, and `extensions/codex-server-compaction/`, the
+former global `codex-fast.json` state file, and the retired external
+`pi-openai-server-compaction` Git package checkout. Restart Pi or run:
 
 ```text
 /reload
@@ -68,7 +65,6 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 ## Useful commands
 
 ```text
-/fast
 /codex-accounts [openai|openai-codex]
 /subagent [on|off]
 /subagent-history
@@ -97,7 +93,3 @@ local file.
 ## Attribution and licenses
 
 Several extensions, the subagent agent discovery, sample agents, and workflow prompts are adapted from Pi's official examples. Pi's license is included at `licenses/pi-LICENSE`.
-
-`codex-fast-toggle` originally derived its Fast behavior from `pi-openai-codex-fast` and now uses Pi's native command and request hooks; its upstream MIT license and README are included in that directory.
-
-`codex-server-compaction` is adapted from `pi-openai-server-compaction` by Alexis Gallagher under the MIT License. It retains the Codex V2 endpoint, parallel Pi/native compaction, persistence, and replay paths; its license and derivation notes are included in that directory. See `THIRD_PARTY_NOTICES.md`.

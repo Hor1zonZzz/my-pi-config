@@ -34,6 +34,35 @@ the global login. This statusline receives its local change event; other Pi
 processes detect the new identity on their normal auth checks. Neither path
 bypasses the new account's existing five-minute quota cache.
 
+## OpenAI ChatGPT login (`openai`)
+
+While an `openai` model uses Pi's **Sign in with ChatGPT** login (`/login openai`)
+in the TUI, the same footer entry shows that login's account:
+
+```text
+person@example.com · plan weekly 82% left (via Codex)
+person@example.com · limit reached · resets 14:30
+person@example.com
+```
+
+- **Account.** This login's access token is opaque (OpenAI documents only standard
+  claims), so the email comes from `GET https://api.openai.com/v1/me`, once per
+  saved authorization (`sub` + `client_id`) per Pi process, retried after five
+  minutes on failure. The email stays in memory; it never enters the cache.
+- **Usage.** OpenAI offers no usage endpoint for this login, and the Codex
+  usage endpoint rejects its token. When the legacy `openai-codex` login is
+  also configured **for the same email**, the footer borrows that login's weekly
+  quota through the shared cache above, labeled `(via Codex)`. This needs both
+  logins in Pi; the extension stores no credentials of its own. OpenAI describes
+  per-app limits as a share of the overall weekly plan usage, but whether usage
+  made through this login is counted in the Codex window is not documented.
+  Without a matching Codex login, only the account is shown.
+- **Limit reached.** When a request fails with
+  `subscription_sharing_usage_limit_exceeded`, the footer shows `limit reached`,
+  with the reset time only if the error carries `resets_at`. The next successful
+  response, or the reset time passing, clears it. Other errors are ignored.
+- API keys (`sk-…`), custom `baseUrl`s, and non-TUI sessions show and query nothing.
+
 ## Shared refresh
 
 The cache lives at `<Pi agent directory>/cache/codex-statusline/`, using Pi's
@@ -71,7 +100,7 @@ session-history entry, background daemon, or cross-machine synchronization.
 `quota.test.ts` and `cache.test.ts` run with Node 24's native TypeScript support:
 
 ```sh
-node --test extensions/codex-statusline/quota.test.ts extensions/codex-statusline/cache.test.ts
+node --test extensions/codex-statusline/quota.test.ts extensions/codex-statusline/cache.test.ts extensions/codex-statusline/chatgpt.test.ts
 ```
 
 `index.test.ts` and TypeScript checking additionally need the installed Pi host

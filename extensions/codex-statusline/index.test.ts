@@ -186,3 +186,144 @@ test("status never pretends missing data is 0 or 100 percent, and marks expired/
 	assert.match(formatStatus("account", { ...cached, quota: { remainingPercent: 82, resetAt: 1500 } }, 2000), /\(stale\)$/);
 	assert.equal(formatStatus("account", { ...base, state: "pending" }, 20000), "account · weekly unavailable");
 });
+
+function chatgptToken(sub: string): string {
+	return `h.${Buffer.from(JSON.stringify({ sub, client_id: "client-1", scope: "chatgpt.tokens.use.direct" })).toString("base64url")}.s`;
+}
+
+function chatgptHarness(t: TestContext, options: { codexAccount?: string; apiKey?: string } = {}) {
+	const handlers = new Map<string, (event: any, ctx: any) => void>();
+	const statuses = new Map<string, string>();
+	let openaiKey = options.apiKey ?? chatgptToken("alice");
+	const codexModel = { provider: "openai-codex", id: "gpt-6.1-sol", baseUrl: "https://chatgpt.com/backend-api" };
+	const ctx = {
+		mode: "tui",
+		model: { provider: "openai", id: "gpt-6.1-sol", baseUrl: "https://api.openai.com/v1" },
+		modelRegistry: {
+			getAvailable: () => options.codexAccount ? [ctx.model, codexModel] : [ctx.model],
+			getApiKeyAndHeaders: async (model: { provider: string }) => model.provider === "openai-codex"
+				? { ok: true, apiKey: token(options.codexAccount!) }
+				: { ok: true, apiKey: openaiKey },
+		},
+		ui: { setStatus: (key: string, value: string | undefined) => {
+			if (value === undefined) statuses.delete(key);
+			else statuses.set(key, value);
+		} },
+	};
+	codexStatusline({
+		on: (name: string, handler: (event: any, ctx: any) => void) => handlers.set(name, handler),
+		events: { on: (name: string, handler: () => void) => {
+			handlers.set(name, handler);
+			return () => { handlers.delete(name); };
+		} },
+	} as unknown as ExtensionAPI);
+	const emit = (name: string, event: any = {}) => handlers.get(name)?.(event, ctx);
+	t.after(() => { emit("session_shutdown"); });
+	return { ctx, emit, statuses, setUser: (sub: string) => { openaiKey = chatgptToken(sub); },
+		get status() { return statuses.get("codex-quota"); } };
+}
+
+/** `/v1/me` answers `<sub>@example.com`; the Codex usage endpoint answers `used` percent. */
+function mockBackends(t: TestContext, used = 18) {
+	const calls = { me: 0, usage: 0 };
+	t.mock.method(globalThis, "fetch", async (url: unknown, init: RequestInit) => {
+		if (url === "https://api.openai.com/v1/me") {
+			calls.me++;
+			const bearer = new Headers(init.headers).get("authorization")!.slice("Bearer ".length);
+			const sub = JSON.parse(Buffer.from(bearer.split(".")[1], "base64url").toString("utf8")).sub;
+			return Response.json({ id: `user-${sub}`, email: `${sub}@example.com` });
+		}
+		calls.usage++;
+		return response(used);
+	});
+	return calls;
+}
+
+test("openai ChatGPT login shows its account and borrows the matching Codex weekly quota through the shared cache", async (t) => {
+	const root = await fixture(t);
+	const calls = mockBackends(t);
+	const h = chatgptHarness(t, { codexAccount: "alice" });
+	h.emit("session_start");
+	await until(() => h.status === "alice@example.com · plan weekly 82% left (via Codex)");
+	// A Codex session for the same account reuses the cached quota instead of querying again.
+	const codex = harness(t);
+	codex.setAccount("alice");
+	codex.emit("session_start");
+	await until(() => codex.status === "alice@example.com · weekly 82% left");
+	h.emit("agent_settled");
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.deepEqual(calls, { me: 1, usage: 1 });
+	for (const name of await readdir(join(root, "cache", "codex-statusline"))) {
+		const data = await readFile(join(root, "cache", "codex-statusline", name), "utf8").catch(() => "");
+		assert.equal(data.includes("example.com"), false);
+	}
+});
+
+test("a Codex login for a different email is never borrowed; without one only the account shows", async (t) => {
+	await fixture(t);
+	const calls = mockBackends(t);
+	const other = chatgptHarness(t, { codexAccount: "bob" });
+	other.emit("session_start");
+	await until(() => other.status === "alice@example.com");
+	const none = chatgptHarness(t);
+	none.emit("session_start");
+	await until(() => none.status === "alice@example.com");
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal(calls.usage, 0);
+});
+
+test("API keys and non-TUI sessions do not query or show a ChatGPT status", async (t) => {
+	await fixture(t);
+	const calls = mockBackends(t);
+	const key = chatgptHarness(t, { apiKey: "sk-proj-123" });
+	key.emit("session_start");
+	const json = chatgptHarness(t);
+	json.ctx.mode = "json";
+	json.emit("session_start");
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal(key.status, undefined);
+	assert.equal(json.status, undefined);
+	assert.deepEqual(calls, { me: 0, usage: 0 });
+});
+
+test("a usage-limit error shows the server's reset time until a request succeeds again", async (t) => {
+	await fixture(t);
+	mockBackends(t);
+	const h = chatgptHarness(t, { codexAccount: "alice" });
+	h.emit("session_start");
+	await until(() => h.status?.includes("plan weekly") === true);
+	const resetAt = Date.now() + 2 * 60 * 60 * 1000;
+	const errorMessage = `OpenAI API error (429): {"error":{"code":"subscription_sharing_usage_limit_exceeded","resets_at":${Math.floor(resetAt / 1000)}}}`;
+	h.emit("message_end", { message: { role: "assistant", provider: "openai-codex", stopReason: "error", errorMessage } });
+	assert.equal(h.status?.includes("limit reached"), false);
+	h.emit("message_end", { message: { role: "assistant", provider: "openai", stopReason: "error", errorMessage: "OpenAI API error (500): boom" } });
+	assert.equal(h.status?.includes("limit reached"), false);
+	h.emit("message_end", { message: { role: "assistant", provider: "openai", stopReason: "error", errorMessage } });
+	assert.match(h.status!, /^alice@example\.com · limit reached · resets \d{2}:\d{2}$/);
+	h.emit("after_provider_response", { status: 200, headers: {} });
+	assert.equal(h.status, "alice@example.com · plan weekly 82% left (via Codex)");
+});
+
+test("switching the openai account drops the old email and its late /v1/me result", async (t) => {
+	await fixture(t);
+	let finishAlice: (() => void) | undefined;
+	t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+		const bearer = new Headers(init.headers).get("authorization")!.slice("Bearer ".length);
+		const sub = JSON.parse(Buffer.from(bearer.split(".")[1], "base64url").toString("utf8")).sub;
+		if (sub === "alice") {
+			return new Promise<Response>((resolve) => { finishAlice = () => resolve(Response.json({ email: "alice@example.com" })); });
+		}
+		return Response.json({ email: `${sub}@example.com` });
+	});
+	const h = chatgptHarness(t);
+	h.emit("session_start");
+	await until(() => !!finishAlice);
+	h.setUser("carol");
+	h.emit("codex-accounts:changed");
+	await until(() => h.status === "carol@example.com");
+	finishAlice!();
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal(h.status, "carol@example.com");
+	h.emit("session_shutdown");
+	assert.equal(h.status, undefined);
+});

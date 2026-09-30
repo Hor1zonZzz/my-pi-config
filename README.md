@@ -24,7 +24,7 @@ English | [中文文档](README.zh-CN.md)
 - `codex-fast-toggle/` — native Pi `/fast on|off` command with Codex-only autocomplete and session-scoped priority tier; the Codex transport keeps ordinary and compaction routing hints aligned with the final tier without changing provider identity
 - `codex-server-compaction/` — runs Pi's built-in text compaction and Codex Remote Compaction V2 in parallel, persists opaque native history, follows the current Fast service tier, and uses the Pi result on remote failure
 - `codex-accounts/` — `/codex-accounts [openai|openai-codex]` imports, adds, and globally switches new ChatGPT or legacy Codex logins in separate vaults, without changing the current provider/model; Esc cancels device login. Credentials remain local and shared within one agent directory ([details](extensions/codex-accounts/README.md))
-- `codex-statusline/` — automatically shows the current Codex account and weekly quota remaining in the TUI; sessions sharing an agent directory reuse a five-minute per-account/user quota cache ([details](extensions/codex-statusline/README.md))
+- `codex-statusline/` — automatically shows the current Codex account and weekly quota remaining in the TUI, and for the `openai` ChatGPT login its account, the matching Codex login's weekly quota, and a reached usage limit; sessions sharing an agent directory reuse a five-minute per-account/user quota cache ([details](extensions/codex-statusline/README.md))
 
 ## Pi compatibility
 

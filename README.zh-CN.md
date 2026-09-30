@@ -23,7 +23,7 @@
 - `codex-fast-toggle/` — 使用 Pi 原生命令 `/fast on|off`，仅在 Codex 下显示补全，按 session 切换优先级；Codex transport 让普通请求和压缩请求的路由提示与最终 tier 一致，不改变提供方身份
 - `codex-server-compaction/` — 并行执行 Pi 内置文本压缩与 Codex Remote Compaction V2，持久化 opaque 原生历史，继承当前 Fast service tier，并在远程失败时使用 Pi 结果
 - `codex-accounts/` — `/codex-accounts [openai|openai-codex]` 用独立账号库导入、添加和全局切换新版 ChatGPT 或旧 Codex 登录，保留当前 provider/模型；设备码登录可按 Esc 取消。凭据只存本机，在同一 agent 目录内共享（[详细说明](extensions/codex-accounts/README.zh-CN.md)）
-- `codex-statusline/` — 在 Codex TUI 中自动显示当前账号与周额度剩余比例；同一 agent 目录内的 session 共享五分钟账号/用户额度缓存（[详细说明](extensions/codex-statusline/README.zh-CN.md)）
+- `codex-statusline/` — 在 Codex TUI 中自动显示当前账号与周额度剩余比例；`openai` ChatGPT 登录时显示其账号、邮箱相同的 Codex 登录的周额度以及额度用尽状态；同一 agent 目录内的 session 共享五分钟账号/用户额度缓存（[详细说明](extensions/codex-statusline/README.zh-CN.md)）
 
 ## Pi 兼容性
 

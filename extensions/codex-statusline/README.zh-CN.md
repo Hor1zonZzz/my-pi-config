@@ -34,6 +34,31 @@ person@example.com · weekly 82% left
 本状态栏接收同进程的账号变更事件；其他 Pi 进程通过正常认证检查发现新账号。
 两种方式都不会绕过新账号已有的五分钟额度缓存。
 
+## OpenAI ChatGPT 登录（`openai`）
+
+TUI 中 `openai` 模型使用 Pi 的 **Sign in with ChatGPT** 登录（`/login openai`）时，
+同一个 footer 状态项显示该登录的账号：
+
+```text
+person@example.com · plan weekly 82% left (via Codex)
+person@example.com · limit reached · resets 14:30
+person@example.com
+```
+
+- **账号。** 这种登录的访问令牌是不透明的（OpenAI 只公开标准字段），邮箱通过
+  `GET https://api.openai.com/v1/me` 获取：每个 Pi 进程对每个已保存的授权（`sub` +
+  `client_id`）只查一次，失败后五分钟再试。邮箱只保存在内存中，不写入缓存。
+- **额度。** OpenAI 没有为这种登录提供额度接口，Codex 的额度接口也拒绝它的令牌。
+  若同时配置了旧的 `openai-codex` 登录**且邮箱相同**，footer 会借用该登录的周额度，
+  走上面的共享缓存，并标注 `(via Codex)`。这需要两套登录同时存在于 Pi 中；本扩展
+  不保存任何凭据。OpenAI 说明单个应用的上限是整体周用量的一部分，但通过这种登录
+  产生的用量是否计入 Codex 的周额度窗口并无文档说明。没有邮箱相同的 Codex 登录时，
+  只显示账号。
+- **额度用尽。** 请求因 `subscription_sharing_usage_limit_exceeded` 失败时显示
+  `limit reached`；只有错误中带 `resets_at` 时才显示重置时间。下一次成功响应或
+  重置时间已过后清除。其他错误不影响显示。
+- API key（`sk-…`）、自定义 `baseUrl` 和非 TUI session 不显示、不查询。
+
 ## 跨 session 共享查询
 
 缓存位于 `<Pi agent 目录>/cache/codex-statusline/`，使用 Pi 公开的 `getAgentDir()`
@@ -64,7 +89,7 @@ person@example.com · weekly 82% left
 Node 24 可直接运行纯逻辑与跨进程缓存测试：
 
 ```sh
-node --test extensions/codex-statusline/quota.test.ts extensions/codex-statusline/cache.test.ts
+node --test extensions/codex-statusline/quota.test.ts extensions/codex-statusline/cache.test.ts extensions/codex-statusline/chatgpt.test.ts
 ```
 
 `index.test.ts` 和类型检查还需要能够解析已安装的 Pi host 包；应在依赖可用的临时副本中

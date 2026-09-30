@@ -18,6 +18,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `extensions/` — user-level TypeScript extensions loaded by Pi.
   - `questionnaire.ts` — registers the TUI-only `questionnaire` tool for one or more interactive questions.
   - `notify.ts` — emits a terminal notification after an agent run ends.
+  - `tools.ts` — Pi's official `/tools` example: lists registered tools and toggles the active set, persisted as `tools-config` session entries.
   - `herdr/` — owns the repository-managed Herdr integration checker, the asynchronous official `herdr_agent prompt` monitor, and the source for the installed `herdr-pi-reference` skill. It uses the public Herdr CLI and does not modify Herdr-managed integration files.
   - `subagent/` — this repository's subagent implementation: single/parallel/chain delegation to `pi` subprocesses, sync or `async: true` background jobs, persisted child sessions under `<agent-dir>/subagent-sessions/`, run IDs and session files reserved at dispatch and returned in tool results, early `<subagent_result>` delivery for parallel background runs and one-line `<subagent_notification>` chain step notices, the `subagent_control` tool (send: steer, interrupt, or continue on the run's session file; stop, including before a queued task starts), a below-editor run panel with keyboard selection, live transcript and `/subagent-history` overlays, strict project-agent confirmation, and the `/subagent` TUI that updates user-agent model/thinking frontmatter. `agents.ts` and part of `runner.ts` are derived from Pi's example.
     - `agents/` — user-level subagent definitions.
@@ -49,6 +50,7 @@ The following areas closely track official examples:
 
 - `extensions/notify.ts`
 - `extensions/questionnaire.ts`
+- `extensions/tools.ts`
 - `extensions/subagent/agents.ts`, `extensions/subagent/agents/`, and `extensions/subagent/prompts/` (the rest of `extensions/subagent/` is this repository's own implementation)
 
 Local behavior that must be preserved during an upstream refresh includes:

@@ -18,6 +18,7 @@ English | [中文文档](README.zh-CN.md)
 
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification after the full run settles (`agent_settled`)
+- `tools.ts` — Pi's official `/tools` example: lists every registered tool and enables or disables each one for the current session branch
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
 - `subagent/` — delegates tasks to `pi` subprocesses in single, parallel, or chain mode, in the foreground or with `async: true` in the background; saves every child session, lists running subagents below the editor (`↓` from the prompt's last line selects one to watch or stop), returns each run's short ID and session file so the main agent can `read` its progress and message, interrupt, continue, or stop a run with `subagent_control`, delivers each background answer as a `<subagent_result>` as soon as that run finishes, and adds `/subagent-history` plus the `/subagent` model/thinking selector ([details](extensions/subagent/README.md))
 - `codex-fast-toggle/` — native Pi `/fast on|off` command with Codex-only autocomplete and session-scoped priority tier; the Codex transport keeps ordinary and compaction routing hints aligned with the final tier without changing provider identity

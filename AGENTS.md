@@ -23,7 +23,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
     - `agents/` — user-level subagent definitions.
     - `prompts/` — the upstream slash-command workflow templates.
   - `codex-fast-toggle/` — implements `/fast on|off` and modifies Codex request payloads to select the priority service tier.
-  - `codex-accounts/` — `/codex-accounts` imports/adds Codex OAuth accounts and switches the global login without changing provider identity; transactions share Pi's auth-file lock and keep credentials out of sessions.
+  - `codex-accounts/` — `/codex-accounts [openai|openai-codex]` imports/adds native ChatGPT and legacy Codex OAuth logins in separate vaults and switches the selected provider's global login without changing the current model; transactions share Pi's auth-file lock and keep credentials out of sessions. New ChatGPT grants use Pi's stable device ID and retain issued client IDs/scopes; display labels do not identify or merge accounts.
   - `codex-statusline/` — displays the current Codex account and weekly quota in the TUI, with a credential-free five-minute cache and cross-process query lock shared within one Pi agent directory.
   - `codex-server-compaction/` — runs Pi's built-in text compaction alongside Codex-only Remote Compaction V2, persists provider-native replacement history in compaction details, inherits the session Fast tier, and uses the Pi result when the remote request fails.
   - `hairline/` — the Hairline TUI skin: custom header, a `CustomEditor` that restyles only the top and bottom rules and embeds Pi's working/retry/compaction indicators, a one-line footer that keeps every extension status, a HUD widget with reply speed and the Codex weekly quota bar, `/hairline on|off|hud on|off`, and re-registered `read`/`bash`/`edit`/`write` with one-line renderers whose execution delegates to Pi's built-in definitions.
@@ -107,7 +107,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 
 - The target directory is `PI_CODING_AGENT_DIR`, then legacy `PI_AGENT_DIR`, then `~/.pi/agent`.
 - Existing managed paths are backed up under `backups/my-pi-config-<timestamp>/` before copying.
-- The installer preserves Pi-managed `settings.json.lastChangelogVersion` instead of tracking it in this repository, and keeps an installed `subagents.enabled` (the `/subagent on|off` switch) over the repository default.
+- The installer preserves Pi-managed `settings.json.lastChangelogVersion` and the ChatGPT OAuth installation `deviceId` instead of tracking them in this repository, and keeps an installed `subagents.enabled` (the `/subagent on|off` switch) over the repository default.
 - It merges credential-free `model-overrides.json` entries into the target `models.json`, preserving unrelated local providers and settings.
 - It removes obsolete extension paths and state, including the former standalone Preset extension and skill, the retired `extensions/plan-mode/` and `extensions/code-mode/`, the previously customized `extensions/subagent/`, `subagent-settings.json`, the retired `explore-and-gather` prompt, the former global `codex-fast.json` state, and the retired `git/github.com/algal/pi-openai-server-compaction` package checkout before copying the current settings, local extensions, local general-purpose prompts, upstream subagent-owned agents, and refreshed Herdr-owned skills. The subagent workflow prompts are no longer copied into `<agent-dir>/prompts/`: the extension provides them through `resources_discover` while subagents are on, and the installer removes copies left by earlier installs.
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
@@ -115,7 +115,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 
 `codex-fast-toggle` stores mutable state only in Pi session custom entries. The installer backs up and removes the former global `codex-fast.json`; do not reintroduce cross-session mutable Fast state.
 
-`codex-accounts.json` is a sensitive, runtime-only credential vault. The installer must leave it untouched; never copy it into the repository or session history. `auth.json` remains the only authority for the globally active account.
+`codex-accounts.json` and `openai-accounts.json` are sensitive, runtime-only credential vaults for the two separate login flows. The installer must leave them untouched; never copy them into the repository or session history. `auth.json` remains the only authority for each provider's globally active login. Old Codex tokens must never be installed as new OpenAI ChatGPT grants.
 
 `codex-statusline` intentionally shares quota snapshots and query coordination under `<agent-dir>/cache/codex-statusline/`. This cache is runtime-only, contains no credentials or email labels, and must not be installed from or committed to this repository.
 
@@ -132,6 +132,9 @@ bash -n install.sh
 node -e 'for (const f of ["settings.json", "model-overrides.json"]) JSON.parse(require("node:fs").readFileSync(f, "utf8"))'
 git diff --check
 ```
+
+For installer changes, `node --test install.test.ts` checks stable ChatGPT device
+identity, runtime settings, and both credential vaults using a disposable install.
 
 For upstream-derived extension changes, diff against the same installed Pi version's example before and after editing. Distinguish upstream changes from intentional local changes instead of replacing an entire file.
 

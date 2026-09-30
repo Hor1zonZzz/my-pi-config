@@ -1,40 +1,55 @@
-# Codex 订阅账号全局管理
+# ChatGPT 与 Codex 订阅账号全局管理
 
 [English](README.md) | 中文
 
-`/codex-accounts` 打开 TUI 账号菜单。切换作用于**同一 Pi agent 目录的全局登录**，
-不保存 session 专属账号选择。provider 保持 `openai-codex`，模型、thinking、Fast 不变。
+`/codex-accounts` 先选择登录类型，再打开对应的 TUI 账号菜单：
+**OpenAI — Sign in with ChatGPT**（`openai`）或 **OpenAI Codex — legacy**
+（`openai-codex`）。也可用 `/codex-accounts openai` 或
+`/codex-accounts openai-codex` 直接打开。
+切换作用于**同一 Pi agent 目录内所选 provider 的全局登录**，不保存 session 专属账号选择，
+不自动改变当前 provider、模型、thinking 或 Fast。要使用新版登录，请另外选择 `openai/*` 模型。
 安装时应同步更新本仓库的 `codex-statusline` 和 `codex-server-compaction` 目录，
 它们提供共享身份解析、quota 即时更新和原生历史的账号隔离。本目录不是独立发布的第三方包替代品。
 
 ## 菜单
 
 - **Import current Pi login**：当前登录尚未保存时显示，确认后导入最新凭据。
-- **Add account / sign in again**：使用当前 provider 的公开 OAuth 实现（本配置中为
-  Pi 原生 Codex 流程）。手动打开界面中的
+- **Add account / sign in again**：使用所选 provider 的公开 OAuth 实现（本配置中为
+  Pi 原生 ChatGPT 或旧 Codex 流程）。手动打开界面中的
   授权 URL，或选择设备码流程。设备码等待期间按 **Esc** 或选择 **Cancel login** 可停止轮询；
-  成功或失败时等待框自动关闭。取消不保存，之后可重新打开账号菜单。新增账号不会自动切换；重新授权当前账号
-  则更新该账号的有效凭据。
+  成功或失败时等待框自动关闭。取消不保存，之后可重新打开账号菜单。新增授权不会自动切换；
+  旧 Codex 重新授权当前身份会更新有效凭据，新版 ChatGPT 重新登录可能保存为另一条授权，需另外选择。
 - **选择已保存账号**：确认全局影响后，保存当前账号最新 token，必要时刷新目标凭据，
   再更新全局登录。选择当前账号不做任何覆盖，避免恢复旧快照。
 
-添加或导入后重新打开菜单即可选择。优先显示完整邮箱，附带账号 ID 后缀以区分工作区；
-内部身份同时包含工作区和用户，不以邮箱作为凭据键。不做自动换号、删除、重命名或批量额度查询。
+添加或导入后重新打开菜单即可选择。旧 Codex 仍显示邮箱与账号 ID 后缀，内部身份包含工作区和用户。
+新版 ChatGPT 在添加或导入时让你填写邮箱或账号名称。Pi 原生登录不保存 ID token，access token
+也可能是不透明字符串，因此以刷新后保持不变的 OAuth `clientId` 区分已保存授权；名称仅用于显示。
+同一用户重新登录可能生成另一条保存项，不按手填邮箱合并账号。
+不做自动换号、删除、重命名或批量额度查询。
 
 建好账号库后，建议用本菜单添加和切换。直接改 auth.json、混用其他切换器或重复执行
-`/login openai-codex` 可能绕过快照同步，使旧授权需要重新登录。不会迁移或覆盖第三方
+`/login openai` 或 `/login openai-codex` 可能绕过快照同步，使旧授权需要重新登录。不会迁移或覆盖第三方
 `pi-codex-account` 的旧账号库格式。
 
 ## 范围与安全
 
 - 新建和恢复的 session 都使用**当前全局账号**，不会恢复历史账号选择。
   后续请求会在新账号下发送原有可见对话上下文；切换不会清空对话。
-- 已经绑定认证或发出的请求继续使用旧账号；其他 Pi 0.86.0 进程在下一次读取认证时跟随新账号。
+- 已经绑定认证或发出的请求继续使用旧账号；其他 Pi 进程在下一次读取认证时跟随新账号。
 - 只在 TUI、当前 session 空闲时执行。不强制停止其他进程的请求；不支持运行时 API-key
-  覆盖或自定义 Codex 后端。
-- 当前进程的 quota 插件会收到变更事件；其他 TUI 通过原有认证检查发现变化。
+  覆盖或自定义 OpenAI/Codex 后端。将已保存的 OpenAI API key 替换为 ChatGPT 登录需要明确确认；
+  API key 不会保存进订阅账号库。
+- 切换旧 Codex 登录时，当前进程的 quota 插件会收到变更事件；其他 TUI 通过原有认证检查发现变化。
   不清空、不绕过按账号共享的五分钟额度缓存。
-- 用公开 `getAgentDir()` 定位 `auth.json` 与 `codex-accounts.json`；不同 agent 目录隔离。
+- 用公开 `getAgentDir()` 定位 `auth.json`；旧 Codex 与新版 OpenAI 分别使用
+  `codex-accounts.json` 和 `openai-accounts.json` 独立账号库。原有 version-1 Codex 账号库继续可读；
+  不同 agent 目录隔离。
+
+两种入口需要分别授权，不会把旧 Codex 凭据复制成新版登录。新版使用 Pi 原生 OAuth 登录和刷新，
+完整保留 `clientId` 与授权 scopes，并通过 Pi 的全局 settings API 获取稳定 `deviceId`。
+安装脚本会保留该身份，仓库不保存机器 ID。此次账号管理适配不扩展额度、Fast 或远程压缩插件
+到 `openai`；原有原生历史账号隔离继续作用于旧 Codex。
 
 账号库含有敏感 OAuth token，只保存在本机，已加入 `.gitignore`，安装脚本不复制或重置它。
 文件使用 `0600` 权限，不能分享或提交。auth 和账号库均先写临时文件再原子替换，保留其他
@@ -47,7 +62,7 @@ provider 凭据；遇到文件损坏或无法读取时拒绝操作，不会把�
 
 ## Pi 兼容性
 
-针对 Pi **0.86.0** 验证。命令、对话框、OAuth 登录/刷新、模型目录刷新和事件使用公开 API。
+针对 Pi **0.99.1** 验证。命令、对话框、OAuth 登录/刷新、模型目录刷新和事件使用公开 API。
 唯一兼容性依赖是文件锁：Pi 没有公开覆盖 auth.json 和账号库的事务 API，故 `store.ts`
 通过 `getPackageDir()` 复用 **Pi 自带的 `proper-lockfile`**，使用相同的
 `auth.json.lock`、`realpath:false` 协议，与 Pi 自身 OAuth 刷新互斥。
@@ -66,6 +81,8 @@ Pi 0.86.0 会检查认证文件 revision，因此无需伪造 `expires: 0`，也
 
 Node 测试需在可解析 Pi host 依赖的临时副本中运行，覆盖导入、添加、切换、取消、损坏文件、
 刷新失败/轮换、与真实 Pi 认证锁竞争，以及另一运行中的 Pi 认证实例无需 reload 即可读到切换。
+新版测试使用模拟 token 响应运行 Pi 实际的原生 OAuth 登录与刷新，覆盖不透明 access token、
+client/scopes 保留和稳定设备 ID。`node --test install.test.ts` 在临时目录验证安装时保留设备身份与账号库。
 transport 测试验证 A/B/A 重放和“请求已绑定 token 后全局登录变化”的场景；测试不使用真实账号。
 
 全局快照工作流参考了

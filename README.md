@@ -6,7 +6,7 @@ English | [中文文档](README.zh-CN.md)
 
 ## Included
 
-- `settings.json` — model defaults and installable Pi packages, including the MCP adapter, the Herdr tool integration, and Pi Voice (local speech-to-text with a recording shortcut and the `transcribe_file` tool)
+- `settings.json` — model defaults and installable Pi packages, including the Herdr tool integration and Pi Voice (local speech-to-text with a recording shortcut and the `transcribe_file` tool). MCP support is built into Pi 0.99.0 and later; the separate MCP adapter is no longer included.
 - `model-overrides.json` — managed, credential-free overrides for built-in models
 - `extensions/` — local extensions; `extensions/subagent/` also owns its agent definitions and workflow prompts
 - `prompts/` — local general-purpose prompt templates, including `/understand` and `/explore-understand` for manually controlled requirement alignment
@@ -22,13 +22,16 @@ English | [中文文档](README.zh-CN.md)
 - `subagent/` — delegates tasks to `pi` subprocesses in single, parallel, or chain mode, in the foreground or with `async: true` in the background; saves every child session, lists running subagents below the editor (`↓` from the prompt's last line selects one to watch or stop), returns each run's short ID and session file so the main agent can `read` its progress and message, interrupt, continue, or stop a run with `subagent_control`, delivers each background answer as a `<subagent_result>` as soon as that run finishes, and adds `/subagent-history` plus the `/subagent` model/thinking selector ([details](extensions/subagent/README.md))
 - `codex-fast-toggle/` — native Pi `/fast on|off` command with Codex-only autocomplete and session-scoped priority tier; the Codex transport keeps ordinary and compaction routing hints aligned with the final tier without changing provider identity
 - `codex-server-compaction/` — runs Pi's built-in text compaction and Codex Remote Compaction V2 in parallel, persists opaque native history, follows the current Fast service tier, and uses the Pi result on remote failure
-- `codex-accounts/` — `/codex-accounts` imports, adds, and globally switches Codex subscription logins without changing the provider/model; Esc cancels device login. Credentials remain local and shared within one agent directory ([details](extensions/codex-accounts/README.md))
+- `codex-accounts/` — `/codex-accounts [openai|openai-codex]` imports, adds, and globally switches new ChatGPT or legacy Codex logins in separate vaults, without changing the current provider/model; Esc cancels device login. Credentials remain local and shared within one agent directory ([details](extensions/codex-accounts/README.md))
 - `codex-statusline/` — automatically shows the current Codex account and weekly quota remaining in the TUI; sessions sharing an agent directory reuse a five-minute per-account/user quota cache ([details](extensions/codex-statusline/README.md))
 - `hairline/` — Hairline TUI skin: gradient π header, editor with top and bottom rules only (working status in the top rule, model and context gauge in the bottom rule), one-line footer that keeps other extensions' statuses, a HUD with reply speed and the Codex weekly quota bar, and one-line `read`/`bash`/`edit`/`write` rows whose execution stays Pi's; `/hairline on|off` and `/hairline hud on|off` ([details](extensions/hairline/README.md))
 
 ## Pi compatibility
 
 The local extensions target Pi 0.87.0; `hairline/` was verified on Pi 0.87.1. Codex remote compaction honors context edits and falls back to Pi's edited text context after an edit invalidates a native checkpoint; the next successful compaction enables native replay again. See [compatibility details](extensions/codex-server-compaction/README.md#context-edits-pi-0870).
+
+The dual-provider account menu is verified on Pi 0.99.1. The new `openai` ChatGPT
+login does not enable the Codex-only quota, Fast, or remote-compaction extensions.
 
 ## Install
 
@@ -41,7 +44,8 @@ cd my-pi-config
 ```
 
 The installer creates a timestamped backup under `~/.pi/agent/backups/` before
-replacing managed files. It merges `model-overrides.json` into the target
+replacing managed files. It preserves Pi's runtime `deviceId` for ChatGPT login
+and leaves both local credential vaults untouched. It merges `model-overrides.json` into the target
 `models.json`, preserving all unrelated local providers, credentials, and model
 settings. It also refreshes the Herdr skill from upstream `master`, installs it
 to `~/.pi/agent/skills/herdr/`, and installs the Herdr-owned `herdr-pi-reference`
@@ -65,6 +69,7 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 
 ```text
 /fast
+/codex-accounts [openai|openai-codex]
 /hairline
 /subagent [on|off]
 /subagent-history

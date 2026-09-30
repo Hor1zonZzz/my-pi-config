@@ -103,6 +103,10 @@ try {
 	if (typeof currentSettings.lastChangelogVersion === "string") {
 		nextSettings.lastChangelogVersion = currentSettings.lastChangelogVersion;
 	}
+	// Pi's ChatGPT login uses a stable installation identity; never track it here.
+	if (typeof currentSettings.deviceId === "string") {
+		nextSettings.deviceId = currentSettings.deviceId;
+	}
 	// /subagent on|off is a runtime choice; a reinstall keeps it.
 	if (typeof currentSettings.subagents?.enabled === "boolean") {
 		nextSettings.subagents = { ...(nextSettings.subagents ?? {}), enabled: currentSettings.subagents.enabled };

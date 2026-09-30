@@ -1,15 +1,14 @@
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import type { OAuthAuth, OAuthCredential } from "@earendil-works/pi-ai";
-import { accountFromToken, type Account } from "../codex-statusline/quota.ts";
+import { ACCOUNT_PROVIDERS, accountForCredential, accountLabel, type AccountProvider, type ManagedAccount } from "./providers.ts";
 
-const PROVIDER = "openai-codex";
-export interface SavedAccount { credential: OAuthCredential; savedAt: number }
+export interface SavedAccount { credential: OAuthCredential; savedAt: number; label?: string }
 interface Vault { version: 1; accounts: Record<string, SavedAccount> }
-export interface AccountList { accounts: Account[]; current?: Account }
+export interface AccountList { accounts: ManagedAccount[]; current?: ManagedAccount; currentKey?: string; replacesApiKey: boolean }
 
 // Pi 0.86.0 exposes no public auth-file transaction API. Use the host's own
 // proper-lockfile dependency and auth.json.lock protocol, not private runtime
@@ -23,10 +22,11 @@ const lockfile = requireHost("proper-lockfile") as {
 function record(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === "object" && !Array.isArray(value);
 }
-function credential(value: unknown): OAuthCredential | undefined {
+function credential(provider: AccountProvider, value: unknown): OAuthCredential | undefined {
 	if (!record(value) || value.type !== "oauth" || typeof value.access !== "string"
+		|| !value.access || value.access.length > 64 * 1024
 		|| typeof value.refresh !== "string" || !value.refresh || typeof value.expires !== "number"
-		|| !Number.isFinite(value.expires) || !accountFromToken(value.access)) return undefined;
+		|| !Number.isFinite(value.expires) || !accountForCredential(provider, value as unknown as OAuthCredential)) return undefined;
 	return value as unknown as OAuthCredential;
 }
 async function readObject(path: string): Promise<Record<string, unknown>> {
@@ -42,13 +42,14 @@ async function readObject(path: string): Promise<Record<string, unknown>> {
 		throw new Error("Cannot read account storage safely; no credentials were changed.");
 	}
 }
-async function readVault(path: string): Promise<Vault> {
+async function readVault(path: string, provider: AccountProvider): Promise<Vault> {
 	const raw = await readObject(path);
 	if (Object.keys(raw).length === 0) return { version: 1, accounts: {} };
 	if (raw.version !== 1 || !record(raw.accounts)) throw new Error("Unsupported account store; no credentials were changed.");
 	for (const [key, value] of Object.entries(raw.accounts)) {
-		if (!record(value) || !credential(value.credential)
-			|| accountFromToken((value.credential as OAuthCredential).access)?.key !== key) {
+		if (!record(value) || !credential(provider, value.credential)
+			|| (value.label !== undefined && (typeof value.label !== "string" || !value.label || accountLabel(value.label) !== value.label))
+			|| accountForCredential(provider, value.credential as OAuthCredential)?.key !== key) {
 			throw new Error("Invalid saved account; no credentials were changed.");
 		}
 	}
@@ -69,21 +70,34 @@ async function atomicWrite(path: string, value: unknown, beforeCommit: () => voi
 export class AccountStore {
 	private readonly agentDir: string;
 	private readonly oauth: OAuthAuth;
-	constructor(agentDir: string, oauth: OAuthAuth) {
+	private readonly provider: AccountProvider;
+	constructor(agentDir: string, oauth: OAuthAuth, provider: AccountProvider = "openai-codex") {
 		this.agentDir = agentDir;
 		this.oauth = oauth;
+		this.provider = provider;
 	}
 	private get authPath() { return join(this.agentDir, "auth.json"); }
-	private get vaultPath() { return join(this.agentDir, "codex-accounts.json"); }
+	private get vaultPath() { return join(this.agentDir, ACCOUNT_PROVIDERS[this.provider].vault); }
+	private identity(value: OAuthCredential): ManagedAccount { return accountForCredential(this.provider, value)!; }
+	private activeKey(value: unknown): string | undefined {
+		const valid = credential(this.provider, value);
+		if (valid) return this.identity(valid).key;
+		// Detect replacement of an API key/unknown credential between the menu and commit.
+		return value === undefined ? undefined : `unmanaged:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+	}
 
 	async list(): Promise<AccountList> {
-		const vault = await readVault(this.vaultPath);
+		const vault = await readVault(this.vaultPath, this.provider);
 		const auth = await readObject(this.authPath);
-		const active = credential(auth[PROVIDER]);
+		const stored = auth[this.provider];
+		const active = credential(this.provider, stored);
+		const current = active ? this.identity(active) : undefined;
+		if (current && vault.accounts[current.key]?.label) current.label = vault.accounts[current.key].label!;
 		return {
-			accounts: Object.values(vault.accounts).map((entry) => accountFromToken(entry.credential.access)!)
+			accounts: Object.values(vault.accounts).map((entry) => ({ ...this.identity(entry.credential), ...(entry.label ? { label: entry.label } : {}) }))
 				.sort((a, b) => a.label.localeCompare(b.label) || a.key.localeCompare(b.key)),
-			current: active ? accountFromToken(active.access) : undefined,
+			current, currentKey: this.activeKey(stored),
+			replacesApiKey: record(stored) && stored.type === "api_key",
 		};
 	}
 
@@ -105,37 +119,37 @@ export class AccountStore {
 		};
 		try {
 			check();
-			return await fn(await readObject(this.authPath), await readVault(this.vaultPath), check);
+			return await fn(await readObject(this.authPath), await readVault(this.vaultPath, this.provider), check);
 		} finally {
 			await release().catch(() => {});
 		}
 	}
 
-	async importCurrent(expected: string, signal: AbortSignal): Promise<void> {
+	async importCurrent(expected: string, signal: AbortSignal, label?: string): Promise<void> {
 		await this.transaction(signal, async (auth, vault, check) => {
-			const active = credential(auth[PROVIDER]);
-			if (!active || accountFromToken(active.access)?.key !== expected) throw new Error("Current login changed; reopen /codex-accounts.");
-			vault.accounts[expected] = { credential: active, savedAt: Date.now() };
+			const active = credential(this.provider, auth[this.provider]);
+			if (!active || this.identity(active).key !== expected) throw new Error("Current login changed; reopen /codex-accounts.");
+			vault.accounts[expected] = { credential: active, savedAt: Date.now(), ...(label ? { label: accountLabel(label) } : {}) };
 			check();
 			await atomicWrite(this.vaultPath, vault, check);
 		});
 	}
 
 	/** Save a newly authorized grant without switching to a different account. */
-	async add(value: OAuthCredential, signal: AbortSignal): Promise<boolean> {
-		const valid = credential(value);
+	async add(value: OAuthCredential, signal: AbortSignal, label?: string): Promise<boolean> {
+		const valid = credential(this.provider, value);
 		if (!valid || valid.expires <= Date.now()) throw new Error("Login returned invalid or expired credentials.");
-		const key = accountFromToken(valid.access)!.key;
+		const key = this.identity(valid).key;
 		return this.transaction(signal, async (auth, vault, check) => {
-			const active = credential(auth[PROVIDER]);
-			const updatesActive = !!active && accountFromToken(active.access)?.key === key;
-			vault.accounts[key] = { credential: valid, savedAt: Date.now() };
+			const active = credential(this.provider, auth[this.provider]);
+			const updatesActive = !!active && this.identity(active).key === key;
+			vault.accounts[key] = { credential: valid, savedAt: Date.now(), ...(label ? { label: accountLabel(label) } : {}) };
 			check();
 			await atomicWrite(this.vaultPath, vault, check);
 			// Reauthorizing the active identity replaces an invalid grant, not the account.
 			if (updatesActive) {
 				check();
-				await atomicWrite(this.authPath, { ...auth, [PROVIDER]: valid }, check);
+				await atomicWrite(this.authPath, { ...auth, [this.provider]: valid }, check);
 			}
 			return updatesActive;
 		});
@@ -143,8 +157,8 @@ export class AccountStore {
 
 	async switchTo(key: string, expectedCurrent: string | undefined, signal: AbortSignal): Promise<boolean> {
 		return this.transaction(signal, async (auth, vault, check) => {
-			const active = credential(auth[PROVIDER]);
-			const activeKey = active ? accountFromToken(active.access)!.key : undefined;
+			const active = credential(this.provider, auth[this.provider]);
+			const activeKey = this.activeKey(auth[this.provider]);
 			if (activeKey !== expectedCurrent) throw new Error("Another process changed the login; reopen /codex-accounts.");
 			// A same-account selection must never restore its older refresh-token snapshot.
 			if (activeKey === key) return false;
@@ -157,11 +171,11 @@ export class AccountStore {
 					throw new Error("Account refresh failed; add/sign in to that account again. Active login is unchanged.");
 				}
 			}
-			if (!credential(target) || target.expires <= Date.now() || accountFromToken(target.access)?.key !== key) {
+			if (!credential(this.provider, target) || target.expires <= Date.now() || this.identity(target).key !== key) {
 				throw new Error("Refreshed account did not match; active login is unchanged.");
 			}
-			if (active && activeKey) vault.accounts[activeKey] = { credential: active, savedAt: Date.now() };
-			vault.accounts[key] = { credential: target, savedAt: Date.now() };
+			if (active && activeKey) vault.accounts[activeKey] = { ...vault.accounts[activeKey], credential: active, savedAt: Date.now() };
+			vault.accounts[key] = { ...vault.accounts[key], credential: target, savedAt: Date.now() };
 			// Write the vault first. A crash/failure before the auth commit leaves the
 			// previous login active and both recoverable snapshots saved. No active pointer
 			// in the vault can disagree with auth.json, the sole authority for selection.
@@ -170,7 +184,7 @@ export class AccountStore {
 			check(false);
 			await atomicWrite(this.vaultPath, vault, () => check(false));
 			check();
-			await atomicWrite(this.authPath, { ...auth, [PROVIDER]: target }, check);
+			await atomicWrite(this.authPath, { ...auth, [this.provider]: target }, check);
 			return true;
 		});
 	}

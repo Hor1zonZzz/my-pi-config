@@ -7,12 +7,18 @@ import { ExtensionSelectorComponent, initTheme, type ExtensionAPI, type Extensio
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { OAuthAuth, OAuthCredential } from "@earendil-works/pi-ai";
 import codexAccounts from "./index.ts";
+import { ACCOUNT_PROVIDERS, type AccountProvider } from "./providers.ts";
+
+function chatgptLogin(name: string): OAuthCredential {
+	return { type: "oauth", access: `opaque-${name}`, refresh: `synthetic-${name}`, expires: Date.now() + 3600000,
+		clientId: `client-${name}`, scopes: ["openid", "chatgpt.tokens.use.direct"] };
+}
 
 function login(name: string): OAuthCredential {
 	return { type: "oauth", refresh: `synthetic-${name}`, expires: Date.now() + 3600000,
 		access: `header.${Buffer.from(JSON.stringify({ email: `${name}@example.test`, "https://api.openai.com/auth": { chatgpt_account_id: name } })).toString("base64url")}.signature` };
 }
-async function setup(t: TestContext) {
+async function setup(t: TestContext, managedProvider: AccountProvider = "openai-codex") {
 	const root = await mkdtemp(join(tmpdir(), "pi-accounts-ui-test-"));
 	const previous = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = root;
@@ -20,7 +26,7 @@ async function setup(t: TestContext) {
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
 		await rm(root, { recursive: true, force: true });
 	});
-	await writeFile(join(root, "auth.json"), JSON.stringify({ "openai-codex": login("A") }));
+	await writeFile(join(root, "auth.json"), JSON.stringify({ "openai-codex": login("A"), openai: chatgptLogin("A") }));
 	let command: Parameters<ExtensionAPI["registerCommand"]>[1];
 	const events: string[] = [];
 	const handlers = new Map<string, () => void>();
@@ -29,18 +35,24 @@ async function setup(t: TestContext) {
 	let confirmed = true;
 	let idle = true;
 	let loginCalls = 0;
+	let providerChoice: AccountProvider | undefined = managedProvider;
+	let label: string | undefined = "Work ChatGPT";
+	const prompts: string[] = [];
+	const confirmations: string[] = [];
+	const refreshed: string[][] = [];
 	let deviceDialog: ExtensionSelectorComponent | undefined;
 	const dialogReady = Promise.withResolvers<void>();
 	initTheme("dark", false);
-	const oauth: OAuthAuth = { name: "synthetic", login: async () => { loginCalls++; return login("B"); },
+	const oauth: OAuthAuth = { name: "synthetic", login: async () => { loginCalls++; return managedProvider === "openai" ? chatgptLogin("B") : login("B"); },
 		refresh: async (value) => value, toAuth: async (value) => ({ apiKey: value.access }) };
 	const ctx = {
-		mode: "tui", isIdle: () => idle,
-		modelRegistry: { getProvider: () => ({ baseUrl: "https://chatgpt.com/backend-api", auth: { oauth } }),
+		mode: "tui", cwd: root, model: { provider: managedProvider, id: "gpt-5.6-sol" }, isIdle: () => idle,
+		modelRegistry: { getProvider: (id: string) => ({ baseUrl: id === "openai" ? "https://api.openai.com/v1" : "https://chatgpt.com/backend-api", auth: { oauth } }),
 			getProviderAuthStatus: () => ({ configured: true, source: "stored" }),
-			refresh: async () => { events.push("refresh"); return { aborted: false, errors: new Map() }; } },
+			refresh: async (options: { providers: string[] }) => { events.push("refresh"); refreshed.push(options.providers); return { aborted: false, errors: new Map() }; } },
 		ui: { notify: (message: string) => notifications.push(message),
 			select: async (title: string, options: string[], opts?: { signal?: AbortSignal }) => {
+				if (title === "Account login type") return providerChoice ? ACCOUNT_PROVIDERS[providerChoice].label : undefined;
 				if (!options.includes("Cancel login")) return options.find((option) => option.includes(choice ?? "not-selected"));
 				return new Promise<string | undefined>((resolve) => {
 					const finish = (value?: string) => {
@@ -56,15 +68,18 @@ async function setup(t: TestContext) {
 					dialogReady.resolve();
 				});
 			},
-			confirm: async () => confirmed },
+			input: async (title: string) => { prompts.push(title); return label; },
+			confirm: async (_title: string, message: string) => { confirmations.push(message); return confirmed; } },
 	};
 	codexAccounts({ on: (event: string, handler: () => void) => handlers.set(event, handler),
 		registerCommand: (name: string, value: typeof command) => { assert.equal(name, "codex-accounts"); command = value; },
 		events: { emit: (event: string) => events.push(event) },
 	} as unknown as ExtensionAPI);
-	return { root, events, notifications, ctx, oauth, handlers,
+	return { root, events, notifications, ctx, oauth, handlers, prompts, confirmations, refreshed,
 		dialogReady: dialogReady.promise, get deviceDialog() { return deviceDialog; },
 		choose: (value: string | undefined) => { choice = value; },
+		chooseProvider: (value: AccountProvider | undefined) => { providerChoice = value; },
+		name: (value: string | undefined) => { label = value; },
 		confirm: (value: boolean) => { confirmed = value; }, idle: (value: boolean) => { idle = value; },
 		run: (args = "") => command.handler(args, ctx as unknown as ExtensionCommandContext),
 		get loginCalls() { return loginCalls; } };
@@ -171,3 +186,58 @@ for (const outcome of ["success", "failure", "shutdown"] as const) {
 		}
 	});
 }
+
+test("ChatGPT menu imports and switches only openai; native login receives the stable Pi deviceId", async (t) => {
+	const h = await setup(t, "openai");
+	const originalModel = { ...h.ctx.model };
+	h.name("Personal"); h.choose("Import current"); await h.run("openai");
+	let deviceId: string | undefined;
+	h.oauth.login = async (_interaction, options) => { deviceId = options?.getDeviceId?.(); return chatgptLogin("B"); };
+	h.name("Work"); h.choose("Add account"); await h.run();
+	assert.match(deviceId!, /^[0-9a-f-]{36}$/);
+	assert.equal(JSON.parse(await readFile(join(h.root, "settings.json"), "utf8")).deviceId, deviceId);
+	assert.equal(JSON.parse(await readFile(join(h.root, "auth.json"), "utf8")).openai.access, "opaque-A");
+	h.choose("Work"); await h.run("openai");
+	const auth = JSON.parse(await readFile(join(h.root, "auth.json"), "utf8"));
+	assert.equal(auth.openai.access, "opaque-B");
+	assert.equal(auth["openai-codex"].access, login("A").access);
+	assert.deepEqual(h.ctx.model, originalModel);
+	assert.deepEqual(h.events, ["openai-accounts:changed", "refresh"]);
+	assert.deepEqual(h.refreshed, [["openai"]]);
+	h.choose("Add account"); h.name("Another"); await h.run("openai");
+	assert.equal(JSON.parse(await readFile(join(h.root, "settings.json"), "utf8")).deviceId, deviceId);
+});
+
+test("cancelling login-type selection or ChatGPT account naming saves no credentials", async (t) => {
+	const h = await setup(t, "openai");
+	const before = await readFile(join(h.root, "auth.json"), "utf8");
+	h.chooseProvider(undefined); h.choose("Add account"); await h.run();
+	assert.equal(h.loginCalls, 0);
+	h.chooseProvider("openai"); h.name(undefined); await h.run();
+	assert.equal(h.loginCalls, 1);
+	assert.equal(await readFile(join(h.root, "auth.json"), "utf8"), before);
+	await assert.rejects(readFile(join(h.root, "openai-accounts.json")), { code: "ENOENT" });
+	h.choose("Import current"); await h.run("openai");
+	await assert.rejects(readFile(join(h.root, "openai-accounts.json")), { code: "ENOENT" });
+	assert.deepEqual(h.events, []);
+});
+
+test("ChatGPT API-key replacement requires confirmation; custom endpoints and runtime overrides are rejected", async (t) => {
+	const h = await setup(t, "openai");
+	h.choose("Add account"); await h.run("openai");
+	const auth = JSON.parse(await readFile(join(h.root, "auth.json"), "utf8"));
+	auth.openai = { type: "api_key", key: "synthetic-api-key" };
+	await writeFile(join(h.root, "auth.json"), JSON.stringify(auth));
+	h.choose("Work ChatGPT"); h.confirm(false); await h.run("openai");
+	assert.match(h.confirmations.at(-1)!, /replaces the saved API key/);
+	assert.equal(JSON.parse(await readFile(join(h.root, "auth.json"), "utf8")).openai.type, "api_key");
+	h.confirm(true); await h.run("openai");
+	assert.equal(JSON.parse(await readFile(join(h.root, "auth.json"), "utf8")).openai.type, "oauth");
+	const before = await readFile(join(h.root, "auth.json"), "utf8");
+	h.ctx.modelRegistry.getProviderAuthStatus = () => ({ configured: true, source: "runtime" });
+	h.choose("Add account"); await h.run("openai"); assert.equal(h.loginCalls, 1);
+	h.ctx.modelRegistry.getProviderAuthStatus = () => ({ configured: true, source: "stored" });
+	h.ctx.modelRegistry.getProvider = () => ({ baseUrl: "https://proxy.example.test/v1", auth: { oauth: h.oauth } });
+	await h.run("openai"); assert.equal(h.loginCalls, 1);
+	assert.equal(await readFile(join(h.root, "auth.json"), "utf8"), before);
+});

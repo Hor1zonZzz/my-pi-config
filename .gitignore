@@ -4,6 +4,8 @@ auth.json.lock/
 auth.json.*.tmp
 codex-accounts.json
 codex-accounts.json.*.tmp
+openai-accounts.json
+openai-accounts.json.*.tmp
 models.json
 mcp.json
 trust.json

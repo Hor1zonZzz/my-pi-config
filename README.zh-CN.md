@@ -6,7 +6,7 @@
 
 ## 包含内容
 
-- `settings.json` — 模型默认值与可安装的 Pi 包，包括 MCP 适配器、Herdr 工具集成，以及 Pi Voice（本地语音转文字，提供录音快捷键和 `transcribe_file` 工具）
+- `settings.json` — 模型默认值与可安装的 Pi 包，包括 Herdr 工具集成，以及 Pi Voice（本地语音转文字，提供录音快捷键和 `transcribe_file` 工具）。Pi 0.99.0 起内置 MCP 支持，本仓库不再包含独立的 MCP 适配器。
 - `model-overrides.json` — 受管理的、不含凭据的内置模型覆盖项
 - `extensions/` — 本地扩展；`extensions/subagent/` 同时持有其代理定义与工作流提示词
 - `prompts/` — 本地通用提示词模板，包括可手动选择是否探索仓库的 `/understand` 与 `/explore-understand`
@@ -21,13 +21,15 @@
 - `subagent/` — 把任务交给 `pi` 子进程，支持单个、并行、链式三种模式，可前台运行，也可用 `async: true` 在后台运行；保存每个子会话，在输入框下方列出运行中的 subagent（光标在输入框最后一行时按 `↓` 选中后可查看或停止），返回每个运行的短 ID 和会话文件，主 agent 可以直接 `read` 查看进度，并用 `subagent_control` 给运行发消息、打断、继续或停止；后台运行一完成就以 `<subagent_result>` 送达它的回答，并提供 `/subagent-history` 和 `/subagent` 模型/思考级别选择器（[详细说明](extensions/subagent/README.zh-CN.md)）
 - `codex-fast-toggle/` — 使用 Pi 原生命令 `/fast on|off`，仅在 Codex 下显示补全，按 session 切换优先级；Codex transport 让普通请求和压缩请求的路由提示与最终 tier 一致，不改变提供方身份
 - `codex-server-compaction/` — 并行执行 Pi 内置文本压缩与 Codex Remote Compaction V2，持久化 opaque 原生历史，继承当前 Fast service tier，并在远程失败时使用 Pi 结果
-- `codex-accounts/` — `/codex-accounts` 导入、添加和全局切换 Codex 订阅账号，保留 provider/模型；设备码登录可按 Esc 取消。凭据只存本机，在同一 agent 目录内共享（[详细说明](extensions/codex-accounts/README.zh-CN.md)）
+- `codex-accounts/` — `/codex-accounts [openai|openai-codex]` 用独立账号库导入、添加和全局切换新版 ChatGPT 或旧 Codex 登录，保留当前 provider/模型；设备码登录可按 Esc 取消。凭据只存本机，在同一 agent 目录内共享（[详细说明](extensions/codex-accounts/README.zh-CN.md)）
 - `codex-statusline/` — 在 Codex TUI 中自动显示当前账号与周额度剩余比例；同一 agent 目录内的 session 共享五分钟账号/用户额度缓存（[详细说明](extensions/codex-statusline/README.zh-CN.md)）
 - `hairline/` — Hairline 素线皮肤：渐变 π Header、只有上下横线的输入框（上横线显示工作状态，下横线显示模型和上下文刻度）、保留其他扩展状态的单行 footer、显示回复速度和 Codex 周额度进度条的 HUD，以及单行的 `read`/`bash`/`edit`/`write` 工具行（执行仍由 Pi 完成）；`/hairline on|off` 与 `/hairline hud on|off`（[详细说明](extensions/hairline/README.zh-CN.md)）
 
 ## Pi 兼容性
 
 本地扩展适配 Pi 0.87.0；`hairline/` 在 Pi 0.87.1 上验证。Codex 远程压缩遵守上下文编辑；编辑使旧 native checkpoint 失效后，使用 Pi 已应用编辑的文本上下文，直到下一次成功压缩恢复 native replay。参见[兼容性说明](extensions/codex-server-compaction/README.md#context-edits-pi-0870)。
+
+双入口账号菜单在 Pi 0.99.1 上验证。新版 `openai` ChatGPT 登录不会启用 Codex-only 的额度、Fast 或远程压缩扩展。
 
 ## 安装
 
@@ -47,10 +49,13 @@ cd my-pi-config
 
 `settings.json` 中声明的包依赖由 Pi 在启动时安装。请单独完成身份认证；本仓库有意不包含凭据。
 
+安装脚本会保留 Pi 用于 ChatGPT 登录的运行时 `deviceId`，并保留本机的两套订阅账号库。
+
 ## 常用命令
 
 ```text
 /fast
+/codex-accounts [openai|openai-codex]
 /hairline
 /subagent [on|off]
 /subagent-history

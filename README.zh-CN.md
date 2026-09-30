@@ -24,11 +24,10 @@
 - `codex-server-compaction/` — 并行执行 Pi 内置文本压缩与 Codex Remote Compaction V2，持久化 opaque 原生历史，继承当前 Fast service tier，并在远程失败时使用 Pi 结果
 - `codex-accounts/` — `/codex-accounts [openai|openai-codex]` 用独立账号库导入、添加和全局切换新版 ChatGPT 或旧 Codex 登录，保留当前 provider/模型；设备码登录可按 Esc 取消。凭据只存本机，在同一 agent 目录内共享（[详细说明](extensions/codex-accounts/README.zh-CN.md)）
 - `codex-statusline/` — 在 Codex TUI 中自动显示当前账号与周额度剩余比例；同一 agent 目录内的 session 共享五分钟账号/用户额度缓存（[详细说明](extensions/codex-statusline/README.zh-CN.md)）
-- `hairline/` — Hairline 素线皮肤：渐变 π Header、只有上下横线的输入框（上横线显示工作状态，下横线显示模型和上下文刻度）、保留其他扩展状态的单行 footer、显示回复速度和 Codex 周额度进度条的 HUD，以及单行的 `read`/`bash`/`edit`/`write` 工具行（执行仍由 Pi 完成）；`/hairline on|off` 与 `/hairline hud on|off`（[详细说明](extensions/hairline/README.zh-CN.md)）
 
 ## Pi 兼容性
 
-本地扩展适配 Pi 0.87.0；`hairline/` 在 Pi 0.87.1 上验证。Codex 远程压缩遵守上下文编辑；编辑使旧 native checkpoint 失效后，使用 Pi 已应用编辑的文本上下文，直到下一次成功压缩恢复 native replay。参见[兼容性说明](extensions/codex-server-compaction/README.md#context-edits-pi-0870)。
+本地扩展适配 Pi 0.87.0。Codex 远程压缩遵守上下文编辑；编辑使旧 native checkpoint 失效后，使用 Pi 已应用编辑的文本上下文，直到下一次成功压缩恢复 native replay。参见[兼容性说明](extensions/codex-server-compaction/README.md#context-edits-pi-0870)。
 
 双入口账号菜单在 Pi 0.99.1 上验证。新版 `openai` ChatGPT 登录不会启用 Codex-only 的额度、Fast 或远程压缩扩展。
 
@@ -42,7 +41,7 @@ cd my-pi-config
 ./install.sh
 ```
 
-安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，并把 Herdr 扩展持有的 `herdr-pi-reference` 技能安装到 `~/.pi/agent/skills/herdr-pi-reference/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。迁移期间还会先备份、再删除已退役的 `extensions/plan-mode/` 与 `extensions/code-mode/`、旧的全局 `codex-fast.json` 状态文件以及已退役的外部 `pi-openai-server-compaction` Git 包 checkout；仓库管理的 Codex-only 扩展会完全取代该依赖。重启 Pi 或运行：
+安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，并把 Herdr 扩展持有的 `herdr-pi-reference` 技能安装到 `~/.pi/agent/skills/herdr-pi-reference/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。迁移期间还会先备份、再删除已退役的 `extensions/plan-mode/`、`extensions/code-mode/` 与 `extensions/hairline/`、旧的全局 `codex-fast.json` 状态文件以及已退役的外部 `pi-openai-server-compaction` Git 包 checkout；仓库管理的 Codex-only 扩展会完全取代该依赖。重启 Pi 或运行：
 
 ```text
 /reload
@@ -57,7 +56,6 @@ cd my-pi-config
 ```text
 /fast
 /codex-accounts [openai|openai-codex]
-/hairline
 /subagent [on|off]
 /subagent-history
 /understand [requirement]

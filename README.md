@@ -25,11 +25,10 @@ English | [中文文档](README.zh-CN.md)
 - `codex-server-compaction/` — runs Pi's built-in text compaction and Codex Remote Compaction V2 in parallel, persists opaque native history, follows the current Fast service tier, and uses the Pi result on remote failure
 - `codex-accounts/` — `/codex-accounts [openai|openai-codex]` imports, adds, and globally switches new ChatGPT or legacy Codex logins in separate vaults, without changing the current provider/model; Esc cancels device login. Credentials remain local and shared within one agent directory ([details](extensions/codex-accounts/README.md))
 - `codex-statusline/` — automatically shows the current Codex account and weekly quota remaining in the TUI; sessions sharing an agent directory reuse a five-minute per-account/user quota cache ([details](extensions/codex-statusline/README.md))
-- `hairline/` — Hairline TUI skin: gradient π header, editor with top and bottom rules only (working status in the top rule, model and context gauge in the bottom rule), one-line footer that keeps other extensions' statuses, a HUD with reply speed and the Codex weekly quota bar, and one-line `read`/`bash`/`edit`/`write` rows whose execution stays Pi's; `/hairline on|off` and `/hairline hud on|off` ([details](extensions/hairline/README.md))
 
 ## Pi compatibility
 
-The local extensions target Pi 0.87.0; `hairline/` was verified on Pi 0.87.1. Codex remote compaction honors context edits and falls back to Pi's edited text context after an edit invalidates a native checkpoint; the next successful compaction enables native replay again. See [compatibility details](extensions/codex-server-compaction/README.md#context-edits-pi-0870).
+The local extensions target Pi 0.87.0. Codex remote compaction honors context edits and falls back to Pi's edited text context after an edit invalidates a native checkpoint; the next successful compaction enables native replay again. See [compatibility details](extensions/codex-server-compaction/README.md#context-edits-pi-0870).
 
 The dual-provider account menu is verified on Pi 0.99.1. The new `openai` ChatGPT
 login does not enable the Codex-only quota, Fast, or remote-compaction extensions.
@@ -55,7 +54,7 @@ used when the remote is temporarily unavailable. When Pi starts inside Herdr,
 the local integration checker warns if Herdr's Pi integration is missing or
 outdated; it never installs or updates the Herdr-managed integration
 automatically. During migration the installer also backs up and removes the
-retired `extensions/plan-mode/` and `extensions/code-mode/`, the former global `codex-fast.json` state
+retired `extensions/plan-mode/`, `extensions/code-mode/`, and `extensions/hairline/`, the former global `codex-fast.json` state
 file, and the retired external
 `pi-openai-server-compaction` Git package checkout; the repository-managed
 Codex-only extension replaces that dependency. Restart Pi or run:
@@ -71,7 +70,6 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 ```text
 /fast
 /codex-accounts [openai|openai-codex]
-/hairline
 /subagent [on|off]
 /subagent-history
 /understand [requirement]

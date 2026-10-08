@@ -3,12 +3,10 @@
   "defaultModel": "gpt-5.6-sol",
   "defaultThinkingLevel": "medium",
   "theme": "dark",
-  "subagents": {
-    "enabled": true
-  },
   "packages": [
     "npm:pi-annotate",
     "npm:@ogulcancelik/pi-herdr",
-    "npm:@earendil-works/pi-voice"
+    "npm:@earendil-works/pi-voice",
+    "git:github.com/badlogic/pi-subagent"
   ]
 }

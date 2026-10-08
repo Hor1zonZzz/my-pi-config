@@ -2,11 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SUBAGENT_DIR="$ROOT_DIR/extensions/subagent"
 HERDR_SKILL_REPO="https://github.com/ogulcancelik/herdr.git"
 HERDR_SKILL_REF="master"
 HERDR_SKILL_CACHE_DIR="$ROOT_DIR/skills/herdr"
 HERDR_PI_REFERENCE_SKILL_DIR="$ROOT_DIR/extensions/herdr/skills/herdr-pi-reference"
+# Pi checks out git: packages from settings.json under <agent-dir>/git/<host>/<path>.
+SUBAGENT_CLI_TARGET="../git/github.com/badlogic/pi-subagent/subagent.ts"
 AGENT_DIR="${PI_CODING_AGENT_DIR:-${PI_AGENT_DIR:-$HOME/.pi/agent}}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$AGENT_DIR/backups/my-pi-config-$TIMESTAMP"
@@ -84,11 +85,15 @@ for path in settings.json subagent-settings.json models.json codex-fast.json ext
 	backup_path "$path"
 done
 backup_path "git/github.com/algal/pi-openai-server-compaction"
+backup_path "bin/subagent"
 
-mkdir -p "$AGENT_DIR/extensions" "$AGENT_DIR/agents" "$AGENT_DIR/prompts" "$AGENT_DIR/skills"
-# The subagent extension now provides its workflow prompts itself (only while subagents are on).
-for prompt in "$SUBAGENT_DIR"/prompts/*.md; do
-	rm -f "$AGENT_DIR/prompts/$(basename "$prompt")"
+mkdir -p "$AGENT_DIR/extensions" "$AGENT_DIR/prompts" "$AGENT_DIR/skills" "$AGENT_DIR/bin"
+# The former local subagent extension installed these agents and workflow prompts.
+for name in planner reviewer scout worker; do
+	rm -f "$AGENT_DIR/agents/$name.md"
+done
+for name in implement implement-and-review scout scout-and-plan; do
+	rm -f "$AGENT_DIR/prompts/$name.md"
 done
 rm -f "$AGENT_DIR/extensions/question.ts" "$AGENT_DIR/extensions/preset.ts" "$AGENT_DIR/extensions/herdr-integration-check.ts" "$AGENT_DIR/prompts/explore-and-gather.md" "$AGENT_DIR/subagent-settings.json" "$AGENT_DIR/codex-fast.json"
 rm -rf "$AGENT_DIR/extensions/skills-manager" "$AGENT_DIR/extensions/sidebar-tui" "$AGENT_DIR/extensions/pi-config-manager" "$AGENT_DIR/extensions/herdr-background-monitor" "$AGENT_DIR/extensions/subagent" "$AGENT_DIR/extensions/preset" "$AGENT_DIR/extensions/plan-mode" "$AGENT_DIR/extensions/code-mode" "$AGENT_DIR/extensions/hairline" "$AGENT_DIR/extensions/codex-fast-toggle" "$AGENT_DIR/extensions/codex-server-compaction" "$AGENT_DIR/skills/preset-settings" "$AGENT_DIR/git/github.com/algal/pi-openai-server-compaction"
@@ -106,10 +111,6 @@ try {
 	// Pi's ChatGPT login uses a stable installation identity; never track it here.
 	if (typeof currentSettings.deviceId === "string") {
 		nextSettings.deviceId = currentSettings.deviceId;
-	}
-	// /subagent on|off is a runtime choice; a reinstall keeps it.
-	if (typeof currentSettings.subagents?.enabled === "boolean") {
-		nextSettings.subagents = { ...(nextSettings.subagents ?? {}), enabled: currentSettings.subagents.enabled };
 	}
 } catch (error) {
 	if (error.code !== "ENOENT") throw error;
@@ -184,10 +185,11 @@ fs.writeFileSync(
 fs.renameSync(temporaryPath, targetPath);
 NODE
 cp -R "$ROOT_DIR/extensions/." "$AGENT_DIR/extensions/"
-cp -R "$SUBAGENT_DIR/agents/." "$AGENT_DIR/agents/"
 cp -R "$ROOT_DIR/prompts/." "$AGENT_DIR/prompts/"
 install_herdr_skill
 install_herdr_pi_reference_skill
+# The pi-subagent skill calls the `subagent` CLI; Pi puts <agent-dir>/bin on the bash PATH.
+ln -sfn "$SUBAGENT_CLI_TARGET" "$AGENT_DIR/bin/subagent"
 
 printf 'Installed Pi configuration into %s\n' "$AGENT_DIR"
 printf 'Backup created at %s\n' "$BACKUP_DIR"

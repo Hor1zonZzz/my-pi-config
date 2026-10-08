@@ -6,9 +6,9 @@
 
 ## 包含内容
 
-- `settings.json` — 模型默认值与可安装的 Pi 包，包括 Herdr 工具集成，以及 Pi Voice（本地语音转文字，提供录音快捷键和 `transcribe_file` 工具）。Pi 0.99.0 起内置 MCP 支持，本仓库不再包含独立的 MCP 适配器。
+- `settings.json` — 模型默认值与可安装的 Pi 包，包括 Herdr 工具集成、Pi Voice（本地语音转文字，提供录音快捷键和 `transcribe_file` 工具），以及 [`pi-subagent`](https://github.com/badlogic/pi-subagent)（在 tmux 中运行、可观察的 subagent，通过 `subagent` 命令行和其自带技能驱动）。Pi 0.99.0 起内置 MCP 支持，本仓库不再包含独立的 MCP 适配器。
 - `model-overrides.json` — 受管理的、不含凭据的内置模型覆盖项
-- `extensions/` — 本地扩展；`extensions/subagent/` 同时持有其代理定义与工作流提示词
+- `extensions/` — 本地扩展
 - `prompts/` — 本地通用提示词模板，包括可手动选择是否探索仓库的 `/understand` 与 `/explore-understand`
 - `skills/` — 远端受管的技能缓存；Herdr 会在安装期间从其上游 Git 仓库刷新
 - `install.sh` — 备份并安装到 `~/.pi/agent`
@@ -19,7 +19,6 @@
 - `notify.ts` — 整个运行结束（`agent_settled`）后的终端通知
 - `tools.ts` — Pi 官方的 `/tools` 示例：列出所有已注册工具及其暴露方式（如何发给模型）和来源，并按当前会话分支逐个启用或禁用；选中行显示完整来源路径和说明
 - `herdr/` — 统一持有本地 Herdr 集成检查器、异步 `herdr_agent prompt` 监控器和 `herdr-pi-reference` 技能源码；它让显式 `wait: false` 调用保持非阻塞，并注入会话级完成 follow-up
-- `subagent/` — 把任务交给 `pi` 子进程，支持单个、并行、链式三种模式，可前台运行，也可用 `async: true` 在后台运行；保存每个子会话，在输入框下方列出运行中的 subagent（光标在输入框最后一行时按 `↓` 选中后可查看或停止），返回每个运行的短 ID 和会话文件，主 agent 可以直接 `read` 查看进度，并用 `subagent_control` 给运行发消息、打断、继续或停止；后台运行一完成就以 `<subagent_result>` 送达它的回答，并提供 `/subagent-history` 和 `/subagent` 模型/思考级别选择器（[详细说明](extensions/subagent/README.zh-CN.md)）
 - `codex-accounts/` — `/codex-accounts [openai|openai-codex]` 用独立账号库导入、添加和全局切换新版 ChatGPT 或旧 Codex 登录，保留当前 provider/模型；设备码登录可按 Esc 取消。凭据只存本机，在同一 agent 目录内共享（[详细说明](extensions/codex-accounts/README.zh-CN.md)）
 - `codex-statusline/` — 在 Codex TUI 中自动显示当前账号与周额度剩余比例；`openai` ChatGPT 登录时显示其账号、邮箱相同的 Codex 登录的周额度以及额度用尽状态；同一 agent 目录内的 session 共享五分钟账号/用户额度缓存（[详细说明](extensions/codex-statusline/README.zh-CN.md)）
 
@@ -39,7 +38,7 @@ cd my-pi-config
 ./install.sh
 ```
 
-安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，并把 Herdr 扩展持有的 `herdr-pi-reference` 技能安装到 `~/.pi/agent/skills/herdr-pi-reference/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。迁移期间还会先备份、再删除已退役的 `extensions/plan-mode/`、`extensions/code-mode/`、`extensions/hairline/`、`extensions/codex-fast-toggle/` 与 `extensions/codex-server-compaction/`、旧的全局 `codex-fast.json` 状态文件以及已退役的外部 `pi-openai-server-compaction` Git 包 checkout。重启 Pi 或运行：
+安装程序会在替换受管文件之前，在 `~/.pi/agent/backups/` 下创建带时间戳的备份。它会将 `model-overrides.json` 合并进目标 `models.json`，保留所有无关的本地提供方、凭据与模型设置。它还会从上游 `master` 分支刷新 Herdr 技能，将其安装到 `~/.pi/agent/skills/herdr/`，并把 Herdr 扩展持有的 `herdr-pi-reference` 技能安装到 `~/.pi/agent/skills/herdr-pi-reference/`；当远端暂时不可用时，会使用已有的 Herdr 缓存。当 Pi 在 Herdr 内启动时，本地集成检查器会在 Herdr 的 Pi 集成缺失或过旧时发出警告；它绝不会自动安装或更新由 Herdr 管理的集成。迁移期间还会先备份、再删除已退役的 `extensions/plan-mode/`、`extensions/code-mode/`、`extensions/hairline/`、`extensions/codex-fast-toggle/` 与 `extensions/codex-server-compaction/`、旧的全局 `codex-fast.json` 状态文件以及已退役的外部 `pi-openai-server-compaction` Git 包 checkout。它还会删除以前的本地 subagent 扩展及其安装的代理（`planner`、`reviewer`、`scout`、`worker`）和工作流提示词，并把 `~/.pi/agent/bin/subagent` 链接到 `pi-subagent` 包的 checkout，使 `subagent` 命令出现在 Pi bash 的 `PATH` 中；Pi 安装该包后链接即生效。`pi-subagent` 需要 tmux 和 Node.js 22.19 或更新版本。重启 Pi 或运行：
 
 ```text
 /reload
@@ -53,17 +52,11 @@ cd my-pi-config
 
 ```text
 /codex-accounts [openai|openai-codex]
-/subagent [on|off]
-/subagent-history
 /understand [requirement]
 /explore-understand [requirement]
-/scout <task>
-/implement <task>
-/scout-and-plan <task>
-/implement-and-review <task>
 ```
 
-`/subagent off` 彻底移除 subagent（工具、提示词、面板以及下面的工作流命令），直到 `/subagent on`。
+`/subagent`（来自 `pi-subagent`）用于选择运行中的 subagent 并接入它的 tmux 会话。
 
 `/understand` 直接澄清需求；`/explore-understand` 会明确先对仓库进行有针对性的只读探索。两者都会在开始实现前等待确认。
 
@@ -75,4 +68,4 @@ cd my-pi-config
 
 ## 署名与许可证
 
-部分扩展与子代理工作流改编自 Pi 的官方示例。Pi 的许可证包含在 `licenses/pi-LICENSE` 中。
+部分扩展改编自 Pi 的官方示例。Pi 的许可证包含在 `licenses/pi-LICENSE` 中。

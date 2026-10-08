@@ -7,9 +7,6 @@ Files adapted or copied from Pi's official extension examples include:
 - `extensions/notify.ts`
 - `extensions/questionnaire.ts`
 - `extensions/tools.ts`
-- `extensions/subagent/agents.ts` and parts of `extensions/subagent/runner.ts` (the rest of `extensions/subagent/` was rewritten for this repository)
-- `extensions/subagent/agents/`
-- `extensions/subagent/prompts/`
 
 Upstream project: <https://github.com/earendil-works/pi>
 
@@ -23,6 +20,12 @@ informed by [`pi-codex-account`](https://github.com/fadilsflow/pi-codex-account)
 implementation uses native Pi OAuth, shared auth locking, and atomic commits.
 The lock implementation is supplied by Pi's existing `proper-lockfile` runtime
 dependency rather than copied into this repository.
+
+## pi-subagent
+
+`settings.json` installs [`pi-subagent`](https://github.com/badlogic/pi-subagent)
+as a Pi git package; `install.sh` only links its `subagent.ts` CLI into
+`<agent-dir>/bin/`. This repository does not vendor its source.
 
 ## Herdr skill
 

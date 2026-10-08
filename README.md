@@ -6,9 +6,9 @@ English | [中文文档](README.zh-CN.md)
 
 ## Included
 
-- `settings.json` — model defaults and installable Pi packages, including the Herdr tool integration and Pi Voice (local speech-to-text with a recording shortcut and the `transcribe_file` tool). MCP support is built into Pi 0.99.0 and later; the separate MCP adapter is no longer included.
+- `settings.json` — model defaults and installable Pi packages, including the Herdr tool integration, Pi Voice (local speech-to-text with a recording shortcut and the `transcribe_file` tool), and [`pi-subagent`](https://github.com/badlogic/pi-subagent) (observable subagents in tmux, driven by a `subagent` CLI and its bundled skill). MCP support is built into Pi 0.99.0 and later; the separate MCP adapter is no longer included.
 - `model-overrides.json` — managed, credential-free overrides for built-in models
-- `extensions/` — local extensions; `extensions/subagent/` also owns its agent definitions and workflow prompts
+- `extensions/` — local extensions
 - `prompts/` — local general-purpose prompt templates, including `/understand` and `/explore-understand` for manually controlled requirement alignment
 - `skills/` — remote-managed skill caches; Herdr is refreshed from its upstream
   Git repository during installation
@@ -20,7 +20,6 @@ English | [中文文档](README.zh-CN.md)
 - `notify.ts` — terminal notification after the full run settles (`agent_settled`)
 - `tools.ts` — Pi's official `/tools` example: lists every registered tool with its exposure (how it reaches the model) and source, and enables or disables each one for the current session branch; the selected row shows the full source path and description
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
-- `subagent/` — delegates tasks to `pi` subprocesses in single, parallel, or chain mode, in the foreground or with `async: true` in the background; saves every child session, lists running subagents below the editor (`↓` from the prompt's last line selects one to watch or stop), returns each run's short ID and session file so the main agent can `read` its progress and message, interrupt, continue, or stop a run with `subagent_control`, delivers each background answer as a `<subagent_result>` as soon as that run finishes, and adds `/subagent-history` plus the `/subagent` model/thinking selector ([details](extensions/subagent/README.md))
 - `codex-accounts/` — `/codex-accounts [openai|openai-codex]` imports, adds, and globally switches new ChatGPT or legacy Codex logins in separate vaults, without changing the current provider/model; Esc cancels device login. Credentials remain local and shared within one agent directory ([details](extensions/codex-accounts/README.md))
 - `codex-statusline/` — automatically shows the current Codex account and weekly quota remaining in the TUI, and for the `openai` ChatGPT login its account, the matching Codex login's weekly quota, and a reached usage limit; sessions sharing an agent directory reuse a five-minute per-account/user quota cache ([details](extensions/codex-statusline/README.md))
 
@@ -54,7 +53,12 @@ automatically. During migration the installer also backs up and removes the
 retired `extensions/plan-mode/`, `extensions/code-mode/`, `extensions/hairline/`,
 `extensions/codex-fast-toggle/`, and `extensions/codex-server-compaction/`, the
 former global `codex-fast.json` state file, and the retired external
-`pi-openai-server-compaction` Git package checkout. Restart Pi or run:
+`pi-openai-server-compaction` Git package checkout. It removes the former local
+subagent extension with its installed agents (`planner`, `reviewer`, `scout`,
+`worker`) and workflow prompts, and links `~/.pi/agent/bin/subagent` to the
+`pi-subagent` package checkout so the `subagent` CLI is on Pi's bash `PATH`;
+the link resolves once Pi has installed the package. `pi-subagent` needs tmux
+and Node.js 22.19 or newer. Restart Pi or run:
 
 ```text
 /reload
@@ -66,17 +70,11 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 
 ```text
 /codex-accounts [openai|openai-codex]
-/subagent [on|off]
-/subagent-history
 /understand [requirement]
 /explore-understand [requirement]
-/scout <task>
-/implement <task>
-/scout-and-plan <task>
-/implement-and-review <task>
 ```
 
-`/subagent off` removes subagents entirely (tools, prompts, panel, and the workflow commands below) until `/subagent on`.
+`/subagent` (from `pi-subagent`) selects an active subagent and attaches to its tmux session.
 
 `/understand` clarifies the requirement directly. `/explore-understand` explicitly begins with focused, read-only repository exploration. Both wait for confirmation before implementation.
 
@@ -92,4 +90,4 @@ local file.
 
 ## Attribution and licenses
 
-Several extensions, the subagent agent discovery, sample agents, and workflow prompts are adapted from Pi's official examples. Pi's license is included at `licenses/pi-LICENSE`.
+Several extensions are adapted from Pi's official examples. Pi's license is included at `licenses/pi-LICENSE`.

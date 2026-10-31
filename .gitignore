@@ -26,6 +26,7 @@ package-lock.json
 npm/
 git/
 tmp/
+scratchpad/
 
 # OS and editor files
 .DS_Store

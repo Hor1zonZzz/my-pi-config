@@ -19,6 +19,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
   - `notify.ts` — emits a terminal notification after an agent run ends.
   - `herdr/` — owns the repository-managed Herdr integration checker, the asynchronous official `herdr_agent prompt` monitor, and the source for the installed `herdr-pi-reference` skill. It uses the public Herdr CLI and does not modify Herdr-managed integration files.
     - `prompts/` — the upstream slash-command workflow templates.
+  - `background-task/` — creates a per-session scratchpad under `<agent-dir>/scratchpad/<session-id>/`, adds it to the system prompt, and registers the `background_task` tool and `/bg` command, which run shell commands without blocking the agent loop and steer their exit back into the owning session.
   - `codex-statusline/` — displays the current Codex account and weekly quota in the TUI (and, for the `openai` ChatGPT login, its `/v1/me` email, the same-email Codex login's weekly quota, and a reached usage limit), with a credential-free five-minute cache and cross-process query lock shared within one Pi agent directory.
 - `licenses/`, `LICENSE`, and `THIRD_PARTY_NOTICES.md` — project and upstream licensing information.
 
@@ -64,6 +65,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - `pi-cliproxyapi-provider` is an unpinned external npm package updated on every install. It stores its `baseUrl`/`apiKey` in `<agent-dir>/cliproxyapi.json` and its model catalog in `<agent-dir>/cliproxyapi-models.json`; both are runtime-only, ignored by git, and never installed. It also ships its own TPS status extension alongside `extensions/tps.ts`.
 - `extensions/herdr/` background monitoring depends on the official `herdr_agent` tool-result shape, Herdr's public `agent get` JSON response and lifecycle states, Pi session IDs, cancellable `pi.exec`, and `agent_settled` follow-up delivery. It must remain separate from the Herdr-managed Pi state extension and cannot provide prompt-level attribution when multiple Pi sessions share one target pane.
 - `codex-statusline` depends on public Pi auth resolution, Codex JWT account/profile claims, the `/wham/usage` response shape, session/model lifecycle events, and atomic local filesystem operations; for the `openai` ChatGPT login also the `api.openai.com/v1/me` `email` field, the token's `sub`/`client_id` claims, `after_provider_response` firing only on success, and the `subscription_sharing_usage_limit_exceeded` code (with optional `resets_at`) in the assistant `errorMessage`. Preserve account/user cache isolation, the shared five-minute failure cooldown, no polling outside Codex or `openai` ChatGPT-login TUI sessions, borrowing Codex quota only for a matching email, and rejection of late account/session results. It is not an account manager.
+- `background-task` depends on the public `createLocalBashOperations()` backend (shell resolution, `PATH`, detached process groups tracked and killed by Pi on exit), `getAgentDir()`, `before_agent_start` `systemPromptOptions.sections`, `pi.sendMessage()` `steer`/`triggerTurn` delivery, and `session_shutdown` on reload and session replacement. Its core modules must stay free of Pi imports so `node --test` can run them.
 - `questionnaire` depends on TUI component, key handling, autocomplete, theming, and invalidation contracts.
 
 ## Editing Guidelines
@@ -93,6 +95,8 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 The installer backs up and removes the former global `codex-fast.json` left by the retired Fast extension.
 
 `codex-accounts.json` and `openai-accounts.json` are sensitive credential vaults left by the retired `/codex-accounts` extension. The installer must leave them untouched; never copy them into the repository or session history. `auth.json` is the only authority for each provider's globally active login.
+
+`background-task` keeps per-session scratchpads (including background task logs and metadata) under `<agent-dir>/scratchpad/`. They are runtime-only, pruned after 14 days without use, and must not be installed from or committed to this repository.
 
 `codex-statusline` intentionally shares quota snapshots and query coordination under `<agent-dir>/cache/codex-statusline/`. This cache is runtime-only, contains no credentials or email labels, and must not be installed from or committed to this repository.
 
@@ -132,6 +136,7 @@ PI_CODING_AGENT_DIR="$TEST_AGENT_DIR" pi
 Perform applicable interactive checks:
 
 - Pi starts without extension load errors and `/reload` succeeds.
+- `background-task` returns immediately, steers a normal exit into a busy or idle session, reports deliberate `SIGTERM`/`/bg stop` exits without waking the model, keeps tasks alive across Esc, and kills them silently on reload, session replacement, and quit.
 - `questionnaire` handles single, multiple, custom-text, cancellation, narrow-terminal, and non-TUI cases.
 - `extensions/herdr/` background monitoring is a no-op outside Herdr; tracks only successful explicit `herdr_agent prompt` calls with `wait: false`; delivers grouped, bounded follow-ups to the owning session after `done`, post-working `idle`, or `blocked`; and cancels cleanly on session replacement, reload, and shutdown.
 - `codex-statusline` displays full email (or a short account ID) and ordinary weekly remaining percentage only in Codex TUI sessions, and for the `openai` ChatGPT login the `/v1/me` email, `plan weekly … (via Codex)` only when the legacy Codex login has the same email, and `limit reached` only after the usage-limit error until a successful response; multiple processes sharing an agent directory issue one quota attempt per identity per five minutes, including failures; dead query owners are recoverable; stale/absent data is not shown as fresh or fabricated; account changes and lifecycle cleanup reject late results; other footer statuses remain intact.

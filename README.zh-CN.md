@@ -17,6 +17,7 @@
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
 - `notify.ts` — 整个运行结束（`agent_settled`）后的终端通知
 - `herdr/` — 统一持有本地 Herdr 集成检查器、异步 `herdr_agent prompt` 监控器和 `herdr-pi-reference` 技能源码；它让显式 `wait: false` 调用保持非阻塞，并注入会话级完成 follow-up
+- `background-task/` — 为每个 session 提供位于 `~/.pi/agent/scratchpad/<session-id>/` 的 scratchpad 目录，并新增 `background_task` 工具：长耗时 shell 命令在后台运行、不阻塞主循环，结束时以 steer 消息把退出码和日志末尾送回会话；`/bg` 可列出或停止任务（[详细说明](extensions/background-task/README.md)）
 - `codex-statusline/` — 在 Codex TUI 中自动显示当前账号与周额度剩余比例；`openai` ChatGPT 登录时显示其账号、邮箱相同的 Codex 登录的周额度以及额度用尽状态；同一 agent 目录内的 session 共享五分钟账号/用户额度缓存（[详细说明](extensions/codex-statusline/README.zh-CN.md)）
 
 ## Pi 兼容性

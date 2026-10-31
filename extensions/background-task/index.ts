@@ -120,7 +120,9 @@ export default function (pi: ExtensionAPI) {
 		manager.startSession({
 			sessionId,
 			scratchpad: dir,
-			setStatus: ctx.hasUI ? (text) => ctx.ui.setStatus(STATUS_KEY, text) : undefined,
+			setStatus: ctx.hasUI
+				? (text) => ctx.ui.setStatus(STATUS_KEY, text && ctx.ui.theme.fg("accent", `⏵ ${text}`))
+				: undefined,
 		});
 		void pruneScratchpads(scratchpadRoot(agentDir), dir).catch(() => {});
 	});

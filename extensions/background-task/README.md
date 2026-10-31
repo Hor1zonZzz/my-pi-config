@@ -45,7 +45,7 @@ When a task ends, a `background-task` custom message with the outcome, duration,
 - `/bg` lists the session's tasks with their state, duration, and command.
 - `/bg stop <id>` stops a running task.
 
-An accent-colored `⏵ bg N` footer status shows the number of running tasks.
+An accent-colored `bg N` footer status shows the number of running tasks.
 
 ## Tests
 

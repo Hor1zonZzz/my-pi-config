@@ -8,8 +8,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 
 ## Repository Map
 
-- `settings.json` — global Pi defaults and Pi package dependencies, including the external `pi-subagent` git package that provides subagents.
-- `model-overrides.json` — credential-free overrides merged into the local `models.json`.
+- `settings.json` — global Pi defaults and Pi package dependencies, including the external `pi-subagent` git package that provides subagents and the `pi-cliproxyapi-provider` npm package that registers CLIProxyAPI models.
 - `install.sh` — backs up the current user configuration, refreshes the Herdr
   skill cache, and copies managed files into the Pi agent directory.
 - `prompts/` — local general-purpose prompt templates installed as global slash commands.
@@ -28,7 +27,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 Some files must be maintained together:
 
 - `settings.json` lists `git:github.com/badlogic/pi-subagent`, and `install.sh` links its CLI into `<agent-dir>/bin/subagent`; keep the package path in both.
-- Model identifiers appear in `settings.json` and `model-overrides.json`. When models are renamed or removed, inspect both locations.
+- `install.sh` `LATEST_PACKAGES` (Pi Voice, `pi-subagent`, `pi-cliproxyapi-provider`) must name unpinned sources that `settings.json` lists; `install.test.ts` checks both.
 - `extensions/herdr/` owns `integration-check.ts`, the background-monitor modules, and `skills/herdr-pi-reference/`; `install.sh` must install that skill into the target skills directory and remove the former standalone extension paths. `herdr-agent-state.ts` is installed and overwritten by Herdr. The local extension may use documented Herdr CLI behavior but must not vendor, import, modify, install, or update the Herdr-managed integration. The background monitor is session-scoped and must not deliver a completion to a replacement Pi session.
 
 ## Upstream-Derived Code
@@ -62,6 +61,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 ### High-Risk Compatibility Areas
 
 - `pi-subagent` is an external git package (`git:github.com/badlogic/pi-subagent`, unpinned) that depends on tmux, Node.js 22.19+ running its `.ts` CLI directly, Pi installing git packages under `<agent-dir>/git/<host>/<path>`, and Pi prepending `<agent-dir>/bin` to the bash `PATH`. If the package moves or its CLI file is renamed, update `settings.json` and the `install.sh` link together. Its run state lives under `<agent-dir>/subagents/`; the former local extension's `<agent-dir>/subagent-sessions/` is left untouched.
+- `pi-cliproxyapi-provider` is an unpinned external npm package updated on every install. It stores its `baseUrl`/`apiKey` in `<agent-dir>/cliproxyapi.json` and its model catalog in `<agent-dir>/cliproxyapi-models.json`; both are runtime-only, ignored by git, and never installed. It also ships its own TPS status extension alongside `extensions/tps.ts`.
 - `extensions/herdr/` background monitoring depends on the official `herdr_agent` tool-result shape, Herdr's public `agent get` JSON response and lifecycle states, Pi session IDs, cancellable `pi.exec`, and `agent_settled` follow-up delivery. It must remain separate from the Herdr-managed Pi state extension and cannot provide prompt-level attribution when multiple Pi sessions share one target pane.
 - `codex-statusline` depends on public Pi auth resolution, Codex JWT account/profile claims, the `/wham/usage` response shape, session/model lifecycle events, and atomic local filesystem operations; for the `openai` ChatGPT login also the `api.openai.com/v1/me` `email` field, the token's `sub`/`client_id` claims, `after_provider_response` firing only on success, and the `subscription_sharing_usage_limit_exceeded` code (with optional `resets_at`) in the assistant `errorMessage`. Preserve account/user cache isolation, the shared five-minute failure cooldown, no polling outside Codex or `openai` ChatGPT-login TUI sessions, borrowing Codex quota only for a matching email, and rejection of late account/session results. It is not an account manager.
 - `questionnaire` depends on TUI component, key handling, autocomplete, theming, and invalidation contracts.
@@ -83,10 +83,11 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 
 - The target directory is `PI_CODING_AGENT_DIR`, then legacy `PI_AGENT_DIR`, then `~/.pi/agent`.
 - Existing managed paths are backed up under `backups/my-pi-config-<timestamp>/` before copying.
-- The installer preserves Pi-managed `settings.json.lastChangelogVersion` and the ChatGPT OAuth installation `deviceId` instead of tracking them in this repository.
-- It merges credential-free `model-overrides.json` entries into the target `models.json`, preserving unrelated local providers and settings.
+- The installer preserves Pi-managed `settings.json.lastChangelogVersion`, the ChatGPT OAuth installation `deviceId`, and the user's local `defaultProvider`/`defaultModel` instead of tracking them in this repository. `settings.json` must not set a default model.
+- It does not set a default model or model overrides and never modifies the target `models.json`.
 - It removes obsolete extension paths and state, including the former standalone Preset extension and skill, the retired `extensions/tools.ts` `/tools` example, `extensions/plan-mode/`, `extensions/code-mode/`, `extensions/hairline/`, `extensions/codex-fast-toggle/`, `extensions/codex-server-compaction/`, and `extensions/codex-accounts/`, the former local `extensions/subagent/` with its installed `planner`/`reviewer`/`scout`/`worker` agents and `implement`/`implement-and-review`/`scout`/`scout-and-plan` prompts, `subagent-settings.json`, the retired `explore-and-gather` prompt, the former global `codex-fast.json` state, and the retired `git/github.com/algal/pi-openai-server-compaction` package checkout before copying the current settings, local extensions, local general-purpose prompts, and refreshed Herdr-owned skills.
 - It links `<agent-dir>/bin/subagent` to `../git/github.com/badlogic/pi-subagent/subagent.ts`, the `pi-subagent` git package checkout Pi creates from `settings.json`; Pi prepends `<agent-dir>/bin` to the bash tool's `PATH`. The link dangles until Pi installs the package.
+- It then runs `pi update --extension <source> --no-approve` with the target `PI_CODING_AGENT_DIR` for each `LATEST_PACKAGES` entry, installing missing packages and moving unpinned ones to their newest release. A missing `pi` or a failed update prints a warning and does not fail the install.
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
 
 The installer backs up and removes the former global `codex-fast.json` left by the retired Fast extension.
@@ -105,7 +106,7 @@ Basic repository checks:
 
 ```bash
 bash -n install.sh
-node -e 'for (const f of ["settings.json", "model-overrides.json"]) JSON.parse(require("node:fs").readFileSync(f, "utf8"))'
+node -e 'JSON.parse(require("node:fs").readFileSync("settings.json", "utf8"))'
 git diff --check
 ```
 

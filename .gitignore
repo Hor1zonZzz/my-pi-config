@@ -6,6 +6,8 @@ codex-accounts.json
 codex-accounts.json.*.tmp
 openai-accounts.json
 openai-accounts.json.*.tmp
+cliproxyapi.json
+cliproxyapi-models.json
 models.json
 mcp.json
 trust.json

@@ -6,8 +6,7 @@ English | [中文文档](README.zh-CN.md)
 
 ## Included
 
-- `settings.json` — model defaults and installable Pi packages, including the Herdr tool integration, Pi Voice (local speech-to-text with a recording shortcut and the `transcribe_file` tool), and [`pi-subagent`](https://github.com/badlogic/pi-subagent) (observable subagents in tmux, driven by a `subagent` CLI and its bundled skill). MCP support is built into Pi 0.99.0 and later; the separate MCP adapter is no longer included.
-- `model-overrides.json` — managed, credential-free overrides for built-in models
+- `settings.json` — the default thinking level, theme, and installable Pi packages (no default model: the installer keeps the one already chosen locally), including the Herdr tool integration, Pi Voice (local speech-to-text with a recording shortcut and the `transcribe_file` tool), [`pi-subagent`](https://github.com/badlogic/pi-subagent) (observable subagents in tmux, driven by a `subagent` CLI and its bundled skill), and [`pi-cliproxyapi-provider`](https://www.npmjs.com/package/@router-for-me/pi-cliproxyapi-provider) (registers CLIProxyAPI models; configure it with `/login cliproxyapi`). MCP support is built into Pi 0.99.0 and later; the separate MCP adapter is no longer included.
 - `extensions/` — local extensions
 - `prompts/` — local general-purpose prompt templates, including `/understand` and `/explore-understand` for manually controlled requirement alignment
 - `skills/` — remote-managed skill caches; Herdr is refreshed from its upstream
@@ -36,10 +35,10 @@ cd my-pi-config
 ```
 
 The installer creates a timestamped backup under `~/.pi/agent/backups/` before
-replacing managed files. It preserves Pi's runtime `deviceId` for ChatGPT login
-and leaves the credential vaults of the retired `/codex-accounts` extension untouched. It merges `model-overrides.json` into the target
-`models.json`, preserving all unrelated local providers, credentials, and model
-settings. It also refreshes the Herdr skill from upstream `master`, installs it
+replacing managed files. It preserves Pi's runtime `deviceId` for ChatGPT login and the locally chosen
+default provider and model, which this repository does not set,
+and leaves the credential vaults of the retired `/codex-accounts` extension untouched. It sets no model overrides and
+never modifies the local `models.json`. It also refreshes the Herdr skill from upstream `master`, installs it
 to `~/.pi/agent/skills/herdr/`, and installs the Herdr-owned `herdr-pi-reference`
 skill to `~/.pi/agent/skills/herdr-pi-reference/`; an existing Herdr cache is
 used when the remote is temporarily unavailable. When Pi starts inside Herdr,
@@ -53,7 +52,10 @@ retired `extensions/plan-mode/`, `extensions/code-mode/`, `extensions/hairline/`
 subagent extension with its installed agents (`planner`, `reviewer`, `scout`,
 `worker`) and workflow prompts, and links `~/.pi/agent/bin/subagent` to the
 `pi-subagent` package checkout so the `subagent` CLI is on Pi's bash `PATH`;
-the link resolves once Pi has installed the package. `pi-subagent` needs tmux
+the link resolves once Pi has installed the package. Every install then runs
+`pi update --extension` for Pi Voice, `pi-subagent`, and `pi-cliproxyapi-provider`,
+which installs each one if it is missing and otherwise moves it to its newest
+release; a failed update only prints a warning. `pi-subagent` needs tmux
 and Node.js 22.19 or newer. Restart Pi or run:
 
 ```text
@@ -78,10 +80,6 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 This repository intentionally excludes credentials, sessions, MCP configuration,
 trust decisions, caches, history, `node_modules`, and Herdr-managed integration
 files. Never commit `~/.pi/agent/auth.json` or the raw local `models.json`.
-
-`model-overrides.json` is managed configuration, not a copy of `models.json`; it
-contains only credential-free model overrides that the installer merges into the
-local file.
 
 ## Attribution and licenses
 

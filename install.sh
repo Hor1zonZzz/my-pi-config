@@ -8,6 +8,12 @@ HERDR_SKILL_CACHE_DIR="$ROOT_DIR/skills/herdr"
 HERDR_PI_REFERENCE_SKILL_DIR="$ROOT_DIR/extensions/herdr/skills/herdr-pi-reference"
 # Pi checks out git: packages from settings.json under <agent-dir>/git/<host>/<path>.
 SUBAGENT_CLI_TARGET="../git/github.com/badlogic/pi-subagent/subagent.ts"
+# Unpinned packages from settings.json that every install updates to their newest release.
+LATEST_PACKAGES=(
+	"npm:@earendil-works/pi-voice"
+	"git:github.com/badlogic/pi-subagent"
+	"npm:@router-for-me/pi-cliproxyapi-provider"
+)
 AGENT_DIR="${PI_CODING_AGENT_DIR:-${PI_AGENT_DIR:-$HOME/.pi/agent}}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$AGENT_DIR/backups/my-pi-config-$TIMESTAMP"
@@ -21,6 +27,20 @@ backup_path() {
 		mkdir -p "$BACKUP_DIR/$(dirname "$relative")"
 		cp -R "$source" "$BACKUP_DIR/$relative"
 	fi
+}
+
+update_latest_packages() {
+	local source
+	if ! command -v pi >/dev/null 2>&1; then
+		printf 'Warning: pi not found; packages were not updated.\n' >&2
+		return
+	fi
+	for source in "${LATEST_PACKAGES[@]}"; do
+		# pi update installs a missing package and moves an unpinned one to its newest release.
+		if ! PI_CODING_AGENT_DIR="$AGENT_DIR" pi update --extension "$source" --no-approve; then
+			printf 'Warning: could not update %s; keeping the installed version.\n' "$source" >&2
+		fi
+	done
 }
 
 sync_herdr_skill() {
@@ -81,7 +101,7 @@ install_herdr_pi_reference_skill() {
 
 sync_herdr_skill
 
-for path in settings.json subagent-settings.json models.json codex-fast.json extensions agents prompts skills; do
+for path in settings.json subagent-settings.json codex-fast.json extensions agents prompts skills; do
 	backup_path "$path"
 done
 backup_path "git/github.com/algal/pi-openai-server-compaction"
@@ -112,6 +132,12 @@ try {
 	if (typeof currentSettings.deviceId === "string") {
 		nextSettings.deviceId = currentSettings.deviceId;
 	}
+	// The default model is the user's local choice; this repository does not set one.
+	for (const key of ["defaultProvider", "defaultModel"]) {
+		if (nextSettings[key] === undefined && typeof currentSettings[key] === "string") {
+			nextSettings[key] = currentSettings[key];
+		}
+	}
 } catch (error) {
 	if (error.code !== "ENOENT") throw error;
 }
@@ -120,76 +146,13 @@ const temporaryPath = `${targetPath}.${process.pid}.tmp`;
 fs.writeFileSync(temporaryPath, `${JSON.stringify(nextSettings, null, 2)}\n`, "utf8");
 fs.renameSync(temporaryPath, targetPath);
 NODE
-node - "$ROOT_DIR/model-overrides.json" "$AGENT_DIR/models.json" <<'NODE'
-const fs = require("node:fs");
-
-const [, , sourcePath, targetPath] = process.argv;
-const isRecord = (value) =>
-	value !== null && typeof value === "object" && !Array.isArray(value);
-const managed = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
-
-if (!isRecord(managed.providers)) {
-	throw new Error("model-overrides.json must contain a providers object");
-}
-
-let current = {};
-try {
-	current = JSON.parse(fs.readFileSync(targetPath, "utf8"));
-} catch (error) {
-	if (error.code !== "ENOENT") throw error;
-}
-
-if (!isRecord(current)) {
-	throw new Error(`${targetPath} must contain a JSON object`);
-}
-if (current.providers !== undefined && !isRecord(current.providers)) {
-	throw new Error(`${targetPath}.providers must be an object`);
-}
-
-const providers = { ...(current.providers ?? {}) };
-for (const [providerName, managedProvider] of Object.entries(managed.providers)) {
-	if (!isRecord(managedProvider?.modelOverrides)) {
-		throw new Error(
-			`model-overrides.json providers.${providerName}.modelOverrides must be an object`,
-		);
-	}
-
-	const currentProvider = providers[providerName];
-	if (currentProvider !== undefined && !isRecord(currentProvider)) {
-		throw new Error(`${targetPath} provider ${providerName} must be an object`);
-	}
-	if (
-		currentProvider?.modelOverrides !== undefined &&
-		!isRecord(currentProvider.modelOverrides)
-	) {
-		throw new Error(
-			`${targetPath} provider ${providerName}.modelOverrides must be an object`,
-		);
-	}
-
-	providers[providerName] = {
-		...currentProvider,
-		modelOverrides: {
-			...(currentProvider?.modelOverrides ?? {}),
-			...managedProvider.modelOverrides,
-		},
-	};
-}
-
-const temporaryPath = `${targetPath}.${process.pid}.tmp`;
-fs.writeFileSync(
-	temporaryPath,
-	`${JSON.stringify({ ...current, providers }, null, 2)}\n`,
-	"utf8",
-);
-fs.renameSync(temporaryPath, targetPath);
-NODE
 cp -R "$ROOT_DIR/extensions/." "$AGENT_DIR/extensions/"
 cp -R "$ROOT_DIR/prompts/." "$AGENT_DIR/prompts/"
 install_herdr_skill
 install_herdr_pi_reference_skill
 # The pi-subagent skill calls the `subagent` CLI; Pi puts <agent-dir>/bin on the bash PATH.
 ln -sfn "$SUBAGENT_CLI_TARGET" "$AGENT_DIR/bin/subagent"
+update_latest_packages
 
 printf 'Installed Pi configuration into %s\n' "$AGENT_DIR"
 printf 'Backup created at %s\n' "$BACKUP_DIR"

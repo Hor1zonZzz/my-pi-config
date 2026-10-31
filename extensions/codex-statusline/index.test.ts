@@ -44,10 +44,6 @@ function harness(t: TestContext) {
 	};
 	codexStatusline({
 		on: (name: string, handler: (event: any, ctx: any) => void) => handlers.set(name, handler),
-		events: { on: (name: string, handler: () => void) => {
-			handlers.set(name, handler);
-			return () => { handlers.delete(name); };
-		} },
 	} as unknown as ExtensionAPI);
 	const emit = (name: string) => handlers.get(name)?.({}, ctx);
 	t.after(() => { emit("session_shutdown"); });
@@ -112,7 +108,7 @@ test("account change aborts old request and its late result cannot overwrite the
 	h.emit("session_start");
 	await until(() => !!finishOld);
 	h.setAccount("second");
-	h.emit("codex-accounts:changed");
+	h.emit("agent_start");
 	await until(() => h.status === "second@example.com · weekly 40% left");
 	assert.equal(oldSignal?.aborted, true);
 	finishOld!();
@@ -212,10 +208,6 @@ function chatgptHarness(t: TestContext, options: { codexAccount?: string; apiKey
 	};
 	codexStatusline({
 		on: (name: string, handler: (event: any, ctx: any) => void) => handlers.set(name, handler),
-		events: { on: (name: string, handler: () => void) => {
-			handlers.set(name, handler);
-			return () => { handlers.delete(name); };
-		} },
 	} as unknown as ExtensionAPI);
 	const emit = (name: string, event: any = {}) => handlers.get(name)?.(event, ctx);
 	t.after(() => { emit("session_shutdown"); });
@@ -319,7 +311,7 @@ test("switching the openai account drops the old email and its late /v1/me resul
 	h.emit("session_start");
 	await until(() => !!finishAlice);
 	h.setUser("carol");
-	h.emit("codex-accounts:changed");
+	h.emit("agent_start");
 	await until(() => h.status === "carol@example.com");
 	finishAlice!();
 	await new Promise((resolve) => setTimeout(resolve, 30));

@@ -18,16 +18,12 @@ English | [中文文档](README.zh-CN.md)
 
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification after the full run settles (`agent_settled`)
-- `tools.ts` — Pi's official `/tools` example: lists every registered tool with its exposure (how it reaches the model) and source, and enables or disables each one for the current session branch; the selected row shows the full source path and description
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
-- `codex-accounts/` — `/codex-accounts [openai|openai-codex]` imports, adds, and globally switches new ChatGPT or legacy Codex logins in separate vaults, without changing the current provider/model; Esc cancels device login. Credentials remain local and shared within one agent directory ([details](extensions/codex-accounts/README.md))
 - `codex-statusline/` — automatically shows the current Codex account and weekly quota remaining in the TUI, and for the `openai` ChatGPT login its account, the matching Codex login's weekly quota, and a reached usage limit; sessions sharing an agent directory reuse a five-minute per-account/user quota cache ([details](extensions/codex-statusline/README.md))
 
 ## Pi compatibility
 
 The local extensions target Pi 0.87.0. Every provider, including `openai-codex`, uses Pi's built-in compaction.
-
-The dual-provider account menu is verified on Pi 0.99.1.
 
 ## Install
 
@@ -41,7 +37,7 @@ cd my-pi-config
 
 The installer creates a timestamped backup under `~/.pi/agent/backups/` before
 replacing managed files. It preserves Pi's runtime `deviceId` for ChatGPT login
-and leaves both local credential vaults untouched. It merges `model-overrides.json` into the target
+and leaves the credential vaults of the retired `/codex-accounts` extension untouched. It merges `model-overrides.json` into the target
 `models.json`, preserving all unrelated local providers, credentials, and model
 settings. It also refreshes the Herdr skill from upstream `master`, installs it
 to `~/.pi/agent/skills/herdr/`, and installs the Herdr-owned `herdr-pi-reference`
@@ -51,8 +47,8 @@ the local integration checker warns if Herdr's Pi integration is missing or
 outdated; it never installs or updates the Herdr-managed integration
 automatically. During migration the installer also backs up and removes the
 retired `extensions/plan-mode/`, `extensions/code-mode/`, `extensions/hairline/`,
-`extensions/codex-fast-toggle/`, and `extensions/codex-server-compaction/`, the
-former global `codex-fast.json` state file, and the retired external
+`extensions/codex-fast-toggle/`, `extensions/codex-server-compaction/`, and
+`extensions/codex-accounts/`, the former global `codex-fast.json` state file, and the retired external
 `pi-openai-server-compaction` Git package checkout. It removes the former local
 subagent extension with its installed agents (`planner`, `reviewer`, `scout`,
 `worker`) and workflow prompts, and links `~/.pi/agent/bin/subagent` to the
@@ -69,7 +65,6 @@ Package dependencies declared in `settings.json` are installed by Pi on startup.
 ## Useful commands
 
 ```text
-/codex-accounts [openai|openai-codex]
 /understand [requirement]
 /explore-understand [requirement]
 ```

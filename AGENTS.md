@@ -18,10 +18,8 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 - `extensions/` — user-level TypeScript extensions loaded by Pi.
   - `questionnaire.ts` — registers the TUI-only `questionnaire` tool for one or more interactive questions.
   - `notify.ts` — emits a terminal notification after an agent run ends.
-  - `tools.ts` — Pi's official `/tools` example: lists registered tools with their exposure and source and toggles the active set, persisted as `tools-config` session entries.
   - `herdr/` — owns the repository-managed Herdr integration checker, the asynchronous official `herdr_agent prompt` monitor, and the source for the installed `herdr-pi-reference` skill. It uses the public Herdr CLI and does not modify Herdr-managed integration files.
     - `prompts/` — the upstream slash-command workflow templates.
-  - `codex-accounts/` — `/codex-accounts [openai|openai-codex]` imports/adds native ChatGPT and legacy Codex OAuth logins in separate vaults and switches the selected provider's global login without changing the current model; transactions share Pi's auth-file lock and keep credentials out of sessions. New ChatGPT grants use Pi's stable device ID and retain issued client IDs/scopes; display labels do not identify or merge accounts.
   - `codex-statusline/` — displays the current Codex account and weekly quota in the TUI (and, for the `openai` ChatGPT login, its `/v1/me` email, the same-email Codex login's weekly quota, and a reached usage limit), with a credential-free five-minute cache and cross-process query lock shared within one Pi agent directory.
 - `licenses/`, `LICENSE`, and `THIRD_PARTY_NOTICES.md` — project and upstream licensing information.
 
@@ -31,7 +29,6 @@ Some files must be maintained together:
 
 - `settings.json` lists `git:github.com/badlogic/pi-subagent`, and `install.sh` links its CLI into `<agent-dir>/bin/subagent`; keep the package path in both.
 - Model identifiers appear in `settings.json` and `model-overrides.json`. When models are renamed or removed, inspect both locations.
-- `extensions/codex-accounts/` and `codex-statusline/` share the pure account fingerprint decoder in `codex-statusline/quota.ts`. Global switches notify the local quota display.
 - `extensions/herdr/` owns `integration-check.ts`, the background-monitor modules, and `skills/herdr-pi-reference/`; `install.sh` must install that skill into the target skills directory and remove the former standalone extension paths. `herdr-agent-state.ts` is installed and overwritten by Herdr. The local extension may use documented Herdr CLI behavior but must not vendor, import, modify, install, or update the Herdr-managed integration. The background monitor is session-scoped and must not deliver a completion to a replacement Pi session.
 
 ## Upstream-Derived Code
@@ -42,11 +39,6 @@ The following areas closely track official examples:
 
 - `extensions/notify.ts`
 - `extensions/questionnaire.ts`
-- `extensions/tools.ts`
-
-Local behavior that must be preserved during an upstream refresh includes:
-
-- the exposure and source columns and the selected-row source/description in `extensions/tools.ts` (the status leads each value so narrow terminals truncate the metadata, not the status);
 
 When importing or substantially adapting more upstream code, keep the relevant license, update `THIRD_PARTY_NOTICES.md`, and document the derivation in the nearest README when appropriate.
 
@@ -71,9 +63,7 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 
 - `pi-subagent` is an external git package (`git:github.com/badlogic/pi-subagent`, unpinned) that depends on tmux, Node.js 22.19+ running its `.ts` CLI directly, Pi installing git packages under `<agent-dir>/git/<host>/<path>`, and Pi prepending `<agent-dir>/bin` to the bash `PATH`. If the package moves or its CLI file is renamed, update `settings.json` and the `install.sh` link together. Its run state lives under `<agent-dir>/subagents/`; the former local extension's `<agent-dir>/subagent-sessions/` is left untouched.
 - `extensions/herdr/` background monitoring depends on the official `herdr_agent` tool-result shape, Herdr's public `agent get` JSON response and lifecycle states, Pi session IDs, cancellable `pi.exec`, and `agent_settled` follow-up delivery. It must remain separate from the Herdr-managed Pi state extension and cannot provide prompt-level attribution when multiple Pi sessions share one target pane.
-- `codex-accounts` uses public command/OAuth APIs but relies on Pi's installed `proper-lockfile` dependency and `auth.json.lock` (`realpath:false`) protocol because no public extension auth transaction exists. Recheck this protocol and auth-file revision detection on Pi upgrades. Preserve lock serialization with OAuth rotation, vault-before-auth atomic writes, same-account no-op, cancellation, and global—not session-specific—selection. Never force `expires: 0` or replace the provider.
 - `codex-statusline` depends on public Pi auth resolution, Codex JWT account/profile claims, the `/wham/usage` response shape, session/model lifecycle events, and atomic local filesystem operations; for the `openai` ChatGPT login also the `api.openai.com/v1/me` `email` field, the token's `sub`/`client_id` claims, `after_provider_response` firing only on success, and the `subscription_sharing_usage_limit_exceeded` code (with optional `resets_at`) in the assistant `errorMessage`. Preserve account/user cache isolation, the shared five-minute failure cooldown, no polling outside Codex or `openai` ChatGPT-login TUI sessions, borrowing Codex quota only for a matching email, and rejection of late account/session results. It is not an account manager.
-- `tools` depends on `pi.getAllTools()` reporting `exposure` and `sourceInfo`, and on `SettingsList` cycling `values` and showing the selected item's `description`.
 - `questionnaire` depends on TUI component, key handling, autocomplete, theming, and invalidation contracts.
 
 ## Editing Guidelines
@@ -95,13 +85,13 @@ Prefer public exports from `@earendil-works/pi-coding-agent`, `@earendil-works/p
 - Existing managed paths are backed up under `backups/my-pi-config-<timestamp>/` before copying.
 - The installer preserves Pi-managed `settings.json.lastChangelogVersion` and the ChatGPT OAuth installation `deviceId` instead of tracking them in this repository.
 - It merges credential-free `model-overrides.json` entries into the target `models.json`, preserving unrelated local providers and settings.
-- It removes obsolete extension paths and state, including the former standalone Preset extension and skill, the retired `extensions/plan-mode/`, `extensions/code-mode/`, `extensions/hairline/`, `extensions/codex-fast-toggle/`, and `extensions/codex-server-compaction/`, the former local `extensions/subagent/` with its installed `planner`/`reviewer`/`scout`/`worker` agents and `implement`/`implement-and-review`/`scout`/`scout-and-plan` prompts, `subagent-settings.json`, the retired `explore-and-gather` prompt, the former global `codex-fast.json` state, and the retired `git/github.com/algal/pi-openai-server-compaction` package checkout before copying the current settings, local extensions, local general-purpose prompts, and refreshed Herdr-owned skills.
+- It removes obsolete extension paths and state, including the former standalone Preset extension and skill, the retired `extensions/tools.ts` `/tools` example, `extensions/plan-mode/`, `extensions/code-mode/`, `extensions/hairline/`, `extensions/codex-fast-toggle/`, `extensions/codex-server-compaction/`, and `extensions/codex-accounts/`, the former local `extensions/subagent/` with its installed `planner`/`reviewer`/`scout`/`worker` agents and `implement`/`implement-and-review`/`scout`/`scout-and-plan` prompts, `subagent-settings.json`, the retired `explore-and-gather` prompt, the former global `codex-fast.json` state, and the retired `git/github.com/algal/pi-openai-server-compaction` package checkout before copying the current settings, local extensions, local general-purpose prompts, and refreshed Herdr-owned skills.
 - It links `<agent-dir>/bin/subagent` to `../git/github.com/badlogic/pi-subagent/subagent.ts`, the `pi-subagent` git package checkout Pi creates from `settings.json`; Pi prepends `<agent-dir>/bin` to the bash tool's `PATH`. The link dangles until Pi installs the package.
 - It merges copied directory contents into the target; unrelated target files are not a reliable part of this repository's desired state.
 
 The installer backs up and removes the former global `codex-fast.json` left by the retired Fast extension.
 
-`codex-accounts.json` and `openai-accounts.json` are sensitive, runtime-only credential vaults for the two separate login flows. The installer must leave them untouched; never copy them into the repository or session history. `auth.json` remains the only authority for each provider's globally active login. Old Codex tokens must never be installed as new OpenAI ChatGPT grants.
+`codex-accounts.json` and `openai-accounts.json` are sensitive credential vaults left by the retired `/codex-accounts` extension. The installer must leave them untouched; never copy them into the repository or session history. `auth.json` is the only authority for each provider's globally active login.
 
 `codex-statusline` intentionally shares quota snapshots and query coordination under `<agent-dir>/cache/codex-statusline/`. This cache is runtime-only, contains no credentials or email labels, and must not be installed from or committed to this repository.
 
@@ -120,7 +110,7 @@ git diff --check
 ```
 
 For installer changes, `node --test install.test.ts` checks stable ChatGPT device
-identity, runtime settings, and both credential vaults using a disposable install.
+identity, runtime settings, and the retired credential vaults using a disposable install.
 
 For upstream-derived extension changes, diff against the same installed Pi version's example before and after editing. Distinguish upstream changes from intentional local changes instead of replacing an entire file.
 
@@ -143,7 +133,6 @@ Perform applicable interactive checks:
 - Pi starts without extension load errors and `/reload` succeeds.
 - `questionnaire` handles single, multiple, custom-text, cancellation, narrow-terminal, and non-TUI cases.
 - `extensions/herdr/` background monitoring is a no-op outside Herdr; tracks only successful explicit `herdr_agent prompt` calls with `wait: false`; delivers grouped, bounded follow-ups to the owning session after `done`, post-working `idle`, or `blocked`; and cancels cleanly on session replacement, reload, and shutdown.
-- `/codex-accounts` requires an idle TUI, confirms import/global switch, adds accounts with native OAuth without selecting a different account, and never writes selected-account session state. Cancellation/corrupt stores/failed refresh do not replace the active login; real Pi OAuth refresh and switching serialize on the same lock; other running processes observe auth-file replacement. Switching preserves the current model and thinking level.
 - `codex-statusline` displays full email (or a short account ID) and ordinary weekly remaining percentage only in Codex TUI sessions, and for the `openai` ChatGPT login the `/v1/me` email, `plan weekly … (via Codex)` only when the legacy Codex login has the same email, and `limit reached` only after the usage-limit error until a successful response; multiple processes sharing an agent directory issue one quota attempt per identity per five minutes, including failures; dead query owners are recoverable; stale/absent data is not shown as fresh or fabricated; account changes and lifecycle cleanup reject late results; other footer statuses remain intact.
 - terminal notifications do not corrupt terminal output on supported terminals.
 

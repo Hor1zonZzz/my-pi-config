@@ -1,4 +1,4 @@
-import { boundedTail, clip, codeBlock, formatDuration, type TaskStatus } from "./format.ts";
+import { boundedTail, clip, codeBlock, formatDuration, type StateTone, type TaskStatus } from "./format.ts";
 
 export const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 export const MAX_TIMEOUT_MS = 30 * 60 * 1000;
@@ -99,6 +99,19 @@ export function monitorOutcomeText(monitor: MonitorRecord): string {
 	}
 	if (monitor.signal) return `was terminated by ${monitor.signal} (exit ${monitor.exitCode})`;
 	return `exited with code ${monitor.exitCode}`;
+}
+
+/** A compact outcome for the monitor list. */
+export function shortMonitorOutcome(monitor: MonitorRecord): { text: string; tone: StateTone } {
+	if (monitor.status === "running") return { text: "running", tone: "running" };
+	if (monitor.status === "failed") return { text: "failed", tone: "error" };
+	if (monitor.status === "stopped") {
+		if (monitor.stopReason === "timeout") return { text: "expired", tone: "muted" };
+		if (monitor.stopReason === "flood") return { text: "flooded", tone: "error" };
+		return { text: "stopped", tone: "muted" };
+	}
+	if (monitor.signal) return { text: monitor.signal, tone: "muted" };
+	return { text: `exit ${monitor.exitCode}`, tone: monitor.exitCode === 0 ? "success" : "error" };
 }
 
 export function finalMessage(

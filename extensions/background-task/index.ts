@@ -8,8 +8,14 @@ import {
 	getMarkdownTheme,
 } from "@earendil-works/pi-coding-agent";
 import { Markdown } from "@earendil-works/pi-tui";
-import { firstLine, formatDuration, outcomeText, startedMessage } from "./format.ts";
-import { MAX_TIMEOUT_MS, MIN_TIMEOUT_MS, monitorOutcomeText, monitorStartedMessage } from "./monitor-format.ts";
+import { firstLine, formatDuration, outcomeText, shortOutcome, startedMessage } from "./format.ts";
+import {
+	MAX_TIMEOUT_MS,
+	MIN_TIMEOUT_MS,
+	monitorOutcomeText,
+	monitorStartedMessage,
+	shortMonitorOutcome,
+} from "./monitor-format.ts";
 import { MONITOR_MESSAGE_TYPE, MonitorManager } from "./monitor-manager.ts";
 import {
 	ensureScratchpad,
@@ -18,11 +24,28 @@ import {
 	scratchpadRoot,
 	sessionScratchpad,
 } from "./scratchpad.ts";
+import { type PanelRow, StatusPanels } from "./status-ui.ts";
 import { BackgroundTaskManager, MESSAGE_TYPE } from "./task-manager.ts";
 
 const STATUS_KEY = "background-task";
 const MONITOR_STATUS_KEY = "monitor";
 const PROMPT_SECTION = "scratchpad";
+
+/** Running rows first, then finished ones, newest first in each group. */
+function panelRows<T extends { id: string; status: string; startedAt: number; endedAt?: number }>(
+	records: T[],
+	now: number,
+	describe: (record: T) => Pick<PanelRow, "state" | "label">,
+): PanelRow[] {
+	return records
+		.sort((a, b) => Number(b.status === "running") - Number(a.status === "running") || b.startedAt - a.startedAt)
+		.map((record) => ({
+			id: record.id,
+			running: record.status === "running",
+			elapsed: formatDuration((record.endedAt ?? now) - record.startedAt),
+			...describe(record),
+		}));
+}
 
 export default function (pi: ExtensionAPI) {
 	// Pi's own shell backend: same shell resolution, PATH (including <agent-dir>/bin), and
@@ -37,6 +60,33 @@ export default function (pi: ExtensionAPI) {
 		(message, options) => pi.sendMessage(message, options),
 	);
 	let scratchpad: string | undefined;
+	const panels = new StatusPanels([
+		{
+			kind: "bg",
+			statusKey: STATUS_KEY,
+			label: "bg",
+			title: "Background tasks",
+			empty: "No background tasks in this session.",
+			running: () => manager.runningIds().length,
+			rows: (now) =>
+				panelRows(manager.list(), now, (task) => ({ state: shortOutcome(task), label: firstLine(task.command, 200) })),
+			stop: (id) => manager.stop(id),
+		},
+		{
+			kind: "mon",
+			statusKey: MONITOR_STATUS_KEY,
+			label: "mon",
+			title: "Monitors",
+			empty: "No monitors in this session.",
+			running: () => monitors.runningIds().length,
+			rows: (now) =>
+				panelRows(monitors.list(), now, (monitor) => ({
+					state: shortMonitorOutcome(monitor),
+					label: `${firstLine(monitor.description, 80)} · ${monitor.events} events`,
+				})),
+			stop: (id) => monitors.stop(id),
+		},
+	]);
 
 	pi.registerTool(
 		defineTool({
@@ -187,17 +237,10 @@ export default function (pi: ExtensionAPI) {
 		manager.startSession({
 			sessionId,
 			scratchpad: dir,
-			setStatus: ctx.hasUI
-				? (text) => ctx.ui.setStatus(STATUS_KEY, text && ctx.ui.theme.fg("accent", text))
-				: undefined,
+			setStatus: () => panels.refresh(),
 		});
-		monitors.startSession({
-			sessionId,
-			scratchpad: dir,
-			setStatus: ctx.hasUI
-				? (text) => ctx.ui.setStatus(MONITOR_STATUS_KEY, text && ctx.ui.theme.fg("accent", text))
-				: undefined,
-		});
+		monitors.startSession({ sessionId, scratchpad: dir, setStatus: () => panels.refresh() });
+		if (ctx.hasUI) panels.attach(ctx.ui, ctx.mode === "tui");
 		void pruneScratchpads(scratchpadRoot(agentDir), dir).catch(() => {});
 	});
 
@@ -210,5 +253,6 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async () => {
 		await Promise.all([manager.shutdown(), monitors.shutdown()]);
+		panels.detach();
 	});
 }

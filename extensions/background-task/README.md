@@ -75,7 +75,23 @@ Monitors follow the same lifecycle as background tasks: they survive Esc and are
 - `/bg` lists the session's tasks and monitors with their state, duration, and command or description.
 - `/bg stop <id>` stops a running task or monitor.
 
-Accent-colored `bg N` and `mon N` footer statuses show the number of running tasks and monitors.
+## Footer entries
+
+Accent-colored `bg N` and `mon N` footer entries show the number of running tasks and monitors; an entry is hidden while nothing of its kind is running.
+
+In the interactive TUI the entries can take focus:
+
+| Key | Effect |
+|---|---|
+| `↓` in an empty editor | Focus the first visible entry (highlighted with the theme's selection background) |
+| `←` / `→` | Move between `bg` and `mon` |
+| `Enter` | Open the focused entry's list |
+| `↑` or `Esc` | Return to the editor |
+| Any other key | Return to the editor and type normally |
+
+The list shows running items first, then finished ones, newest first, with ID, state, duration, and command or monitor description. `↑`/`↓` select, `x` stops the selected running item (the same as `/bg stop`, without confirmation), and `Esc` or `Enter` closes the list and keeps the entry focused.
+
+The editor keeps real keyboard focus: a raw terminal input listener (`ctx.ui.onTerminalInput`) sees keys first and consumes only the navigation keys while an entry is focused. The list is a `ctx.ui.custom()` screen.
 
 ## Tests
 
@@ -83,4 +99,4 @@ Accent-colored `bg N` and `mon N` footer statuses show the number of running tas
 node --test extensions/background-task/*.test.ts
 ```
 
-The core modules do not import Pi, so the tests run with plain Node. `task-manager.test.ts` and `monitor-manager.test.ts` use a minimal stand-in for Pi's shell backend (`test-exec.ts`) and spawn real processes.
+The core modules, including the footer focus transitions in `status-focus.ts`, do not import Pi, so the tests run with plain Node. `status-ui.ts` holds the Pi TUI wiring. `task-manager.test.ts` and `monitor-manager.test.ts` use a minimal stand-in for Pi's shell backend (`test-exec.ts`) and spawn real processes.

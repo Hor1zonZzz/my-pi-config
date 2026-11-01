@@ -113,3 +113,15 @@ export function startedMessage(task: TaskRecord): string {
 		stop,
 	].join("\n");
 }
+
+/** Tones for compact list states, mapped to theme colors by the UI. */
+export type StateTone = "running" | "success" | "error" | "muted";
+
+/** A compact outcome for the task list. */
+export function shortOutcome(task: TaskRecord): { text: string; tone: StateTone } {
+	if (task.status === "running") return { text: "running", tone: "running" };
+	if (task.status === "failed") return { text: "failed", tone: "error" };
+	if (task.status === "stopped") return { text: "stopped", tone: "muted" };
+	if (task.signal) return { text: task.signal, tone: "muted" };
+	return { text: `exit ${task.exitCode}`, tone: task.exitCode === 0 ? "success" : "error" };
+}

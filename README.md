@@ -18,7 +18,7 @@ English | [中文文档](README.zh-CN.md)
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
 - `notify.ts` — terminal notification after the full run settles (`agent_settled`)
 - `herdr/` — owns the local Herdr integration checker, asynchronous `herdr_agent prompt` monitor, and `herdr-pi-reference` skill source; it keeps explicit `wait: false` calls non-blocking and injects session-scoped completion follow-ups
-- `background-task/` — gives each session a scratchpad under `~/.pi/agent/scratchpad/<session-id>/` and adds the `background_task` tool, which runs long shell commands without blocking the agent and steers their exit code and log tail back into the session; `/bg` lists or stops tasks ([details](extensions/background-task/README.md))
+- `background-task/` — gives each session a scratchpad under `~/.pi/agent/scratchpad/<session-id>/` and adds the `background_task` tool, which runs long shell commands without blocking the agent and steers their exit code and log tail back into the session, plus the `monitor` tool, which delivers each stdout line of a watch script as an event; `/bg` lists or stops tasks and monitors ([details](extensions/background-task/README.md))
 - `codex-statusline/` — automatically shows the current Codex account and weekly quota remaining in the TUI, and for the `openai` ChatGPT login its account, the matching Codex login's weekly quota, and a reached usage limit; sessions sharing an agent directory reuse a five-minute per-account/user quota cache ([details](extensions/codex-statusline/README.md))
 
 ## Pi compatibility

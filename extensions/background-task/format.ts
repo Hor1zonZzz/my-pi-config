@@ -47,11 +47,11 @@ export function firstLine(command: string, max = 80): string {
 	return line.length > max ? `${line.slice(0, max - 1)}…` : `${line}${more}`;
 }
 
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
 	return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-function codeBlock(text: string): string {
+export function codeBlock(text: string): string {
 	const longestRun = Math.max(2, ...(text.match(/`+/g) ?? []).map((run) => run.length));
 	const fence = "`".repeat(longestRun + 1);
 	return `${fence}text\n${text}\n${fence}`;

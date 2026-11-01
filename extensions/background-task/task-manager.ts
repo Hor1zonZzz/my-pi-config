@@ -1,5 +1,5 @@
-import { createWriteStream, type WriteStream } from "node:fs";
-import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
 	completionMessage,
@@ -9,40 +9,26 @@ import {
 	TAIL_LINES,
 } from "./format.ts";
 import { OutputLog } from "./output-log.ts";
+import {
+	closeStream,
+	DELIBERATE_SIGNALS,
+	type ExecFn,
+	IdSequence,
+	readPid,
+	type SendFn,
+	type SessionBinding,
+	shellQuote,
+	sleep,
+	waitForPid,
+	writeJsonAtomic,
+} from "./process.ts";
 import { touch } from "./scratchpad.ts";
+
+export type { CompletionMessage, ExecFn, SendFn, SessionBinding } from "./process.ts";
 
 export const MAX_RUNNING_TASKS = 16;
 const MAX_FINISHED_TASKS = 50;
-const PID_WAIT_MS = 1000;
-const PID_POLL_MS = 20;
 const SHUTDOWN_WAIT_MS = 2000;
-/** Signals that normally mean somebody stopped the task on purpose. */
-const DELIBERATE_SIGNALS = new Set(["SIGTERM", "SIGINT", "SIGHUP"]);
-
-/** Same contract as Pi's `BashOperations.exec`. */
-export type ExecFn = (
-	command: string,
-	cwd: string,
-	options: { onData: (data: Buffer) => void; signal?: AbortSignal },
-) => Promise<{ exitCode: number | null }>;
-
-export interface CompletionMessage {
-	customType: string;
-	content: string;
-	display: boolean;
-	details: Record<string, unknown>;
-}
-
-export type SendFn = (
-	message: CompletionMessage,
-	options: { deliverAs?: "steer"; triggerTurn: boolean },
-) => void;
-
-export interface SessionBinding {
-	sessionId: string;
-	scratchpad: string;
-	setStatus?: (text: string | undefined) => void;
-}
 
 interface RunningTask {
 	record: TaskRecord;
@@ -52,40 +38,11 @@ interface RunningTask {
 
 export const MESSAGE_TYPE = "background-task";
 
-function shellQuote(value: string): string {
-	return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-const sleep = (ms: number) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
-
-let temporaryCounter = 0;
-
-async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
-	temporaryCounter += 1;
-	const temporary = `${path}.${process.pid}-${temporaryCounter}.tmp`;
-	await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
-	await rename(temporary, path);
-}
-
-async function readPid(path: string): Promise<number | undefined> {
-	const text = await readFile(path, "utf8").catch(() => "");
-	const pid = Number.parseInt(text.trim(), 10);
-	return Number.isInteger(pid) && pid > 0 ? pid : undefined;
-}
-
-function closeStream(stream: WriteStream): Promise<void> {
-	return new Promise((resolveClose) => {
-		stream.once("error", () => resolveClose());
-		stream.end(() => resolveClose());
-	});
-}
-
 export class BackgroundTaskManager {
 	private session?: SessionBinding;
 	private readonly running = new Map<string, RunningTask>();
 	private finished: TaskRecord[] = [];
-	private sequence = 0;
-	private sequenceLoaded?: Promise<void>;
+	private readonly ids = new IdSequence("bg");
 	private shuttingDown = false;
 	private readonly exec: ExecFn;
 	private readonly send: SendFn;
@@ -100,8 +57,7 @@ export class BackgroundTaskManager {
 	startSession(binding: SessionBinding): void {
 		this.session = binding;
 		this.shuttingDown = false;
-		this.sequence = 0;
-		this.sequenceLoaded = undefined;
+		this.ids.reset();
 		this.updateStatus();
 	}
 
@@ -147,7 +103,7 @@ export class BackgroundTaskManager {
 
 		await mkdir(taskDir, { recursive: true });
 		await touch(session.scratchpad).catch(() => {});
-		const id = await this.reserveId(taskDir);
+		const id = await this.ids.reserve(taskDir);
 		const logPath = join(taskDir, `${id}.log`);
 		const pidPath = join(taskDir, `${id}.pid`);
 		const metaPath = join(taskDir, `${id}.json`);
@@ -215,7 +171,7 @@ export class BackgroundTaskManager {
 		this.updateStatus();
 
 		// A quick command may finish first; its completion handler then records the ID.
-		const pgid = await this.waitForPid(pidPath, () => ended);
+		const pgid = await waitForPid(pidPath, () => ended, this.now);
 		record.pgid ??= pgid;
 		await writeJsonAtomic(metaPath, record).catch(() => {});
 		return { ...record };
@@ -239,41 +195,6 @@ export class BackgroundTaskManager {
 			sleep(SHUTDOWN_WAIT_MS),
 		]);
 		this.session?.setStatus?.(undefined);
-	}
-
-	private async reserveId(taskDir: string): Promise<string> {
-		this.sequenceLoaded ??= this.loadSequence(taskDir);
-		await this.sequenceLoaded;
-		for (;;) {
-			this.sequence += 1;
-			const id = `bg-${this.sequence}`;
-			try {
-				// Exclusive creation keeps IDs unique when a resumed session reuses the directory.
-				const handle = await open(join(taskDir, `${id}.json`), "wx");
-				await handle.close();
-				return id;
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			}
-		}
-	}
-
-	private async loadSequence(taskDir: string): Promise<void> {
-		const names = await readdir(taskDir).catch(() => [] as string[]);
-		for (const name of names) {
-			const match = /^bg-(\d+)\./.exec(name);
-			if (match) this.sequence = Math.max(this.sequence, Number(match[1]));
-		}
-	}
-
-	private async waitForPid(path: string, ended: () => boolean): Promise<number | undefined> {
-		const deadline = this.now() + PID_WAIT_MS;
-		for (;;) {
-			const pid = await readPid(path);
-			if (pid !== undefined) return pid;
-			if (ended() || this.now() >= deadline) return undefined;
-			await sleep(PID_POLL_MS);
-		}
 	}
 
 	private deliver(record: TaskRecord, tail: readonly string[]): void {

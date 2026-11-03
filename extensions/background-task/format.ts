@@ -6,7 +6,7 @@ const TAIL_BYTES = 4 * 1024;
 const COMMAND_CHARS = 500;
 
 export type TaskStatus = "running" | "exited" | "stopped" | "failed";
-export type StopReason = "user" | "shutdown";
+export type StopReason = "user" | "shutdown" | "timeout";
 
 export interface TaskRecord {
 	id: string;
@@ -23,6 +23,10 @@ export interface TaskRecord {
 	stopReason?: StopReason;
 	error?: string;
 	lines: number;
+	/** Set when a `bash` call was moved to the background after running this long. */
+	promotedAfterMs?: number;
+	/** The `bash` call's timeout in seconds, which still applies in the background. */
+	timeout?: number;
 }
 
 export function formatDuration(ms: number): string {
@@ -73,6 +77,7 @@ export function outcomeText(task: TaskRecord): string {
 	if (task.status === "running") return "is running";
 	if (task.status === "failed") return `failed to run: ${task.error ?? "unknown error"}`;
 	if (task.status === "stopped") {
+		if (task.stopReason === "timeout") return `was killed by its ${task.timeout}-second timeout`;
 		return task.stopReason === "user" ? "was stopped by the user" : "was stopped";
 	}
 	if (task.signal) return `was terminated by ${task.signal} (exit ${task.exitCode})`;
@@ -114,6 +119,29 @@ export function startedMessage(task: TaskRecord): string {
 	].join("\n");
 }
 
+/** The `bash` result for a command that is still running and continues in the background. */
+export function promotedMessage(task: TaskRecord, tail: readonly string[]): string {
+	const after = formatDuration(task.promotedAfterMs ?? 0);
+	const lines = [
+		`The command was still running after ${after}, so it continues as background task ${task.id}${task.pgid ? ` (process group ${task.pgid})` : ""}.`,
+		`Log: ${task.logPath} (complete output from the start; ${task.lines} line${task.lines === 1 ? "" : "s"} so far)`,
+		"Its exit will be reported automatically with the exit code and the end of the log; do not poll, sleep, or rerun the command waiting for it.",
+	];
+	if (task.timeout !== undefined) lines.push(`It is still killed when its ${task.timeout}-second timeout expires.`);
+	lines.push(
+		task.pgid
+			? `Stop it with \`kill -- -${task.pgid}\` (signals the whole process group).`
+			: "Its process group ID is unknown; the user can stop it with /bg stop.",
+	);
+	const shown = boundedTail(tail);
+	if (shown.length > 0) {
+		lines.push("", `Output so far (last ${shown.length} line${shown.length === 1 ? "" : "s"}):`, codeBlock(shown.join("\n")));
+	} else {
+		lines.push("", "No output so far.");
+	}
+	return lines.join("\n");
+}
+
 /** Tones for compact list states, mapped to theme colors by the UI. */
 export type StateTone = "running" | "success" | "error" | "muted";
 
@@ -121,6 +149,7 @@ export type StateTone = "running" | "success" | "error" | "muted";
 export function shortOutcome(task: TaskRecord): { text: string; tone: StateTone } {
 	if (task.status === "running") return { text: "running", tone: "running" };
 	if (task.status === "failed") return { text: "failed", tone: "error" };
+	if (task.stopReason === "timeout") return { text: "timeout", tone: "error" };
 	if (task.status === "stopped") return { text: "stopped", tone: "muted" };
 	if (task.signal) return { text: task.signal, tone: "muted" };
 	return { text: `exit ${task.exitCode}`, tone: task.exitCode === 0 ? "success" : "error" };

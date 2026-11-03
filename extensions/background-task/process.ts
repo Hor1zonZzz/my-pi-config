@@ -6,7 +6,13 @@ import { join } from "node:path";
 export type ExecFn = (
 	command: string,
 	cwd: string,
-	options: { onData: (data: Buffer) => void; signal?: AbortSignal },
+	options: {
+		onData: (data: Buffer) => void;
+		signal?: AbortSignal;
+		/** Seconds; the backend kills the process and rejects with `timeout:<seconds>`. */
+		timeout?: number;
+		env?: NodeJS.ProcessEnv;
+	},
 ) => Promise<{ exitCode: number | null }>;
 
 export interface CompletionMessage {

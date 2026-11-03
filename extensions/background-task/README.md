@@ -5,6 +5,8 @@ Gives every Pi session its own scratchpad directory and adds two tools that run 
 - `background_task` reports a command once, when it exits.
 - `monitor` delivers each stdout line of a watch script as an event while it runs, modeled on Claude Code's Monitor tool.
 
+In TUI and RPC sessions it also takes over the built-in `bash` tool, so a `bash` command that is still running after 30 seconds becomes a background task instead of blocking the turn.
+
 ## Session scratchpad
 
 - Each session gets `<agent-dir>/scratchpad/<session-id>/`, created on `session_start`. `<agent-dir>` comes from Pi's `getAgentDir()`, so it follows `PI_CODING_AGENT_DIR`.
@@ -32,7 +34,7 @@ When a task ends, a `background-task` custom message with the outcome, duration,
 
 | Outcome | Delivery |
 |---|---|
-| Normal exit (any code), or failure to start | `deliverAs: "steer"`, `triggerTurn: true`: a busy agent sees it after its current step; an idle agent starts a new turn |
+| Normal exit (any code), failure to start, or an expired `bash` timeout | `deliverAs: "steer"`, `triggerTurn: true`: a busy agent sees it after its current step; an idle agent starts a new turn |
 | Terminated by `SIGTERM`, `SIGINT`, or `SIGHUP`, or stopped with `/bg stop` | `triggerTurn: false`: recorded for the next turn without waking the model |
 | Killed by session shutdown | not reported |
 
@@ -40,8 +42,27 @@ When a task ends, a `background-task` custom message with the outcome, duration,
 
 - Pressing Esc to abort a turn does not affect background tasks.
 - `/new`, `/resume`, `/fork`, `/reload`, and quitting kill the session's running tasks (whole process groups) and mark them `stopped`. Pi also kills tracked process groups when it exits. Tasks never outlive the Pi process; use Herdr or tmux for that.
-- In print mode (`pi -p`), Pi exits once the agent settles, which kills any running task.
 - Tool-call permission hooks that only inspect `bash` do not see `background_task` commands.
+
+## `bash` takeover
+
+```ts
+bash({ command: string, timeout?: number })
+```
+
+- The extension registers a `bash` tool built from Pi's own `createBashToolDefinition()`, so the schema, output truncation, live output, `PI_*` environment variables, and rendering stay those of the built-in tool. Only its process backend is replaced.
+- A command that finishes within the threshold returns exactly as before. Esc before the threshold aborts it as before.
+- A command still running at the threshold becomes background task `bg-N` and the call returns at once with the task ID, process group, log path, and up to the last 30 lines (4 KiB) of output so far. The log at `<scratchpad>/background/<id>.log` holds the complete output from the start; the TUI shows it as `Full output: <log>`.
+- From then on it is an ordinary background task: Esc no longer stops it, it appears in `/bg` and the `bg` footer entry, and its exit is reported like any other task's. A `timeout` longer than the threshold still applies to the whole run; when it expires, the task is killed and the report wakes the model.
+- A `timeout` no longer than the threshold always ends the command in the foreground. While 16 background tasks are already running, a slow command stays in the foreground.
+- `PI_BASH_BACKGROUND_AFTER_MS` sets the threshold in milliseconds (default `30000`); `0` disables the takeover and leaves the built-in `bash` in place.
+- The takeover is registered from `session_start`. If `bash` was not active (for example `--tools read`), it stays inactive.
+- Before the threshold, output is also written to a hidden `.foreground-*` file under `<scratchpad>/background/`, which is renamed to the task log on promotion and deleted otherwise.
+- Codemode scripts that call `bash` receive the promoted result as text, without `structuredContent`.
+
+## Print and JSON modes
+
+`pi -p` and `--mode json` dispose the session as soon as the agent settles, which would kill every background task and monitor without a report. Sessions without a UI (`ctx.hasUI` false) therefore keep the built-in synchronous `bash` and deactivate `background_task` and `monitor`.
 
 ## `monitor`
 

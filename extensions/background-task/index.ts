@@ -1,6 +1,8 @@
 import { resolve } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import {
+	type BashToolDetails,
+	createBashToolDefinition,
 	createLocalBashOperations,
 	defineTool,
 	type ExtensionAPI,
@@ -8,7 +10,15 @@ import {
 	getMarkdownTheme,
 } from "@earendil-works/pi-coding-agent";
 import { Markdown } from "@earendil-works/pi-tui";
-import { firstLine, formatDuration, outcomeText, shortOutcome, startedMessage } from "./format.ts";
+import {
+	firstLine,
+	formatDuration,
+	outcomeText,
+	promotedMessage,
+	shortOutcome,
+	startedMessage,
+	type TaskRecord,
+} from "./format.ts";
 import {
 	MAX_TIMEOUT_MS,
 	MIN_TIMEOUT_MS,
@@ -25,11 +35,15 @@ import {
 	sessionScratchpad,
 } from "./scratchpad.ts";
 import { type PanelRow, StatusPanels } from "./status-ui.ts";
-import { BackgroundTaskManager, MESSAGE_TYPE } from "./task-manager.ts";
+import { BackgroundTaskManager, MESSAGE_TYPE, promoteAfterMsFrom } from "./task-manager.ts";
 
 const STATUS_KEY = "background-task";
 const MONITOR_STATUS_KEY = "monitor";
 const PROMPT_SECTION = "scratchpad";
+/** Tools that need a session that outlives the turn; print and JSON modes exit once the agent settles. */
+const BACKGROUND_TOOLS = ["background_task", "monitor"];
+/** Thrown through the built-in bash execution once its command has moved to the background. */
+const PROMOTED = "moved to background";
 
 /** Running rows first, then finished ones, newest first in each group. */
 function panelRows<T extends { id: string; status: string; startedAt: number; endedAt?: number }>(
@@ -60,6 +74,53 @@ export default function (pi: ExtensionAPI) {
 		(message, options) => pi.sendMessage(message, options),
 	);
 	let scratchpad: string | undefined;
+	const promoteAfterMs = promoteAfterMsFrom(process.env.PI_BASH_BACKGROUND_AFTER_MS);
+	const promoteAfter = formatDuration(promoteAfterMs);
+	let bashRegistered = false;
+
+	// Takes over the built-in bash tool: the built-in definition keeps its schema, truncation,
+	// streaming, PI_* environment, and rendering; only its process backend is replaced.
+	const registerBash = () => {
+		const builtin = createBashToolDefinition(process.cwd());
+		pi.registerTool({
+			...builtin,
+			description: `${builtin.description} A command still running after ${promoteAfter} continues as a background task, and its exit is reported later.`,
+			promptGuidelines: [
+				...(builtin.promptGuidelines ?? []),
+				`A bash command still running after ${promoteAfter} is moved to the background: the call returns with the task ID, log path, and output so far, and the exit is reported automatically. Do not rerun, poll, or sleep waiting for it; continue with other work or end your turn.`,
+			],
+			async execute(toolCallId, params, signal, onUpdate, ctx) {
+				// A timeout no longer than the threshold always ends the command in the foreground.
+				if (params.timeout !== undefined && params.timeout * 1000 <= promoteAfterMs) {
+					return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
+				}
+				let promoted: { task: TaskRecord; tail: string[] } | undefined;
+				const definition = createBashToolDefinition(ctx.cwd, {
+					operations: {
+						exec: async (command, cwd, options) => {
+							const result = await manager.runForeground(command, cwd, { ...options, promoteAfterMs });
+							if (!result.promoted) return { exitCode: result.exitCode };
+							promoted = { task: result.task, tail: result.tail };
+							throw new Error(PROMOTED);
+						},
+					},
+				});
+				try {
+					return await definition.execute(toolCallId, params, signal, onUpdate, ctx);
+				} catch (error) {
+					if (!promoted) throw error;
+					const { task, tail } = promoted;
+					// The built-in renderer shows fullOutputPath as "Full output: <log>".
+					const details: BashToolDetails & { backgroundTaskId: string; pgid?: number } = {
+						fullOutputPath: task.logPath,
+						backgroundTaskId: task.id,
+						pgid: task.pgid,
+					};
+					return { content: [{ type: "text", text: promotedMessage(task, tail) }], details };
+				}
+			},
+		});
+	};
 	const panels = new StatusPanels([
 		{
 			kind: "bg",
@@ -96,7 +157,9 @@ export default function (pi: ExtensionAPI) {
 				"Run a shell command in the background and return immediately. Output goes to a log file in the session scratchpad; when the command exits, its exit code and the end of its log are reported automatically.",
 			promptSnippet: "Run long shell commands in the background; their exit is reported automatically",
 			promptGuidelines: [
-				"Use background_task instead of bash for commands likely to take more than about 30 seconds (builds, full test suites, installs, downloads) and for servers or watchers that keep running.",
+				promoteAfterMs > 0
+					? `Use background_task for servers, watchers, and other commands that keep running, and for commands you know will take minutes, so the call returns at once. Other long commands can use bash, which moves a command still running after ${promoteAfter} to the background by itself.`
+					: "Use background_task instead of bash for commands likely to take more than about 30 seconds (builds, full test suites, installs, downloads) and for servers or watchers that keep running.",
 				"After starting a background task, continue with other work or end your turn. Do not poll, sleep, or tail the log in a loop waiting for it; its exit is reported automatically.",
 				"Read a background task's log with read; the exit report gives its line count, so use an offset near the end. Stop a task with `kill -- -<pgid>`, and stop servers you started once they are no longer needed.",
 			],
@@ -241,6 +304,17 @@ export default function (pi: ExtensionAPI) {
 		});
 		monitors.startSession({ sessionId, scratchpad: dir, setStatus: () => panels.refresh() });
 		if (ctx.hasUI) panels.attach(ctx.ui, ctx.mode === "tui");
+		if (!ctx.hasUI) {
+			// Print and JSON modes dispose the session as soon as the agent settles, which would
+			// kill background work silently, so they keep plain synchronous bash only.
+			pi.setActiveTools(pi.getActiveTools().filter((name) => !BACKGROUND_TOOLS.includes(name)));
+		} else if (promoteAfterMs > 0 && !bashRegistered) {
+			bashRegistered = true;
+			const bashActive = pi.getActiveTools().includes("bash");
+			registerBash();
+			// Registering activates a tool; keep bash off when the user had disabled it.
+			if (!bashActive) pi.setActiveTools(pi.getActiveTools().filter((name) => name !== "bash"));
+		}
 		void pruneScratchpads(scratchpadRoot(agentDir), dir).catch(() => {});
 	});
 

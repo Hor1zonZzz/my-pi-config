@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { focusTransition, listWindow, reconcileFocus } from "./status-focus.ts";
 
-test("down in an empty editor focuses the first visible footer entry", () => {
+test("down with the editor cursor at the bottom focuses the first visible footer entry", () => {
 	assert.deepEqual(focusTransition(undefined, "down", ["bg", "mon"], true), { focused: "bg", consume: true });
 	assert.deepEqual(focusTransition(undefined, "down", ["mon"], true), { focused: "mon", consume: true });
 	assert.deepEqual(focusTransition(undefined, "down", ["bg"], false), { focused: undefined, consume: false });

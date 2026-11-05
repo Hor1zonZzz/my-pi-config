@@ -5,6 +5,8 @@ import { type FocusKey, focusTransition, listWindow, PANEL_ORDER, type PanelKind
 
 const LIST_ROWS = 10;
 const TICK_MS = 1000;
+/** Zero-line widget below the editor whose only job is to hand over the TUI. */
+const FOCUS_PROBE_WIDGET = "background-task-focus-probe";
 
 export interface PanelRow {
 	id: string;
@@ -38,6 +40,34 @@ function focusKey(data: string): FocusKey {
 	return "other";
 }
 
+/** The parts of pi-tui's Editor used to decide whether ↓ can leave it. */
+interface FocusedEditor {
+	getText(): string;
+	getLines?(): string[];
+	getCursor?(): { line: number; col: number };
+	isShowingAutocomplete?(): boolean;
+	/** Private in pi-tui; true when the cursor is on the last wrapped row of the text. */
+	isOnLastVisualLine?(): boolean;
+	/** Private in pi-tui; -1 unless ↑/↓ are browsing input history. */
+	historyIndex?: number;
+}
+
+/**
+ * Whether ↓ in the editor would have nothing left to do, so it can move to the footer:
+ * no autocomplete list to move through, no history to browse forward, and the cursor
+ * already on the last line. Editor internals are optional; the fallback is the last
+ * logical line, which only differs while that line wraps.
+ */
+function editorAtBottom(editor: FocusedEditor): boolean {
+	if (editor.getText() === "") return true;
+	if (editor.isShowingAutocomplete?.()) return false;
+	if (typeof editor.historyIndex === "number" && editor.historyIndex > -1) return false;
+	if (typeof editor.isOnLastVisualLine === "function") return editor.isOnLastVisualLine();
+	const lines = editor.getLines?.();
+	const cursor = editor.getCursor?.();
+	return !!lines && !!cursor && cursor.line >= lines.length - 1;
+}
+
 function toneColor(tone: StateTone): "accent" | "success" | "error" | "muted" {
 	return tone === "running" ? "accent" : tone;
 }
@@ -47,10 +77,14 @@ function toneColor(tone: StateTone): "accent" | "success" | "error" | "muted" {
  *
  * The editor keeps real keyboard focus. A raw terminal input listener runs before it and,
  * while a footer entry is focused, takes the navigation keys. Enter opens the entry's list.
+ *
+ * The listener runs before every focused component, not just the editor, so it only acts
+ * while the main editor has focus; otherwise built-in selectors such as /login would lose ↓.
  */
 export class StatusPanels {
 	private readonly sources: Map<PanelKind, PanelSource>;
 	private ui?: ExtensionUIContext;
+	private tui?: TUI;
 	private unsubscribe?: () => void;
 	private focused?: PanelKind;
 	private list?: PanelList;
@@ -62,7 +96,19 @@ export class StatusPanels {
 	attach(ui: ExtensionUIContext, interactive: boolean): void {
 		this.detach();
 		this.ui = ui;
-		if (interactive) this.unsubscribe = ui.onTerminalInput((data) => this.onInput(data));
+		if (interactive) {
+			// Pi exposes no "editor has focus" query; a widget factory is the public way to get
+			// the TUI, whose focused component tells the editor apart from selectors and dialogs.
+			ui.setWidget(
+				FOCUS_PROBE_WIDGET,
+				(tui) => {
+					this.tui = tui;
+					return { render: () => [], invalidate: () => {} };
+				},
+				{ placement: "belowEditor" },
+			);
+			this.unsubscribe = ui.onTerminalInput((data) => this.onInput(data));
+		}
 		this.refresh();
 	}
 
@@ -71,6 +117,8 @@ export class StatusPanels {
 		this.unsubscribe = undefined;
 		this.focused = undefined;
 		const ui = this.ui;
+		if (this.tui) ui?.setWidget(FOCUS_PROBE_WIDGET, undefined);
+		this.tui = undefined;
 		this.ui = undefined;
 		for (const source of this.sources.values()) ui?.setStatus(source.statusKey, undefined);
 	}
@@ -103,12 +151,30 @@ export class StatusPanels {
 		return PANEL_ORDER.filter((kind) => (this.sources.get(kind)?.running() ?? 0) > 0);
 	}
 
+	/**
+	 * The main input editor, when it has keyboard focus. Only pi-tui's Editor (which Pi's editor
+	 * and custom editors extend) has getText; duck typing avoids depending on module identity.
+	 */
+	private focusedEditor(): FocusedEditor | undefined {
+		const focused = this.tui?.getFocusedComponent() as Partial<FocusedEditor> | null | undefined;
+		return typeof focused?.getText === "function" ? (focused as FocusedEditor) : undefined;
+	}
+
 	private onInput(data: string): { consume?: boolean } | undefined {
 		// The open list owns input; key releases carry no action.
 		if (this.list || !this.ui || isKeyRelease(data)) return undefined;
+		// A selector or dialog has replaced the editor (for example /login): leave its keys alone.
+		const editor = this.focusedEditor();
+		if (!editor) {
+			if (this.focused) {
+				this.focused = undefined;
+				this.refresh();
+			}
+			return undefined;
+		}
 		const key = focusKey(data);
 		if (!this.focused && key !== "down") return undefined;
-		const result = focusTransition(this.focused, key, this.visible(), this.ui.getEditorText() === "");
+		const result = focusTransition(this.focused, key, this.visible(), editorAtBottom(editor));
 		const changed = result.focused !== this.focused;
 		this.focused = result.focused;
 		if (result.open) void this.open(result.open);

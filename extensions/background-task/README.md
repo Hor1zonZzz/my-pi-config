@@ -104,7 +104,7 @@ In the interactive TUI the entries can take focus:
 
 | Key | Effect |
 |---|---|
-| `↓` in an empty editor | Focus the first visible entry (highlighted with the theme's selection background) |
+| `↓` with the cursor on the editor's last line | Focus the first visible entry (highlighted with the theme's selection background); while the autocomplete list is open or `↑`/`↓` are browsing input history, `↓` stays in the editor |
 | `←` / `→` | Move between `bg` and `mon` |
 | `Enter` | Open the focused entry's list |
 | `↑` or `Esc` | Return to the editor |
@@ -112,7 +112,7 @@ In the interactive TUI the entries can take focus:
 
 The list shows running items first, then finished ones, newest first, with ID, state, duration, and command or monitor description. `↑`/`↓` select, `x` stops the selected running item (the same as `/bg stop`, without confirmation), and `Esc` or `Enter` closes the list and keeps the entry focused.
 
-The editor keeps real keyboard focus: a raw terminal input listener (`ctx.ui.onTerminalInput`) sees keys first and consumes only the navigation keys while an entry is focused. The list is a `ctx.ui.custom()` screen.
+The editor keeps real keyboard focus: a raw terminal input listener (`ctx.ui.onTerminalInput`) sees keys first and consumes only the navigation keys while an entry is focused. That listener also runs while a built-in selector or dialog (for example `/login` or `/model`) has replaced the editor, so it acts only while the main editor has focus and otherwise leaves every key to that component. Pi has no public "editor focused" query: a zero-line `belowEditor` widget hands its factory's `TUI` to the extension, and the focused component counts as the editor when it has pi-tui `Editor`'s `getText()`. Whether the cursor is on the last line uses the editor's public `getLines()`, `getCursor()`, and `isShowingAutocomplete()`, plus its private `isOnLastVisualLine()` and `historyIndex` when present (wrapped last line and history browsing); without them it falls back to the last logical line. The list is a `ctx.ui.custom()` screen.
 
 ## Tests
 

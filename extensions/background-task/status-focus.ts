@@ -16,7 +16,8 @@ export interface FocusResult {
 /**
  * Footer focus as a pure transition.
  *
- * Down in an empty editor moves focus to the first visible entry; left/right move between
+ * Down with the editor cursor at the bottom (last line, no autocomplete list, not browsing
+ * history) moves focus to the first visible entry; left/right move between
  * entries; enter opens the focused entry's list; up or escape return to the editor. Any other
  * key returns focus to the editor and reaches it, so typing is never lost.
  */
@@ -24,11 +25,11 @@ export function focusTransition(
 	focused: PanelKind | undefined,
 	key: FocusKey,
 	visible: readonly PanelKind[],
-	editorEmpty: boolean,
+	editorAtBottom: boolean,
 ): FocusResult {
 	const current = focused && visible.includes(focused) ? focused : undefined;
 	if (!current) {
-		if (key === "down" && editorEmpty && visible.length > 0) return { focused: visible[0], consume: true };
+		if (key === "down" && editorAtBottom && visible.length > 0) return { focused: visible[0], consume: true };
 		return { focused: undefined, consume: false };
 	}
 	const index = visible.indexOf(current);

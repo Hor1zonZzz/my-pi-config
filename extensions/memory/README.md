@@ -1,6 +1,6 @@
 # Memory
 
-Per-project memory for Pi, after Anthropic's [The components of agent memory](https://www.anthropic.com/research/components-of-agent-memory): the agent writes notes as it works, an injected index tells each new session what earlier sessions learned, and a "dream" checks the notes against past transcripts and tidies them.
+Per-project memory for Pi, after Anthropic's [The components of agent memory](https://www.anthropic.com/research/components-of-agent-memory): the agent writes notes as it works, an injected index tells each new session what earlier sessions learned, and a "dream" folds the last three days' sessions into the notes and tidies them.
 
 Memory is per project only; there is no global memory. It is on by default in every project and is switched with `/memory`.
 
@@ -57,26 +57,27 @@ Turns are rendered as `USER:` / `AGENT:` text without thinking; tool calls becom
 
 ## Dream
 
-Dreams follow the Claude cookbook's [dreaming with a dynamic workflow](https://platform.claude.com/cookbook/managed-agents-cma-dreaming-with-a-dynamic-workflow): one analyzer agent per transcript, then one organizer agent, each in its own Pi session.
+Dreams follow the Claude cookbook's [dreaming with a dynamic workflow](https://platform.claude.com/cookbook/managed-agents-cma-dreaming-with-a-dynamic-workflow): one analyzer agent per past session, then one organizer agent, each in its own Pi session.
 
-1. Pick the sessions changed since the last dream (oldest first, at most 20, leaving out the running session), snapshot `notes/` to `.snapshots/<time>/` (the newest five are kept), and render each transcript to `.dream-work/<time>/transcripts/NN-<session>.txt`.
-2. **Analyze**: one agent per transcript, in groups of about 20 that run in parallel, finishing a group before the next. Each reads its whole transcript, fixes notes the transcript contradicts (saying what it replaced), calls `confirm_passive` for passive notes the transcript supports, and adds durable facts no note holds yet.
-3. **Organize**: one agent over the whole store: frontmatter, merges that keep every fact line, and `CONFLICT: …` lines instead of guesses. It does not read transcripts.
-4. Passive notes: a confirmed one gets `verified: <date>`; one that two dreams in a row could not confirm is deleted (it stays in the snapshots and `log.md`). This rule is code, not a model decision.
-5. Rebuild the index, measure what changed on disk (created, updated, deleted), append to `log.md`, store `lastDreamAt` (the newest session file read; a failed transcript is read again next time), and remove the work directory.
+1. Pick the sessions changed since the last dream but within the last three days (`DREAM_WINDOW_MS`; oldest first, at most 20, leaving out the running session). Like the cookbook's window, older sessions are never read: they describe a project that has since moved on, and with only the session to go on an analyzer records that old state as current. Then snapshot `notes/` to `.snapshots/<time>/` (the newest five are kept), and copy each raw session file unchanged to `.dream-work/<time>/sessions/NN-<session>.jsonl`. The copy is stable while that session keeps running; nothing is rendered, clipped, or dropped (thinking and full tool results included).
+2. **Analyze**: one agent per session, in groups of about 20 that run in parallel, finishing a group before the next. Each reads its raw session JSONL (the prompt describes the entry format and suggests `jq`), fixes notes the session contradicts (saying what it replaced), calls `confirm_passive` for passive notes the session supports, and adds durable facts no note holds yet.
+3. **Organize**: one agent over the whole store: frontmatter, merges that keep every fact line, and `CONFLICT: …` lines instead of guesses. It does not read session files.
+4. Passive notes: a confirmed one gets `verified: <date>`. A dream counts a miss only when an analyzer finished one of the note's `sessions`; a dream that did not read the session the note came from leaves the count alone (a note without `sessions` counts every dream). Two misses delete the note (it stays in the snapshots and `log.md`). This rule is code, not a model decision.
+5. Rebuild the index, measure what changed on disk (created, updated, deleted), append to `log.md`, store `lastDreamAt` (the newest session file read; a session whose analysis failed is read again next time), and remove the work directory.
 
 ### Dream agents
 
 Each agent is a Pi SDK session (`createAgentSession`) on DeepSeek Flash with `high` thinking:
 
 - **No discovered resources**: `DefaultResourceLoader` with no extensions, skills, prompt templates, themes, or context files, and the agent prompt as its system prompt. The full memory extension must not load there: it would inject itself, capture the agent's own turns, and start dreams inside the dream.
-- **Tools**: `memory` is the only way to write (its `create` never overwrites, so a parallel agent must view and `str_replace`); `read`, `grep`, `find`, `ls` are read-only; analyzers also get `confirm_passive`. No `write`, `edit`, or `bash`.
-- **Path guard**: a `tool_call` handler blocks every other tool and keeps read-only tools inside the work directory and the notes directory (symlinks resolved). `/memories/...` paths given to read tools are mapped to the notes directory. Like the cookbook, agents cannot read project code.
+- **Tools**: Pi's base tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) without a path guard in code, plus `memory` (its `create` never overwrites, so a parallel agent must view and `str_replace`); analyzers also get `confirm_passive`. `/memories/...` paths given to `read`, `grep`, `find`, `ls` are mapped to the notes directory.
+- **Notes and sessions only**: agents run in the dream's work directory, and the prompt tells them to read only the notes and the session copies they are given (not the project or git) and to write nothing outside the notes. This is an instruction, not a sandbox; in tests DeepSeek Flash kept to it.
+- **Prompt rules**: the prompt states today's date and the session id, keeps `source`, `sessions`, `verified`, and `unverifiedDreams` for the memory system (never added or changed by an agent), and asks for no temporary state or line numbers, dating facts that may change.
 - **Concurrency**: memory commands on one notes directory run one at a time in the process, and the prompt asks agents to re-read a note before changing it and read it back after.
 - **Own transcripts**: agent sessions are saved under `<memory>/dreams/`, never in the project's session directory, so later dreams do not review dreams. Files older than 30 days are deleted on session start.
 - **Records**: each agent run appends one `calls.jsonl` line with its summed usage and cost, tool-call count, final reply, confirmed names, and session file.
 
-Transcripts and notes are treated as data, never instructions. Dreams run from `/memory` → Dream → Run now, or automatically on session start at most once a day when at least three new sessions exist and auto-dream is on. A lock file keeps one dream per project across Pi processes. Dreams are aborted on `session_shutdown` (the running agents are aborted too) and leave `lastDreamAt` unchanged.
+Session files and notes are treated as data, never instructions. Dreams run from `/memory` → Dream → Run now, or automatically on session start at most once a day when at least three new sessions exist within the window and auto-dream is on. A lock file keeps one dream per project across Pi processes. Dreams are aborted on `session_shutdown` (the running agents are aborted too) and leave `lastDreamAt` unchanged.
 
 ## `/memory`
 
@@ -93,7 +94,7 @@ Outside the TUI, `/memory` prints a one-line status.
 
 ## Call history
 
-Every Jev and DeepSeek call appends one line to `calls.jsonl` in the memory directory: time, session, role (`jev-judge`, `deepseek-capture`, `deepseek-analyze`, `deepseek-organize`), provider, model, reasoning level, latency, usage and cost (from the reply's `usage`, summed over an agent run), stop reason, error, the full input and output (for dream agents: the transcript, final reply, tool-call count, confirmed names, and the agent's session file), and an outcome (`passed`, `below-threshold`, `create`, `update`, `skip`, `parse-error`, `applied`, `error`). On each session start, lines older than 30 days are dropped and dream agent session files older than 30 days are deleted; `calls.jsonl` also rotates to `calls.1.jsonl` past 20 MB.
+Every Jev and DeepSeek call appends one line to `calls.jsonl` in the memory directory: time, session, role (`jev-judge`, `deepseek-capture`, `deepseek-analyze`, `deepseek-organize`), provider, model, reasoning level, latency, usage and cost (from the reply's `usage`, summed over an agent run), stop reason, error, the full input and output (for dream agents: the session copy, final reply, tool-call count, confirmed names, and the agent's session file), and an outcome (`passed`, `below-threshold`, `create`, `update`, `skip`, `parse-error`, `applied`, `error`). On each session start, lines older than 30 days are dropped and dream agent session files older than 30 days are deleted; `calls.jsonl` also rotates to `calls.1.jsonl` past 20 MB.
 
 ## Runtime files
 
@@ -104,7 +105,7 @@ Every Jev and DeepSeek call appends one line to `calls.jsonl` in the memory dire
   log.md             passive writes, deletions, dreams
   dreams/            dream agents' own Pi session files (30 days)
   .snapshots/<time>/ copies of notes/ taken before dreams
-  .dream-work/       rendered transcripts while a dream runs
+  .dream-work/       raw session copies while a dream runs
   .dream.lock        held while a dream runs
   notes/             /memories: MEMORY.md and the notes
 ```

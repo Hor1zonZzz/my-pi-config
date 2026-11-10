@@ -4,10 +4,11 @@
  *
  * The session loads no discovered extensions, skills, prompt templates, or context files: the full
  * memory extension would inject itself, capture its own turns, and start dreams inside the dream.
- * One inline extension gives it the `memory` tool (the only way to write, create never overwrites),
- * `confirm_passive` for analyzers, and a guard that keeps read/grep/find/ls inside the working
- * directory (rendered transcripts) and the notes directory. Its session files go to <memory>/dreams/,
- * never to the project's session directory, so later dreams do not review dreams.
+ * It runs in the dream's work directory with Pi's base tools; the prompt keeps it to the notes and the
+ * session copies, not the project. One inline extension adds the `memory` tool (the way to change notes;
+ * create never overwrites), `confirm_passive` for analyzers, and maps /memories paths given to
+ * read/grep/find/ls onto the notes directory. Its session files go to <memory>/dreams/, never
+ * to the project's session directory, so later dreams do not review dreams.
  */
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
@@ -23,9 +24,11 @@ import type { CallUsage } from "./call-log.ts";
 import type { AgentRun, AgentTask, DreamAgents } from "./dream.ts";
 import { createMemoryTool, MEMORY_TOOL } from "./memory-tool.ts";
 import { ANALYZER_AGENT_PROMPT, agentPrompt, analyzeTask, ORGANIZE_TASK, ORGANIZER_AGENT_PROMPT } from "./prompts.ts";
-import { insideRoots, MEMORY_ROOT, realPath } from "./tool.ts";
+import { MEMORY_ROOT } from "./tool.ts";
 
-export const READ_TOOLS = ["read", "grep", "find", "ls"] as const;
+/** Pi's base tools, all of them. */
+export const BASE_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
+const PATH_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const CONFIRM_TOOL = "confirm_passive";
 
 function addUsage(total: CallUsage | null, usage: unknown): CallUsage | null {
@@ -56,7 +59,6 @@ export function createDreamAgents(options: DreamAgentOptions): DreamAgents {
 		async run(task: AgentTask, signal: AbortSignal): Promise<AgentRun> {
 			if (!model) throw new Error("DeepSeek Flash is unavailable");
 			const notes = options.notes;
-			const roots = [realPath(task.workDir), realPath(notes)];
 			const confirmed = new Set<string>();
 			const analyzer = task.role === "analyze";
 
@@ -68,7 +70,7 @@ export function createDreamAgents(options: DreamAgentOptions): DreamAgents {
 							name: CONFIRM_TOOL,
 							label: "Confirm passive note",
 							description:
-								"Mark notes with `source: passive` (and no `verified`) as confirmed because this transcript clearly supports them. Notes no dream confirms are removed after two dreams.",
+								"Mark notes with `source: passive` (and no `verified`) as confirmed because this transcript clearly supports them. A passive note is removed once two dreams that read its source session did not confirm it.",
 							parameters: Type.Object({ names: Type.Array(Type.String(), { description: "Note names (frontmatter name)" }) }),
 							async execute(_id, params) {
 								const accepted = params.names.filter((name) => task.passiveCandidates.has(name));
@@ -86,18 +88,11 @@ export function createDreamAgents(options: DreamAgentOptions): DreamAgents {
 					);
 				}
 				pi.on("tool_call", (event) => {
-					const allowed = [...READ_TOOLS, MEMORY_TOOL, ...(analyzer ? [CONFIRM_TOOL] : [])] as string[];
-					if (!allowed.includes(event.toolName)) return { block: true, reason: `${event.toolName} is not available to dream agents` };
-					if ((READ_TOOLS as readonly string[]).includes(event.toolName)) {
-						const input = event.input as { path?: string };
-						// Agents naturally reuse the memory tool's /memories paths with read/grep; map them to the notes directory.
-						if (typeof input.path === "string" && (input.path === MEMORY_ROOT || input.path.startsWith(`${MEMORY_ROOT}/`))) {
-							input.path = notes + input.path.slice(MEMORY_ROOT.length);
-						}
-						const path = input.path;
-						if (!insideRoots(path, task.workDir, roots)) {
-							return { block: true, reason: `Dream agents may only read ./transcripts and ${notes}` };
-						}
+					if (!PATH_TOOLS.has(event.toolName)) return undefined;
+					// Agents naturally reuse the memory tool's /memories paths with read/grep; map them to the notes directory.
+					const input = event.input as { path?: string };
+					if (typeof input.path === "string" && (input.path === MEMORY_ROOT || input.path.startsWith(`${MEMORY_ROOT}/`))) {
+						input.path = notes + input.path.slice(MEMORY_ROOT.length);
 					}
 					return undefined;
 				});
@@ -111,7 +106,7 @@ export function createDreamAgents(options: DreamAgentOptions): DreamAgents {
 				noPromptTemplates: true,
 				noThemes: true,
 				noContextFiles: true,
-				systemPrompt: agentPrompt(analyzer ? ANALYZER_AGENT_PROMPT : ORGANIZER_AGENT_PROMPT, notes),
+				systemPrompt: agentPrompt(analyzer ? ANALYZER_AGENT_PROMPT : ORGANIZER_AGENT_PROMPT, notes, new Date()),
 				extensionFactories: [{ name: `memory-dream-${task.role}`, factory: inline }],
 			});
 			await resourceLoader.reload();
@@ -121,7 +116,7 @@ export function createDreamAgents(options: DreamAgentOptions): DreamAgents {
 				model,
 				thinkingLevel: "high",
 				resourceLoader,
-				tools: [...READ_TOOLS, MEMORY_TOOL, ...(analyzer ? [CONFIRM_TOOL] : [])],
+				tools: [...BASE_TOOLS, MEMORY_TOOL, ...(analyzer ? [CONFIRM_TOOL] : [])],
 				sessionManager: SessionManager.create(task.workDir, options.dreamsDir),
 				settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 2 } }),
 			});
@@ -136,7 +131,7 @@ export function createDreamAgents(options: DreamAgentOptions): DreamAgents {
 			signal.addEventListener("abort", onAbort, { once: true });
 			try {
 				if (signal.aborted) throw new Error("aborted");
-				await session.prompt(analyzer ? analyzeTask(`./${task.transcript}`) : ORGANIZE_TASK);
+				await session.prompt(analyzer ? analyzeTask(task.transcript ?? "", task.session ?? "") : ORGANIZE_TASK);
 				const last = [...session.messages].reverse().find((message) => message.role === "assistant") as
 					| { stopReason?: string; errorMessage?: string }
 					| undefined;

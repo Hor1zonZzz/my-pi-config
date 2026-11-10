@@ -1,8 +1,8 @@
 /**
- * Turns Pi session entries into compact text for the capture window and for dreams.
+ * Turns Pi session entries into compact text for the capture window, and lists session files for dreams.
  * Free of Pi imports so `node --test` can run it; the shapes follow docs/session-format.md.
  */
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 const TOOL_ARGS_CHARS = 200;
@@ -157,24 +157,4 @@ export async function sessionsSince(dir: string, since: number, excludeId?: stri
 		} catch {}
 	}
 	return out.sort((a, b) => a.mtimeMs - b.mtimeMs);
-}
-
-export async function readSessionEntries(path: string): Promise<LooseEntry[]> {
-	const out: LooseEntry[] = [];
-	for (const line of (await readFile(path, "utf8")).split("\n")) {
-		if (!line.trim()) continue;
-		try {
-			out.push(JSON.parse(line) as LooseEntry);
-		} catch {
-			// A partly written last line is skipped.
-		}
-	}
-	return out;
-}
-
-/** The whole session as text for a dream, clipped from the middle when it is too long. */
-export function renderTranscript(entries: readonly LooseEntry[], sessionId: string, maxChars: number): string {
-	const header = entries.find((entry) => entry.type === "session");
-	const body = splitTurns(messagesFromEntries(entries)).map(renderTurn).join("\n\n");
-	return clipMiddle(`SESSION ${sessionId}${header?.timestamp ? ` started ${header.timestamp}` : ""}\n\n${body}`, maxChars);
 }

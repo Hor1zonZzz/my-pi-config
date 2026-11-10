@@ -3,9 +3,8 @@
  * view, create, str_replace, insert, delete, rename under a virtual /memories root.
  * Free of Pi imports so `node --test` can run it.
  */
-import { realpathSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { INDEX_FILE, rebuildIndex } from "./store.ts";
 
 export const MEMORY_ROOT = "/memories";
@@ -53,28 +52,6 @@ export function resolveMemoryPath(root: string, path: string | undefined): strin
 	const real = resolve(base, `.${decoded.slice(MEMORY_ROOT.length)}`);
 	if (real !== base && !real.startsWith(base + sep)) throw new MemoryPathError(`Error: The path ${path} is not allowed`);
 	return real;
-}
-
-/** Resolves symlinks in the longest existing prefix of `path`, so a missing file under a symlinked directory still resolves. */
-export function realPath(path: string): string {
-	let current = resolve(path);
-	const rest: string[] = [];
-	for (;;) {
-		try {
-			return join(realpathSync(current), ...rest.reverse());
-		} catch {
-			const parent = dirname(current);
-			if (parent === current) return resolve(path);
-			rest.push(current.slice(parent.length).replace(/^[/\\]+/, ""));
-			current = parent;
-		}
-	}
-}
-
-/** Whether `path` (relative to `cwd`; empty = `cwd`) resolves inside one of `roots`, following existing symlinks. */
-export function insideRoots(path: string | undefined, cwd: string, roots: readonly string[]): boolean {
-	const target = realPath(path === undefined || path === "" ? cwd : isAbsolute(path) ? path : resolve(cwd, path));
-	return roots.some((root) => target === root || target.startsWith(root + sep));
 }
 
 function virtualPath(root: string, real: string): string {

@@ -1,32 +1,41 @@
 /**
  * Dream, after the Claude cookbook's "dreaming with a dynamic workflow": one analyzer agent per new
- * session transcript (in groups of about 20, run in parallel), then one organizer agent over the whole
- * memory. Each agent is its own Pi session on DeepSeek Flash (see dream-agent.ts) and edits notes only
- * through the `memory` tool. This module only orchestrates, so it stays free of Pi imports.
+ * session from the last three days (in groups of about 20, run in parallel), then one organizer agent
+ * over the whole memory. Each agent is its own Pi session on DeepSeek Flash (see dream-agent.ts) that
+ * reads only the notes and a copy of the raw session JSONL, not the project. This module only
+ * orchestrates, so it stays free of Pi imports.
  */
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { CallUsage } from "./call-log.ts";
 import { appendCall } from "./call-log.ts";
 import type { ModelRef } from "./port.ts";
 import { appendLog, deleteNote, listNotes, type NoteInfo, rebuildIndex, snapshot, snapshotName, writeNote } from "./store.ts";
-import { readSessionEntries, renderTranscript, type SessionFile, sessionsSince } from "./transcript.ts";
+import { type SessionFile, sessionsSince } from "./transcript.ts";
 
 export const DREAM_MAX_SESSIONS = 20;
 export const DREAM_GROUP_SIZE = 20;
-export const DREAM_TRANSCRIPT_CHARS = 200_000;
-/** A passive note is removed after this many dreams in a row could not confirm it. */
+/** A passive note is removed after this many dreams that read its source session could not confirm it. */
 export const PASSIVE_UNVERIFIED_LIMIT = 2;
 export const DREAM_MIN_NEW_SESSIONS = 3;
 export const DREAM_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/** Dreams read only sessions changed within this window: older ones describe a project that has moved on. */
+export const DREAM_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** Where the next dream starts reading: after the last dream, but never earlier than the window. */
+export function dreamSince(lastDreamAt: number | undefined, now = Date.now()): number {
+	return Math.max(lastDreamAt ?? 0, now - DREAM_WINDOW_MS);
+}
 export const WORK_DIR = ".dream-work";
 
 export interface AgentTask {
 	role: "analyze" | "organize";
-	/** The working directory: holds transcripts/. */
+	/** The dream's work directory and the agent's cwd: holds sessions/. */
 	workDir: string;
-	/** Analyze only: the transcript path relative to workDir. */
+	/** Analyze only: absolute path of the copied raw session JSONL. */
 	transcript?: string;
+	/** Analyze only: the session's id. */
+	session?: string;
 	/** Analyze only: passive notes the agent may confirm. */
 	passiveCandidates: ReadonlySet<string>;
 }
@@ -57,7 +66,7 @@ export interface DreamInput {
 	sessionDir: string;
 	/** The running session: left out of the review and used to attribute calls. */
 	session: string;
-	/** Read only sessions changed after this time (epoch ms). */
+	/** The last dream's lastDreamAt; sessions are read after it, within DREAM_WINDOW_MS. */
 	since: number;
 	agents: DreamAgents;
 	signal: AbortSignal;
@@ -145,7 +154,8 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 	if ("unavailable" in agents.model) return { ...result, status: "unavailable", reason: agents.model.unavailable };
 	const ref = agents.model;
 	const now = input.now ?? new Date();
-	const sessions = (await sessionsSince(input.sessionDir, input.since, input.session)).slice(0, input.maxSessions ?? DREAM_MAX_SESSIONS);
+	const since = dreamSince(input.since, now.getTime());
+	const sessions = (await sessionsSince(input.sessionDir, since, input.session)).slice(0, input.maxSessions ?? DREAM_MAX_SESSIONS);
 	if (sessions.length === 0) return { ...result, status: "nothing", readUntil: input.since };
 
 	// Leftovers of a crashed dream are discarded; the lock guarantees no other dream is running.
@@ -157,17 +167,19 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 		const before = await noteTexts(input.notes);
 		const passiveBefore = new Set((await listNotes(input.notes)).filter(isPassiveUnverified).map((note) => note.name));
 
-		// Render each transcript to a file the analyzer reads with its read-only tools.
-		await mkdir(join(workDir, "transcripts"), { recursive: true });
+		// Copy each raw session file, so the analyzer reads a stable copy even if that session is still running.
+		await mkdir(join(workDir, "sessions"), { recursive: true });
 		const files: { session: SessionFile; path: string }[] = [];
 		for (const [i, session] of sessions.entries()) {
-			const name = `transcripts/${String(i + 1).padStart(2, "0")}-${session.id.replace(/[^A-Za-z0-9._-]/g, "_")}.txt`;
-			await writeFile(join(workDir, name), renderTranscript(await readSessionEntries(session.path), session.id, DREAM_TRANSCRIPT_CHARS));
-			files.push({ session, path: name });
+			const path = join(workDir, "sessions", `${String(i + 1).padStart(2, "0")}-${session.id.replace(/[^A-Za-z0-9._-]/g, "_")}.jsonl`);
+			await copyFile(session.path, path);
+			files.push({ session, path });
 		}
 
 		// Analyze: groups of about 20, each group in parallel, finishing a group before the next.
 		const confirmed = new Set<string>();
+		/** Sessions an analyzer finished: only these can confirm or fail to confirm a passive note. */
+		const read = new Set<string>();
 		let firstFailed: number | undefined;
 		const groupSize = input.groupSize ?? DREAM_GROUP_SIZE;
 		for (let start = 0; start < files.length; start += groupSize) {
@@ -175,7 +187,7 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 			const group = files.slice(start, start + groupSize);
 			const runs = await Promise.all(
 				group.map(async (file) => {
-					const task: AgentTask = { role: "analyze", workDir, transcript: file.path, passiveCandidates: passiveBefore };
+					const task: AgentTask = { role: "analyze", workDir, transcript: file.path, session: file.session.id, passiveCandidates: passiveBefore };
 					const started = Date.now();
 					const run = await safeRun(agents, task, signal);
 					await recordRun(input, ref, "deepseek-analyze", { transcript: file.path, transcriptSession: file.session.id }, started, run);
@@ -188,7 +200,7 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 				if (!run.ok) {
 					result.failedSessions += 1;
 					firstFailed = Math.min(firstFailed ?? Number.POSITIVE_INFINITY, file.session.mtimeMs);
-				}
+				} else read.add(file.session.id);
 				for (const name of run.confirmed) confirmed.add(name);
 			}
 		}
@@ -203,7 +215,8 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 			result.organizeFailed = !run.ok;
 		}
 
-		// Passive notes: confirmed ones become ordinary notes; ones no dream can confirm go away.
+		// Passive notes: confirmed ones become ordinary notes; ones no dream can confirm go away. A dream that
+		// did not read the session a note came from has no evidence either way and leaves its count alone.
 		for (const note of await listNotes(input.notes)) {
 			if (!passiveBefore.has(note.name) || !isPassiveUnverified(note)) continue;
 			if (confirmed.has(note.name)) {
@@ -212,6 +225,8 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 				result.confirmed += 1;
 				continue;
 			}
+			const sources = Array.isArray(note.meta.sessions) ? (note.meta.sessions as unknown[]).map(String) : [];
+			if (sources.length > 0 && !sources.some((id) => read.has(id))) continue;
 			const misses = (typeof note.meta.unverifiedDreams === "number" ? note.meta.unverifiedDreams : 0) + 1;
 			if (misses >= PASSIVE_UNVERIFIED_LIMIT) {
 				await deleteNote(input.notes, note.path);

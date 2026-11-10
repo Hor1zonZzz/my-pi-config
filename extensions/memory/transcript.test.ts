@@ -3,7 +3,7 @@ import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { buildWindow, type LooseEntry, messagesFromEntries, renderTranscript, renderTurn, sessionsSince, splitTurns } from "./transcript.ts";
+import { buildWindow, type LooseEntry, messagesFromEntries, renderTurn, sessionsSince, splitTurns } from "./transcript.ts";
 
 const entry = (message: Record<string, unknown>): LooseEntry => ({ type: "message", message: message as LooseEntry["message"] });
 
@@ -75,10 +75,4 @@ test("sessions since a time, oldest first, without the running session", async (
 		["a", "b"],
 	);
 	assert.deepEqual(await sessionsSince(join(dir, "missing"), 0), []);
-});
-
-test("a transcript is labeled with its session", () => {
-	const text = renderTranscript(entries, "abc", 10_000);
-	assert.match(text, /^SESSION abc started 2026-11-10T00:00:00Z\n\nUSER: install deps/);
-	assert.match(text, /USER: this project uses pnpm\nAGENT: Got it\./);
 });

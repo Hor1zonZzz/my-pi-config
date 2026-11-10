@@ -7,14 +7,14 @@
  * - Active memory: the `memory` tool (Anthropic memory tool commands) over /memories.
  * - Passive memory (experimental): after each settled turn, Jev on OpenRouter judges the turn and
  *   DeepSeek Flash writes one note when it is worth keeping.
- * - Dream: DeepSeek Flash checks notes against past transcripts and tidies them, on demand or daily.
+ * - Dream: DeepSeek Flash folds the last three days' raw sessions into the notes and tidies them, on demand or daily.
  * - /memory: a SettingsList panel for the switches, notes, dreams, and call history.
  */
 import { join } from "node:path";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { type CallUsage, pruneCalls, pruneDreamSessions, readCalls } from "./call-log.ts";
 import { capture } from "./capture.ts";
-import { DREAM_INTERVAL_MS, DREAM_MIN_NEW_SESSIONS, dream } from "./dream.ts";
+import { DREAM_INTERVAL_MS, DREAM_MIN_NEW_SESSIONS, dream, dreamSince } from "./dream.ts";
 import { createDreamAgents } from "./dream-agent.ts";
 import { createMemoryTool, MEMORY_TOOL } from "./memory-tool.ts";
 import { createMemoryPanel } from "./panel.ts";
@@ -196,7 +196,7 @@ export default function memoryExtension(pi: ExtensionAPI) {
 			if (result.status === "unavailable") notify(`Dream 无法运行：${result.reason}`, "warning");
 			else if (result.status === "error") notify(`Dream 失败：${result.reason}（详见 calls.jsonl）`, "error");
 			else if (result.status === "nothing") {
-				if (trigger === "manual") notify("Dream：上次整理之后没有新会话。");
+				if (trigger === "manual") notify("Dream：上次整理之后（最近 3 天内）没有新会话。");
 			} else {
 				notify(
 					`Dream 完成：读取 ${result.sessions} 个会话${result.failedSessions ? `（${result.failedSessions} 个失败）` : ""}${result.organizeFailed ? "，整理失败" : ""} · 新增 ${result.created} · 修改 ${result.updated} · 删除 ${result.deleted}（含被动 ${result.removedPassive}）· 验证被动笔记 ${result.confirmed}`,
@@ -228,7 +228,7 @@ export default function memoryExtension(pi: ExtensionAPI) {
 			const [calls, log, fresh] = await Promise.all([
 				readCalls(dir),
 				readLog(dir),
-				sessionsSince(sessionDir, cfg.lastDreamAt ?? 0, sessionId),
+				sessionsSince(sessionDir, dreamSince(cfg.lastDreamAt), sessionId),
 			]);
 			const memDir = dir;
 			const memNotes = notes;
@@ -282,9 +282,8 @@ export default function memoryExtension(pi: ExtensionAPI) {
 		void pruneDreamSessions(dir).catch(() => {});
 		// Print and JSON modes end the process once the agent settles, so background work stays off.
 		if (!ctx.hasUI || !config.enabled || !config.dreamAuto) return;
-		const since = config.lastDreamAt ?? 0;
-		if (Date.now() - since < DREAM_INTERVAL_MS) return;
-		const fresh = await sessionsSince(sessionDir, since, sessionId);
+		if (Date.now() - (config.lastDreamAt ?? 0) < DREAM_INTERVAL_MS) return;
+		const fresh = await sessionsSince(sessionDir, dreamSince(config.lastDreamAt), sessionId);
 		if (fresh.length >= DREAM_MIN_NEW_SESSIONS) void runDream(ctx, "auto");
 	});
 

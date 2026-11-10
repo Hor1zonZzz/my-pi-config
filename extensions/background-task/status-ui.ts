@@ -154,9 +154,13 @@ export class StatusPanels {
 	/**
 	 * The main input editor, when it has keyboard focus. Only pi-tui's Editor (which Pi's editor
 	 * and custom editors extend) has getText; duck typing avoids depending on module identity.
+	 * Since Pi 1.5 the public TUI interface omits getFocusedComponent(); both screens extend
+	 * TuiBase, which still has it, so probe for it and treat its absence as "not the editor".
 	 */
 	private focusedEditor(): FocusedEditor | undefined {
-		const focused = this.tui?.getFocusedComponent() as Partial<FocusedEditor> | null | undefined;
+		const tui = this.tui as (TUI & { getFocusedComponent?: () => Component | null }) | undefined;
+		if (typeof tui?.getFocusedComponent !== "function") return undefined;
+		const focused = tui.getFocusedComponent() as Partial<FocusedEditor> | null;
 		return typeof focused?.getText === "function" ? (focused as FocusedEditor) : undefined;
 	}
 

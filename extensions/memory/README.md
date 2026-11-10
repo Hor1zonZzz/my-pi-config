@@ -77,7 +77,16 @@ Each agent is a Pi SDK session (`createAgentSession`) on DeepSeek Flash with `hi
 - **Own transcripts**: agent sessions are saved under `<memory>/dreams/`, never in the project's session directory, so later dreams do not review dreams. Files older than 30 days are deleted on session start.
 - **Records**: each agent run appends one `calls.jsonl` line with its summed usage and cost, tool-call count, final reply, confirmed names, and session file.
 
-Session files and notes are treated as data, never instructions. Dreams run from `/memory` → Dream → Run now, or automatically on session start at most once a day when at least three new sessions exist within the window and auto-dream is on. A lock file keeps one dream per project across Pi processes. Dreams are aborted on `session_shutdown` (the running agents are aborted too) and leave `lastDreamAt` unchanged.
+Session files and notes are treated as data, never instructions. Dreams run from `/memory` → Dream → Run now, or automatically on session start at most once a day when at least three new sessions exist within the window and auto-dream is on. A lock file keeps one dream per project across Pi processes.
+
+### Dream worker
+
+A dream does not run inside Pi. The session that starts it (after checking that DeepSeek Flash exists and is logged in) spawns `dream-worker.ts` with Pi's own Node (`process.execPath`) as a detached process: its own process group, no stdin, output to `dream-worker.log`, unref'd. Quitting Pi, `/reload`, `/new`, and closing every Pi session of the project do not stop it; it ends when the dream ends, on SIGTERM (`/memory` → Dream → 停止运行), or when the machine stops.
+
+- **Pi modules outside Pi**: Pi resolves `@earendil-works/*` and `typebox` for extensions, a plain Node process does not. The worker registers a `module.registerHooks()` resolve hook that retries failing bare specifiers from Pi's package directory (`getPackageDir()`, passed in by the extension), then imports the Pi SDK. Model and auth come from `ModelRuntime.create()` over `<agent-dir>/auth.json` and `models.json`.
+- **Status**: the worker holds `.dream.lock` (with its own pid) and writes `dream-status.json`: `running` with its pid, then the result (`done`, `nothing`, `unavailable`, `error`, `aborted`) and a one-line summary. `lastDreamAt` is written by the worker only after a `done` or `nothing` dream.
+- **Footer**: every TUI session of the project reads the status file every 3 seconds and shows ` · dreaming` while the status says `running` and that pid is alive. A finished dream is not announced.
+- **Report on next start**: the next TUI session start shows the result of a dream no session has reported yet (except an automatic dream that found nothing) and marks it reported. A `running` status whose process is gone (killed, or the machine stopped) is reported as interrupted and marked `aborted`. A dream that did not finish leaves `lastDreamAt` unchanged, so its sessions are read again.
 
 ## `/memory`
 
@@ -86,7 +95,7 @@ One command opens a `SettingsList` panel, like `/settings`:
 - **记忆** on/off: injection, the tool, and passive capture.
 - **被动捕获（实验）** on/off.
 - **笔记** › list → Enter shows the note, `d` twice deletes it.
-- **Dream** › run now, daily auto-dream on/off, `log.md`.
+- **Dream** › run now (停止运行 while the worker runs), daily auto-dream on/off, `log.md`.
 - **调用历史** › totals per role → the last 50 calls → one call's full record.
 - **存放位置**.
 
@@ -106,7 +115,9 @@ Every Jev and DeepSeek call appends one line to `calls.jsonl` in the memory dire
   dreams/            dream agents' own Pi session files (30 days)
   .snapshots/<time>/ copies of notes/ taken before dreams
   .dream-work/       raw session copies while a dream runs
-  .dream.lock        held while a dream runs
+  .dream.lock        held by the dream worker while it runs
+  dream-status.json  the worker's state, pid, and last result
+  dream-worker.log   the last worker's output
   notes/             /memories: MEMORY.md and the notes
 ```
 
@@ -114,7 +125,7 @@ All of it is runtime state: never installed from or committed to this repository
 
 ## Tests
 
-The core modules (`store.ts`, `tool.ts`, `transcript.ts`, `call-log.ts`, `port.ts`, `capture.ts`, `dream.ts`, `prompts.ts`) have no Pi imports; `dream-agent.ts`, `memory-tool.ts`, `panel.ts`, and `index.ts` use Pi:
+The core modules (`store.ts`, `tool.ts`, `transcript.ts`, `call-log.ts`, `port.ts`, `capture.ts`, `dream.ts`, `dream-status.ts`, `prompts.ts`) have no Pi imports; `dream-agent.ts`, `dream-worker.ts`, `memory-tool.ts`, `panel.ts`, and `index.ts` use Pi:
 
 ```bash
 node --test extensions/memory/*.test.ts

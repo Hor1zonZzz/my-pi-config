@@ -28,8 +28,10 @@ export interface PanelActions {
 	setPassive(value: boolean): Promise<void>;
 	setDreamAuto(value: boolean): Promise<void>;
 	deleteNote(note: NoteInfo): Promise<void>;
-	/** Starts a dream in the background; the result arrives as a notification. */
+	/** Starts the detached dream worker; its result is reported when a later session starts. */
 	runDream(): void;
+	/** Stops the running dream worker. */
+	stopDream(): void;
 }
 
 export function ago(ms: number | undefined, now = Date.now()): string {
@@ -250,18 +252,28 @@ export function createMemoryPanel(
 				let auto = data.config.dreamAuto;
 				let started = false;
 				const rows: Row[] = [
-					{
-						label: "立即运行",
-						value: data.dreamRunning ? "运行中" : `${data.newSessions} 个新会话`,
-						open: () => {
-							if (!data.dreamRunning && !started) {
-								started = true;
-								actions.runDream();
-								rows[0].value = "已在后台启动";
+					data.dreamRunning
+						? {
+								label: "停止运行",
+								value: "运行中",
+								open: () => {
+									actions.stopDream();
+									rows[0].value = "已停止";
+									return undefined;
+								},
 							}
-							return undefined;
-						},
-					},
+						: {
+								label: "立即运行",
+								value: `${data.newSessions} 个新会话`,
+								open: () => {
+									if (!started) {
+										started = true;
+										actions.runDream();
+										rows[0].value = "已在后台启动";
+									}
+									return undefined;
+								},
+							},
 					{
 						label: "每天自动",
 						value: auto ? ON : OFF,

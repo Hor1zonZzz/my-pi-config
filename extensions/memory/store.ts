@@ -283,7 +283,7 @@ export async function snapshot(dir: string, now = new Date()): Promise<string> {
 
 const LOCK_STALE_MS = 2 * 60 * 60 * 1000;
 
-function pidAlive(pid: number): boolean {
+export function pidAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
 		return true;

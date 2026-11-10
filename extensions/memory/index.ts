@@ -7,21 +7,25 @@
  * - Active memory: the `memory` tool (Anthropic memory tool commands) over /memories.
  * - Passive memory (experimental): after each settled turn, Jev on OpenRouter judges the turn and
  *   DeepSeek Flash writes one note when it is worth keeping.
- * - Dream: DeepSeek Flash folds the last three days' raw sessions into the notes and tidies them, on demand or daily.
+ * - Dream: DeepSeek Flash folds the last three days' raw sessions into the notes and tidies them, on demand or
+ *   daily, in a detached worker process (dream-worker.ts) that keeps running after every Pi session closes.
  * - /memory: a SettingsList panel for the switches, notes, dreams, and call history.
  */
+import { spawn } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
-import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { fileURLToPath } from "node:url";
+import { type ExtensionAPI, type ExtensionContext, getAgentDir, getPackageDir } from "@earendil-works/pi-coding-agent";
 import { type CallUsage, pruneCalls, pruneDreamSessions, readCalls } from "./call-log.ts";
 import { capture } from "./capture.ts";
-import { DREAM_INTERVAL_MS, DREAM_MIN_NEW_SESSIONS, dream, dreamSince } from "./dream.ts";
-import { createDreamAgents } from "./dream-agent.ts";
+import { DREAM_INTERVAL_MS, DREAM_MIN_NEW_SESSIONS, dreamSince } from "./dream.ts";
+import { isDreamRunning, pendingReport, readDreamStatus, WORKER_LOG, writeDreamStatus } from "./dream-status.ts";
+import type { WorkerArgs } from "./dream-worker.ts";
 import { createMemoryTool, MEMORY_TOOL } from "./memory-tool.ts";
 import { createMemoryPanel } from "./panel.ts";
 import type { ModelPort } from "./port.ts";
 import { memoryPromptSection, PROMPT_SECTION } from "./prompts.ts";
 import {
-	acquireDreamLock,
 	appendLog,
 	deleteNote,
 	indexForPrompt,
@@ -47,6 +51,9 @@ const JUDGE_CHARS = 12_000;
 const WRITER_TURNS = 3;
 const WRITER_CHARS = 24_000;
 const MAX_QUEUED_CAPTURES = 3;
+/** How often each Pi session reads the dream worker's status file for the footer. */
+const DREAM_POLL_MS = 3000;
+const WORKER_SCRIPT = fileURLToPath(new URL("./dream-worker.ts", import.meta.url));
 
 function toUsage(usage: unknown): CallUsage | null {
 	if (!usage || typeof usage !== "object") return null;
@@ -111,7 +118,9 @@ export default function memoryExtension(pi: ExtensionAPI) {
 	let controller = new AbortController();
 	let queue: Promise<void> = Promise.resolve();
 	let queued = 0;
+	/** Whether this project's dream worker is running, as last read from its status file. */
 	let dreamRunning = false;
+	let dreamPoll: ReturnType<typeof setInterval> | undefined;
 	let ui: ExtensionContext["ui"] | undefined;
 	const warned = new Set<string>();
 
@@ -167,49 +176,71 @@ export default function memoryExtension(pi: ExtensionAPI) {
 		}),
 	);
 
+	/** Reads the worker's status file; when a dream starts or ends, refreshes the footer and the note count. */
+	const pollDream = async () => {
+		if (!dir) return;
+		const running = isDreamRunning(await readDreamStatus(dir));
+		if (running === dreamRunning) return;
+		dreamRunning = running;
+		await recount();
+	};
+
+	/** Starts the detached dream worker. The result is not announced; the next session start reports it. */
 	async function runDream(ctx: ExtensionContext, trigger: "manual" | "auto"): Promise<void> {
 		if (!dir || !notes) return;
-		if (dreamRunning) {
-			notify("Dream 已经在运行。");
+		if (isDreamRunning(await readDreamStatus(dir))) {
+			if (trigger === "manual") notify("Dream 已经在后台运行。");
 			return;
 		}
-		const release = await acquireDreamLock(dir);
-		if (!release) {
-			notify("另一个 Pi 进程正在为这个项目运行 Dream。", "warning");
+		const registry = ctx.modelRegistry;
+		const unavailable = !registry.find(WRITER_PROVIDER, WRITER_MODEL)
+			? `Pi has no ${WRITER_PROVIDER}/${WRITER_MODEL} model`
+			: !registry.getProviderAuthStatus(WRITER_PROVIDER).configured
+				? "DeepSeek is not logged in"
+				: undefined;
+		if (unavailable) {
+			notify(`Dream 无法运行：${unavailable}`, "warning");
 			return;
 		}
-		dreamRunning = true;
-		refreshStatus();
-		const signal = controller.signal;
+		const args: WorkerArgs = {
+			piPackageDir: getPackageDir(),
+			agentDir: getAgentDir(),
+			dir,
+			notes,
+			sessionDir,
+			session: sessionId,
+			trigger,
+			provider: WRITER_PROVIDER,
+			model: WRITER_MODEL,
+		};
+		let out: number | undefined;
 		try {
-			const since = (await readConfig(dir)).lastDreamAt ?? 0;
-			const flash = ctx.modelRegistry.find(WRITER_PROVIDER, WRITER_MODEL);
-			const unavailable = !flash
-				? `Pi has no ${WRITER_PROVIDER}/${WRITER_MODEL} model`
-				: !ctx.modelRegistry.getProviderAuthStatus(WRITER_PROVIDER).configured
-					? "DeepSeek is not logged in"
-					: undefined;
-			const agents = createDreamAgents({ agentDir: getAgentDir(), notes, dreamsDir: join(dir, "dreams"), model: flash, unavailable });
-			const result = await dream({ dir, notes, sessionDir, session: sessionId, since, agents, signal });
-			if (signal.aborted || result.status === "aborted") return;
-			if (result.readUntil !== undefined && result.readUntil > since) await updateConfig({ lastDreamAt: result.readUntil });
-			if (result.status === "unavailable") notify(`Dream 无法运行：${result.reason}`, "warning");
-			else if (result.status === "error") notify(`Dream 失败：${result.reason}（详见 calls.jsonl）`, "error");
-			else if (result.status === "nothing") {
-				if (trigger === "manual") notify("Dream：上次整理之后（最近 3 天内）没有新会话。");
-			} else {
-				notify(
-					`Dream 完成：读取 ${result.sessions} 个会话${result.failedSessions ? `（${result.failedSessions} 个失败）` : ""}${result.organizeFailed ? "，整理失败" : ""} · 新增 ${result.created} · 修改 ${result.updated} · 删除 ${result.deleted}（含被动 ${result.removedPassive}）· 验证被动笔记 ${result.confirmed}`,
-				);
-			}
-			await recount();
+			out = openSync(join(dir, WORKER_LOG), "w");
+			// Its own process group, no stdin, and unref'd: Pi exiting, /reload, and /new do not stop it.
+			const child = spawn(process.execPath, [WORKER_SCRIPT, JSON.stringify(args)], {
+				cwd: dir,
+				detached: true,
+				stdio: ["ignore", out, out],
+				env: process.env,
+			});
+			child.on("error", (error) => notify(`Dream 启动失败：${error.message}`, "error"));
+			child.unref();
+			dreamRunning = true;
+			refreshStatus();
 		} catch (error) {
-			if (!signal.aborted) notify(`Dream 失败：${error instanceof Error ? error.message : String(error)}`, "error");
+			notify(`Dream 启动失败：${error instanceof Error ? error.message : String(error)}`, "error");
 		} finally {
-			dreamRunning = false;
-			await release();
-			if (!signal.aborted) refreshStatus();
+			if (out !== undefined) closeSync(out);
 		}
+	}
+
+	async function stopDream(): Promise<void> {
+		if (!dir) return;
+		const status = await readDreamStatus(dir);
+		if (!status || !isDreamRunning(status)) return;
+		try {
+			process.kill(status.pid, "SIGTERM");
+		} catch {}
 	}
 
 	pi.registerCommand("memory", {
@@ -251,6 +282,7 @@ export default function memoryExtension(pi: ExtensionAPI) {
 							await recount();
 						},
 						runDream: () => void runDream(ctx, "manual"),
+						stopDream: () => void stopDream(),
 					},
 					tui,
 					theme,
@@ -281,7 +313,21 @@ export default function memoryExtension(pi: ExtensionAPI) {
 		void pruneCalls(dir).catch(() => {});
 		void pruneDreamSessions(dir).catch(() => {});
 		// Print and JSON modes end the process once the agent settles, so background work stays off.
-		if (!ctx.hasUI || !config.enabled || !config.dreamAuto) return;
+		if (!ctx.hasUI) return;
+		const status = await readDreamStatus(dir);
+		dreamRunning = isDreamRunning(status);
+		refreshStatus();
+		if (dreamPoll) clearInterval(dreamPoll);
+		dreamPoll = setInterval(() => void pollDream().catch(() => {}), DREAM_POLL_MS);
+		dreamPoll.unref?.();
+		// The result of a dream that ended while no session showed it (or was not watching) is reported once.
+		const report = pendingReport(status);
+		if (status && (report || (!status.reported && !dreamRunning))) {
+			const finished = status.state === "running" ? { state: "aborted" as const, finishedAt: Date.now() } : {};
+			await writeDreamStatus(dir, { ...status, ...finished, reported: true }).catch(() => {});
+		}
+		if (report) notify(report, /失败|中途退出/.test(report) ? "warning" : "info");
+		if (dreamRunning || !config.enabled || !config.dreamAuto) return;
 		if (Date.now() - (config.lastDreamAt ?? 0) < DREAM_INTERVAL_MS) return;
 		const fresh = await sessionsSince(sessionDir, dreamSince(config.lastDreamAt), sessionId);
 		if (fresh.length >= DREAM_MIN_NEW_SESSIONS) void runDream(ctx, "auto");
@@ -332,7 +378,10 @@ export default function memoryExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", () => {
+		// Aborts passive captures. A dream runs in its own worker process and is not affected.
 		controller.abort();
+		if (dreamPoll) clearInterval(dreamPoll);
+		dreamPoll = undefined;
 		ui = undefined;
 	});
 }

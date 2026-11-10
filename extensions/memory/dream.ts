@@ -1,7 +1,8 @@
 /**
- * Dream, after the Claude cookbook's "dreaming with a dynamic workflow": one analyzer agent per new
- * session from the last three days (in groups of about 20, run in parallel), then one organizer agent
- * over the whole memory. Each agent is its own Pi session on DeepSeek Flash (see dream-agent.ts) that
+ * Dream, after the Claude cookbook's "dreaming with a dynamic workflow": one analyzer agent that reads
+ * the new sessions from the last three days in order, oldest first, then one organizer agent over the
+ * whole memory. One analyzer, not one per session: parallel analyzers writing the same notes duplicated
+ * subjects and overwrote each other, and only a single reader sees a later session undo an earlier one. Each agent is its own Pi session on DeepSeek Flash (see dream-agent.ts) that
  * reads only the notes and a copy of the raw session JSONL, not the project. This module only
  * orchestrates, so it stays free of Pi imports.
  */
@@ -13,8 +14,8 @@ import type { ModelRef } from "./port.ts";
 import { appendLog, deleteNote, listNotes, type NoteInfo, rebuildIndex, snapshot, snapshotName, writeNote } from "./store.ts";
 import { type SessionFile, sessionsSince } from "./transcript.ts";
 
+/** Sessions one dream reads (one analyzer); the rest wait for the next dream. */
 export const DREAM_MAX_SESSIONS = 20;
-export const DREAM_GROUP_SIZE = 20;
 /** A passive note is removed after this many dreams that read its source session could not confirm it. */
 export const PASSIVE_UNVERIFIED_LIMIT = 2;
 export const DREAM_MIN_NEW_SESSIONS = 3;
@@ -32,10 +33,8 @@ export interface AgentTask {
 	role: "analyze" | "organize";
 	/** The dream's work directory and the agent's cwd: holds sessions/. */
 	workDir: string;
-	/** Analyze only: absolute path of the copied raw session JSONL. */
-	transcript?: string;
-	/** Analyze only: the session's id. */
-	session?: string;
+	/** Analyze only: the copied raw session JSONL files (absolute paths) and their ids, oldest first. */
+	transcripts?: { path: string; session: string }[];
 	/** Analyze only: passive notes the agent may confirm. */
 	passiveCandidates: ReadonlySet<string>;
 }
@@ -72,7 +71,6 @@ export interface DreamInput {
 	signal: AbortSignal;
 	now?: Date;
 	maxSessions?: number;
-	groupSize?: number;
 }
 
 export interface DreamResult {
@@ -176,35 +174,22 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 			files.push({ session, path });
 		}
 
-		// Analyze: groups of about 20, each group in parallel, finishing a group before the next.
-		const confirmed = new Set<string>();
-		/** Sessions an analyzer finished: only these can confirm or fail to confirm a passive note. */
-		const read = new Set<string>();
-		let firstFailed: number | undefined;
-		const groupSize = input.groupSize ?? DREAM_GROUP_SIZE;
-		for (let start = 0; start < files.length; start += groupSize) {
-			if (signal.aborted) return { ...result, status: "aborted" };
-			const group = files.slice(start, start + groupSize);
-			const runs = await Promise.all(
-				group.map(async (file) => {
-					const task: AgentTask = { role: "analyze", workDir, transcript: file.path, session: file.session.id, passiveCandidates: passiveBefore };
-					const started = Date.now();
-					const run = await safeRun(agents, task, signal);
-					await recordRun(input, ref, "deepseek-analyze", { transcript: file.path, transcriptSession: file.session.id }, started, run);
-					return { file, run };
-				}),
-			);
-			if (signal.aborted) return { ...result, status: "aborted" };
-			for (const { file, run } of runs) {
-				result.sessions += 1;
-				if (!run.ok) {
-					result.failedSessions += 1;
-					firstFailed = Math.min(firstFailed ?? Number.POSITIVE_INFINITY, file.session.mtimeMs);
-				} else read.add(file.session.id);
-				for (const name of run.confirmed) confirmed.add(name);
-			}
+		// Analyze: one agent reads every session copy, oldest first, and is the only writer until the organizer.
+		if (signal.aborted) return { ...result, status: "aborted" };
+		const transcripts = files.map((file) => ({ path: file.path, session: file.session.id }));
+		const started = Date.now();
+		const analysis = await safeRun(agents, { role: "analyze", workDir, transcripts, passiveCandidates: passiveBefore }, signal);
+		await recordRun(input, ref, "deepseek-analyze", { transcripts }, started, analysis);
+		if (signal.aborted) return { ...result, status: "aborted" };
+		result.sessions = files.length;
+		// A failed analysis may have changed some notes; nothing counts as read, so every session is read again next time.
+		if (!analysis.ok) {
+			await rebuildIndex(input.notes);
+			return { ...result, failedSessions: files.length, status: "error", reason: analysis.error ?? "analysis failed" };
 		}
-		if (result.failedSessions === result.sessions) return { ...result, status: "error", reason: "every transcript analysis failed" };
+		const confirmed = new Set(analysis.confirmed);
+		/** Sessions the analyzer finished: only these can confirm or fail to confirm a passive note. */
+		const read = new Set(files.map((file) => file.session.id));
 
 		// Organize the whole store once.
 		if ((await listNotes(input.notes)).length > 1) {
@@ -251,8 +236,7 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 			`dream read ${result.sessions} sessions (${result.failedSessions} failed${result.organizeFailed ? ", organize failed" : ""}): created ${result.created}, updated ${result.updated}, deleted ${result.deleted}, confirmed ${result.confirmed}, removed passive ${result.removedPassive}`,
 			now,
 		);
-		// A failed transcript is read again by the next dream.
-		result.readUntil = firstFailed !== undefined ? firstFailed - 1 : sessions[sessions.length - 1].mtimeMs;
+		result.readUntil = sessions[sessions.length - 1].mtimeMs;
 		return result;
 	} finally {
 		await rm(join(input.dir, WORK_DIR), { recursive: true, force: true });

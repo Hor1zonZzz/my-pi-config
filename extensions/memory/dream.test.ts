@@ -22,7 +22,7 @@ function agents(notes: string, analyze: Script, organize: Script = async () => {
 		model: { provider: "deepseek", model: "deepseek-flash" },
 		async run(task) {
 			seen.push(task);
-			const transcript = task.transcript ? await readFile(task.transcript, "utf8") : "";
+			const transcript = (await Promise.all((task.transcripts ?? []).map((t) => readFile(t.path, "utf8")))).join("\n");
 			const extra = (await (task.role === "analyze" ? analyze : organize)(task, transcript, notes)) ?? {};
 			return { ok: true, stopReason: "stop", confirmed: [], usage, toolCalls: 1, finalText: "done", sessionFile: "/dreams/x.jsonl", ...extra };
 		},
@@ -67,7 +67,7 @@ test("no new sessions means nothing to do; no model means unavailable", async (t
 	assert.deepEqual((await dream(input(s, none))).reason, "DeepSeek is not logged in");
 });
 
-test("one analyzer per raw session copy, then one organizer; changes are measured on disk", async (t) => {
+test("one analyzer over every raw session copy, then one organizer; changes are measured on disk", async (t) => {
 	const s = await setup(t);
 	await writeNote(s.notes, "use-pnpm.md", { name: "use-pnpm", description: "pnpm", type: "feedback", source: "passive", unverifiedDreams: 0 }, "pnpm");
 	await writeNote(s.notes, "pnpm-again.md", { name: "pnpm-again", description: "pnpm dup", type: "feedback" }, "pnpm");
@@ -82,10 +82,8 @@ test("one analyzer per raw session copy, then one organizer; changes are measure
 				s.notes,
 				async (task, transcript, notes) => {
 					assert.deepEqual([...task.passiveCandidates], ["use-pnpm"]);
-					if (transcript.includes("pnpm test")) {
-						await executeMemoryCommand(notes, { command: "create", path: "/memories/test-cmd.md", file_text: "---\nname: test-cmd\ndescription: 测试命令\ntype: project\n---\n\npnpm test" }, { overwrite: false });
-						return {};
-					}
+					assert.ok(transcript.includes("use pnpm please") && transcript.includes("pnpm test"));
+					await executeMemoryCommand(notes, { command: "create", path: "/memories/test-cmd.md", file_text: "---\nname: test-cmd\ndescription: 测试命令\ntype: project\n---\n\npnpm test" }, { overwrite: false });
 					return { confirmed: ["use-pnpm"] };
 				},
 				async (_task, _transcript, notes) => {
@@ -97,11 +95,16 @@ test("one analyzer per raw session copy, then one organizer; changes are measure
 	);
 	assert.equal(result.status, "done");
 	assert.deepEqual(
-		seen.map((task) => [task.role, task.session, task.transcript && relative(task.workDir, task.transcript)]),
+		seen.map((task) => [task.role, task.transcripts?.map((t) => [t.session, relative(task.workDir, t.path)])]),
 		[
-			["analyze", "a", join("sessions", "01-a.jsonl")],
-			["analyze", "b", join("sessions", "02-b.jsonl")],
-			["organize", undefined, undefined],
+			[
+				"analyze",
+				[
+					["a", join("sessions", "01-a.jsonl")],
+					["b", join("sessions", "02-b.jsonl")],
+				],
+			],
+			["organize", undefined],
 		],
 	);
 	assert.deepEqual([result.sessions, result.created, result.updated, result.deleted, result.confirmed], [2, 1, 1, 1, 1]);
@@ -118,31 +121,22 @@ test("one analyzer per raw session copy, then one organizer; changes are measure
 		(await readCalls(s.dir)).map((call) => [call.role, call.outcome, (call.output as { sessionFile: string }).sessionFile]),
 		[
 			["deepseek-analyze", "applied", "/dreams/x.jsonl"],
-			["deepseek-analyze", "applied", "/dreams/x.jsonl"],
 			["deepseek-organize", "applied", "/dreams/x.jsonl"],
 		],
 	);
 	await assert.rejects(readdir(join(s.dir, WORK_DIR)), "the work directory is removed");
 });
 
-test("analyzers in a group run in parallel; groups run one after another", async (t) => {
+test("one analyzer run reads at most maxSessions, oldest first; the rest wait for the next dream", async (t) => {
 	const s = await setup(t);
 	for (let i = 0; i < 5; i++) await s.addSession(`s${i}`, 100 + i, "hi");
-	let running = 0;
-	let peak = 0;
-	await dream({
-		...input(
-			s,
-			agents(s.notes, async () => {
-				running += 1;
-				peak = Math.max(peak, running);
-				await new Promise((resolve) => setTimeout(resolve, 10));
-				running -= 1;
-			}),
-		),
-		groupSize: 2,
-	});
-	assert.equal(peak, 2);
+	const seen: AgentTask[] = [];
+	const result = await dream({ ...input(s, agents(s.notes, async () => {}, async () => {}, seen)), maxSessions: 3 });
+	assert.deepEqual(
+		seen.filter((task) => task.role === "analyze").map((task) => task.transcripts?.map((t) => t.session)),
+		[["s0", "s1", "s2"]],
+	);
+	assert.equal(result.readUntil, at(102));
 });
 
 test("a passive note no dream confirms is removed after two dreams", async (t) => {
@@ -159,14 +153,17 @@ test("a passive note no dream confirms is removed after two dreams", async (t) =
 	assert.match(await readFile(join(s.dir, "log.md"), "utf8"), /removed passive note guess/);
 });
 
-test("a failed transcript is read again next time; all failing is an error", async (t) => {
+test("a failed analysis is an error that reads nothing, so every session is read again next time", async (t) => {
 	const s = await setup(t);
 	await s.addSession("a", 100, "first");
 	await s.addSession("b", 200, "second");
-	const failOnSecond = agents(s.notes, async (_task, transcript) => (transcript.includes("second") ? { ok: false, error: "timeout" } : {}));
-	const result = await dream(input(s, failOnSecond));
-	assert.equal(result.failedSessions, 1);
-	assert.equal(result.readUntil, at(200) - 1);
+	const seen: AgentTask[] = [];
+	const result = await dream(input(s, agents(s.notes, async () => ({ ok: false, error: "timeout" }), async () => {}, seen)));
+	assert.deepEqual([result.status, result.reason, result.failedSessions, result.readUntil], ["error", "timeout", 2, undefined]);
+	assert.deepEqual(
+		seen.map((task) => task.role),
+		["analyze"],
+	);
 	const crash: DreamAgents = { model: { provider: "deepseek", model: "deepseek-flash" }, run: async () => Promise.reject(new Error("down")) };
 	const all = await dream(input(s, crash));
 	assert.equal(all.status, "error");
@@ -202,8 +199,8 @@ test("only sessions from the last three days are read, even after a long gap", a
 	const seen: AgentTask[] = [];
 	const result = await dream(input(s, agents(s.notes, async () => {}, async () => {}, seen), 0));
 	assert.deepEqual(
-		seen.filter((task) => task.role === "analyze").map((task) => task.session),
-		["recent"],
+		seen.filter((task) => task.role === "analyze").map((task) => task.transcripts?.map((t) => t.session)),
+		[["recent"]],
 	);
 	assert.equal(result.readUntil, at(100));
 	assert.equal(dreamSince(undefined, NOW.getTime()), NOW.getTime() - DREAM_WINDOW_MS);

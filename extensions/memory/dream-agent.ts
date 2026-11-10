@@ -1,5 +1,5 @@
 /**
- * Dream agents: each analyzer or organizer is its own Pi session (Pi SDK `createAgentSession`) on
+ * Dream agents: the analyzer and the organizer are each their own Pi session (Pi SDK `createAgentSession`) on
  * DeepSeek Flash with high thinking, like the cookbook's transcript-analyzer and memory-organizer.
  *
  * The session loads no discovered extensions, skills, prompt templates, or context files: the full
@@ -70,7 +70,7 @@ export function createDreamAgents(options: DreamAgentOptions): DreamAgents {
 							name: CONFIRM_TOOL,
 							label: "Confirm passive note",
 							description:
-								"Mark notes with `source: passive` (and no `verified`) as confirmed because this transcript clearly supports them. A passive note is removed once two dreams that read its source session did not confirm it.",
+								"Mark notes with `source: passive` (and no `verified`) as confirmed because the sessions you read clearly support them. A passive note is removed once two dreams that read its source session did not confirm it.",
 							parameters: Type.Object({ names: Type.Array(Type.String(), { description: "Note names (frontmatter name)" }) }),
 							async execute(_id, params) {
 								const accepted = params.names.filter((name) => task.passiveCandidates.has(name));
@@ -131,7 +131,7 @@ export function createDreamAgents(options: DreamAgentOptions): DreamAgents {
 			signal.addEventListener("abort", onAbort, { once: true });
 			try {
 				if (signal.aborted) throw new Error("aborted");
-				await session.prompt(analyzer ? analyzeTask(task.transcript ?? "", task.session ?? "") : ORGANIZE_TASK);
+				await session.prompt(analyzer ? analyzeTask(task.transcripts ?? []) : ORGANIZE_TASK);
 				const last = [...session.messages].reverse().find((message) => message.role === "assistant") as
 					| { stopReason?: string; errorMessage?: string }
 					| undefined;

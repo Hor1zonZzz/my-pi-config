@@ -27,6 +27,7 @@ npm/
 git/
 tmp/
 scratchpad/
+/memory/
 
 # OS and editor files
 .DS_Store

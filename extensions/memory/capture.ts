@@ -3,7 +3,7 @@
  * writes or updates one note. Experimental; the user can switch it off. Free of Pi imports.
  */
 import { isAvailable, type ModelPort, recordedCall } from "./port.ts";
-import { JEV_QUESTIONS, parseJsonObject, WRITER_PROMPT } from "./prompts.ts";
+import { JEV_QUESTIONS, SAVE_MEMORY_TOOL, WRITER_PROMPT } from "./prompts.ts";
 import {
 	appendLog,
 	formatIndex,
@@ -155,18 +155,22 @@ export async function capture(input: CaptureInput): Promise<CaptureOutcome> {
 		null,
 		2,
 	);
-	let parsed: Record<string, unknown> | undefined;
 	const written = await recordedCall(
 		{ dir: input.dir, session: input.session, role: "deepseek-capture", ref: port.writer, reasoning: "low", input: { system: WRITER_PROMPT, user } },
 		() => port.write(WRITER_PROMPT, user, "low", input.signal),
 		(reply) => {
-			parsed = parseJsonObject(reply.text);
-			const action = typeof parsed?.action === "string" ? parsed.action : undefined;
-			return { output: { text: reply.text, parsed: parsed ?? null }, outcome: action && ["create", "update", "skip"].includes(action) ? action : "parse-error" };
+			const args = reply.toolArgs;
+			const action = actionOf(args);
+			const valid = action === "skip" || (action !== undefined && readUpsert(args) !== undefined);
+			return { output: { text: reply.text, toolArgs: args ?? null }, outcome: !args ? "no-call" : valid && action ? action : "invalid-call" };
 		},
 	);
-	if (written.error || written.stopReason !== "stop") return { status: "writer-error", error: written.error ?? written.stopReason };
-	if (!parsed) return { status: "writer-error", error: "reply was not JSON" };
+	// A tool call ends the reply with "toolUse"; a reply without one ends with "stop".
+	if (written.error || (written.stopReason !== "toolUse" && written.stopReason !== "stop")) {
+		return { status: "writer-error", error: written.error ?? written.stopReason };
+	}
+	const parsed = written.toolArgs;
+	if (!parsed) return { status: "writer-error", error: `no ${SAVE_MEMORY_TOOL.name} call` };
 	if (parsed.action === "skip") return { status: "skip", durable };
 	const upsert = readUpsert(parsed);
 	if (!upsert || (parsed.action !== "create" && parsed.action !== "update")) return { status: "writer-error", error: "invalid note operation" };
@@ -175,6 +179,11 @@ export async function capture(input: CaptureInput): Promise<CaptureOutcome> {
 	await rebuildIndex(input.notes);
 	await appendLog(input.dir, `passive ${action} ${upsert.name} (durable ${durable.toFixed(2)}, session ${input.session})`, now);
 	return { status: "written", action, name: upsert.name, durable };
+}
+
+function actionOf(args: Record<string, unknown> | undefined): "create" | "update" | "skip" | undefined {
+	const action = args?.action;
+	return (SAVE_MEMORY_TOOL.actions as readonly unknown[]).includes(action) ? (action as "create" | "update" | "skip") : undefined;
 }
 
 function durableOf(answers: Record<string, unknown> | undefined): number | undefined {

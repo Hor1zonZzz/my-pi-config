@@ -17,7 +17,10 @@ export interface ClassifyReply {
 }
 
 export interface WriteReply {
+	/** Any text the writer produced besides its tool call. */
 	text: string;
+	/** Arguments of the writer's first save_memory call, if it made one. */
+	toolArgs?: Record<string, unknown>;
 	usage: CallUsage | null;
 	stopReason: string;
 	error?: string;
@@ -28,7 +31,7 @@ export type Reasoning = "low" | "high";
 export interface ModelPort {
 	/** Jev through OpenRouter, or a reason it cannot be used. */
 	judge: ModelRef | { unavailable: string };
-	/** DeepSeek Flash, or a reason it cannot be used. */
+	/** DeepSeek Flash with the save_memory tool, or a reason it cannot be used. */
 	writer: ModelRef | { unavailable: string };
 	classify(state: Record<string, unknown>, questions: Record<string, unknown>, signal: AbortSignal): Promise<ClassifyReply>;
 	write(systemPrompt: string, user: string, reasoning: Reasoning, signal: AbortSignal): Promise<WriteReply>;

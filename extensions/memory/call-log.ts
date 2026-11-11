@@ -32,7 +32,7 @@ export interface CallRecord {
 	error: string | null;
 	input: unknown;
 	output: unknown;
-	/** passed | below-threshold | create | update | skip | parse-error | applied | error */
+	/** passed | below-threshold | create | update | skip | no-call | invalid-call | applied | error */
 	outcome: string;
 }
 

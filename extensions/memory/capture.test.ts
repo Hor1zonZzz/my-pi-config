@@ -11,7 +11,10 @@ import { listNotes, parseNote, writeNote } from "./store.ts";
 const window = { earlier: ["USER: use npm\nAGENT: ok"], focus: "USER: no, this project uses pnpm\nAGENT: Switched to pnpm." };
 const usage = { input: 100, output: 10, cacheRead: 0, cost: 0.001 };
 
-function port(durable: number, reply: string | Error, writes: string[] = []): ModelPort {
+/** The writer's save_memory arguments, plain text (no tool call), or a thrown error. */
+type WriterReply = Record<string, unknown> | string | Error;
+
+function port(durable: number, reply: WriterReply, writes: string[] = []): ModelPort {
 	return {
 		judge: { provider: "openrouter", model: "~typesafe/jev-latest" },
 		writer: { provider: "deepseek", model: "deepseek-flash" },
@@ -19,7 +22,8 @@ function port(durable: number, reply: string | Error, writes: string[] = []): Mo
 		write: async (_system, user) => {
 			writes.push(user);
 			if (reply instanceof Error) throw reply;
-			return { text: reply, usage, stopReason: "stop" };
+			if (typeof reply === "string") return { text: reply, usage, stopReason: "stop" };
+			return { text: "", toolArgs: reply, usage, stopReason: "toolUse" };
 		},
 	};
 }
@@ -44,7 +48,7 @@ const base = (dir: string, notes: string, p: ModelPort) => ({
 test("below the threshold, DeepSeek is not called", async (t) => {
 	const { dir, notes } = await setup(t);
 	const writes: string[] = [];
-	const outcome = await capture(base(dir, notes, port(0.5, "{}", writes)));
+	const outcome = await capture(base(dir, notes, port(0.5, { action: "skip" }, writes)));
 	assert.deepEqual(outcome, { status: "below-threshold", durable: 0.5 });
 	assert.equal(writes.length, 0);
 	const calls = await readCalls(dir);
@@ -57,7 +61,7 @@ test("below the threshold, DeepSeek is not called", async (t) => {
 
 test("a passing turn becomes a passive note with its session", async (t) => {
 	const { dir, notes } = await setup(t);
-	const reply = '```json\n{"action":"create","name":"use-pnpm","description":"本项目用 pnpm","type":"feedback","body":"用 pnpm。\\nWhy: 用户纠正。","reason":"correction"}\n```';
+	const reply = { action: "create", name: "use-pnpm", description: "本项目用 pnpm", type: "feedback", body: "用 pnpm。\nWhy: 用户纠正。", reason: "correction" };
 	const outcome = await capture(base(dir, notes, port(0.9, reply)));
 	assert.deepEqual(outcome, { status: "written", action: "create", name: "use-pnpm", durable: 0.9 });
 	const { meta, body } = parseNote(await readFile(join(notes, "use-pnpm.md"), "utf8"));
@@ -82,7 +86,7 @@ test("an update keeps the note's source and adds the session", async (t) => {
 	const { dir, notes } = await setup(t);
 	await writeNote(notes, "use-pnpm.md", { name: "use-pnpm", description: "pnpm", type: "feedback", source: "active", sessions: ["s0"] }, "old");
 	const writes: string[] = [];
-	const reply = JSON.stringify({ action: "update", name: "use-pnpm", description: "pnpm only", type: "feedback", body: "new" });
+	const reply = { action: "update", name: "use-pnpm", description: "pnpm only", type: "feedback", body: "new", reason: "r" };
 	await capture(base(dir, notes, port(0.8, reply, writes)));
 	assert.match(writes[0], /"related_notes"/);
 	assert.match(writes[0], /"use-pnpm"/);
@@ -92,23 +96,37 @@ test("an update keeps the note's source and adds the session", async (t) => {
 	assert.equal(note.body.trim(), "new");
 });
 
-test("skip, bad JSON, and errors write nothing but are logged", async (t) => {
+test("skip, no tool call, an invalid call, and errors write nothing but are logged", async (t) => {
 	const { dir, notes } = await setup(t);
-	assert.equal((await capture(base(dir, notes, port(0.9, '{"action":"skip"}')))).status, "skip");
-	assert.equal((await capture(base(dir, notes, port(0.9, "not json")))).status, "writer-error");
+	assert.equal((await capture(base(dir, notes, port(0.9, { action: "skip", reason: "known" })))).status, "skip");
+	// A JSON note written as text, as DeepSeek did before the tool, is not accepted.
+	assert.deepEqual(await capture(base(dir, notes, port(0.9, '{"action":"create","name":"x","body":"y"}'))), {
+		status: "writer-error",
+		error: "no save_memory call",
+	});
+	assert.deepEqual(await capture(base(dir, notes, port(0.9, { action: "delete", name: "use-pnpm" }))), {
+		status: "writer-error",
+		error: "invalid note operation",
+	});
+	assert.deepEqual(await capture(base(dir, notes, port(0.9, { action: "create", name: "Bad Name", body: "x" }))), {
+		status: "writer-error",
+		error: "invalid note operation",
+	});
 	assert.equal((await capture(base(dir, notes, port(0.9, new Error("boom"))))).status, "writer-error");
 	assert.equal((await listNotes(notes)).length, 0);
 	const outcomes = (await readCalls(dir)).filter((call) => call.role === "deepseek-capture").map((call) => [call.outcome, call.error]);
 	assert.deepEqual(outcomes, [
 		["skip", null],
-		["parse-error", null],
+		["no-call", null],
+		["invalid-call", null],
+		["invalid-call", null],
 		["error", "boom"],
 	]);
 });
 
 test("unavailable models stop before any call", async (t) => {
 	const { dir, notes } = await setup(t);
-	const p = { ...port(0.9, "{}"), judge: { unavailable: "OpenRouter is not logged in" } };
+	const p = { ...port(0.9, { action: "skip" }), judge: { unavailable: "OpenRouter is not logged in" } };
 	assert.deepEqual(await capture(base(dir, notes, p)), { status: "unavailable", reason: "OpenRouter is not logged in" });
 	assert.deepEqual(await readCalls(dir), []);
 });

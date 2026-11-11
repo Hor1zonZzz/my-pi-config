@@ -15,7 +15,9 @@ import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { StringEnum, type Tool } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir, getPackageDir } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { type CallUsage, pruneCalls, pruneDreamSessions, readCalls } from "./call-log.ts";
 import { capture } from "./capture.ts";
 import { DREAM_INTERVAL_MS, DREAM_MIN_NEW_SESSIONS, dreamSince } from "./dream.ts";
@@ -24,7 +26,7 @@ import type { WorkerArgs } from "./dream-worker.ts";
 import { createMemoryTool, MEMORY_TOOL } from "./memory-tool.ts";
 import { createMemoryPanel } from "./panel.ts";
 import type { ModelPort } from "./port.ts";
-import { memoryPromptSection, PROMPT_SECTION } from "./prompts.ts";
+import { memoryPromptSection, PROMPT_SECTION, SAVE_MEMORY_TOOL } from "./prompts.ts";
 import {
 	appendLog,
 	deleteNote,
@@ -32,6 +34,7 @@ import {
 	listNotes,
 	type MemoryConfig,
 	memoryDir,
+	NOTE_TYPES,
 	notesDir,
 	readConfig,
 	readLog,
@@ -55,6 +58,23 @@ const MAX_QUEUED_CAPTURES = 3;
 const DREAM_POLL_MS = 3000;
 const WORKER_SCRIPT = fileURLToPath(new URL("./dream-worker.ts", import.meta.url));
 
+const fields = SAVE_MEMORY_TOOL.fields;
+const saveMemoryTool: Tool = {
+	name: SAVE_MEMORY_TOOL.name,
+	description: SAVE_MEMORY_TOOL.description,
+	parameters: Type.Object(
+		{
+			action: StringEnum(SAVE_MEMORY_TOOL.actions),
+			name: Type.Optional(Type.String({ description: fields.name })),
+			description: Type.Optional(Type.String({ description: fields.description })),
+			type: Type.Optional(StringEnum(NOTE_TYPES, { description: fields.type })),
+			body: Type.Optional(Type.String({ description: fields.body })),
+			reason: Type.String({ description: fields.reason }),
+		},
+		{ additionalProperties: false },
+	),
+};
+
 function toUsage(usage: unknown): CallUsage | null {
 	if (!usage || typeof usage !== "object") return null;
 	const u = usage as { input?: number; output?: number; cacheRead?: number; cost?: { total?: number } };
@@ -62,7 +82,7 @@ function toUsage(usage: unknown): CallUsage | null {
 }
 
 /** Jev and DeepSeek through Pi's public model registry; auth comes from auth.json, /login, or env. */
-function modelPort(ctx: ExtensionContext): ModelPort {
+export function modelPort(ctx: Pick<ExtensionContext, "modelRegistry">): ModelPort {
 	const registry = ctx.modelRegistry;
 	const jev = registry.getModelOfType("classifier", JEV_PROVIDER, JEV_MODEL);
 	const flash = registry.find(WRITER_PROVIDER, WRITER_MODEL);
@@ -92,13 +112,19 @@ function modelPort(ctx: ExtensionContext): ModelPort {
 		async write(systemPrompt, user, reasoning, signal) {
 			if (!flash) throw new Error("DeepSeek Flash is unavailable");
 			const message = await registry
-				.streamSimple(flash, { systemPrompt, messages: [{ role: "user", content: user, timestamp: Date.now() }] }, { reasoning, signal })
+				.streamSimple(
+					flash,
+					{ systemPrompt, messages: [{ role: "user", content: user, timestamp: Date.now() }], tools: [saveMemoryTool] },
+					{ reasoning, signal },
+				)
 				.result();
 			const text = message.content
 				.filter((part): part is { type: "text"; text: string } => part.type === "text")
 				.map((part) => part.text)
 				.join("");
-			return { text, usage: toUsage(message.usage), stopReason: message.stopReason, error: message.errorMessage };
+			const call = message.content.find((part) => part.type === "toolCall" && part.name === SAVE_MEMORY_TOOL.name);
+			const toolArgs = call?.type === "toolCall" ? (call.arguments as Record<string, unknown>) : undefined;
+			return { text, toolArgs, usage: toUsage(message.usage), stopReason: message.stopReason, error: message.errorMessage };
 		},
 	};
 }

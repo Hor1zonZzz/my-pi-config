@@ -45,8 +45,6 @@ test("summaries name the outcome", () => {
 		created: 5,
 		updated: 1,
 		deleted: 0,
-		confirmed: 0,
-		removedPassive: 0,
 		organizeFailed: false,
 	};
 	assert.match(summarize(done), /读取 5 个会话 · 新增 5 · 修改 1/);

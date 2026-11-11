@@ -31,21 +31,21 @@ test("project keys match Pi's session directory names", () => {
 
 test("a missing config means every switch is on", async (t) => {
 	const dir = await tempDir(t);
-	assert.deepEqual(await readConfig(dir), { enabled: true, passive: true, dreamAuto: true });
-	await writeConfig(dir, { enabled: false, passive: true, dreamAuto: false, lastDreamAt: 5 });
-	assert.deepEqual(await readConfig(dir), { enabled: false, passive: true, dreamAuto: false, lastDreamAt: 5 });
+	assert.deepEqual(await readConfig(dir), { enabled: true, dreamAuto: true });
+	await writeConfig(dir, { enabled: false, dreamAuto: false, lastDreamAt: 5 });
+	assert.deepEqual(await readConfig(dir), { enabled: false, dreamAuto: false, lastDreamAt: 5 });
 });
 
 test("notes round-trip through frontmatter", () => {
 	const text = serializeNote(
-		{ name: "pnpm-only", description: "Use pnpm: never npm", type: "feedback", source: "passive", sessions: ["a", "b"], unverifiedDreams: 1 },
+		{ name: "pnpm-only", description: "Use pnpm: never npm", type: "feedback", sessions: ["a", "b"], count: 1 },
 		"Use pnpm.\nWhy: the user said so.",
 	);
 	const { meta, body } = parseNote(text);
 	assert.equal(meta.name, "pnpm-only");
 	assert.equal(meta.description, "Use pnpm: never npm");
 	assert.deepEqual(meta.sessions, ["a", "b"]);
-	assert.equal(meta.unverifiedDreams, 1);
+	assert.equal(meta.count, 1);
 	assert.equal(body, "Use pnpm.\nWhy: the user said so.\n");
 });
 

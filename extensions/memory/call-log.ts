@@ -1,5 +1,5 @@
 /**
- * calls.jsonl: one line per Jev or DeepSeek call, with the full input and output, for later analysis.
+ * calls.jsonl: one line per dream agent run, with its input and output, for later analysis.
  * Free of Pi imports so `node --test` can run it.
  */
 import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -10,7 +10,8 @@ export const CALLS_ROTATED = "calls.1.jsonl";
 export const CALLS_MAX_BYTES = 20 * 1024 * 1024;
 export const CALLS_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
-export type CallRole = "jev-judge" | "deepseek-capture" | "deepseek-analyze" | "deepseek-organize";
+/** Older lines may also carry the retired passive-capture roles `jev-judge` and `deepseek-capture`. */
+export type CallRole = "deepseek-analyze" | "deepseek-organize";
 
 export interface CallUsage {
 	input: number;
@@ -32,7 +33,7 @@ export interface CallRecord {
 	error: string | null;
 	input: unknown;
 	output: unknown;
-	/** passed | below-threshold | create | update | skip | no-call | invalid-call | applied | error */
+	/** applied | error */
 	outcome: string;
 }
 
@@ -132,8 +133,7 @@ export function summarizeCalls(records: readonly CallRecord[]): { total: number;
 		roles.set(record.role, summary);
 		cost += record.usage?.cost ?? 0;
 	}
-	const order: CallRole[] = ["jev-judge", "deepseek-capture", "deepseek-analyze", "deepseek-organize"];
-	return { total: records.length, cost, roles: order.flatMap((role) => (roles.has(role) ? [roles.get(role) as RoleSummary] : [])) };
+	return { total: records.length, cost, roles: [...roles.values()] };
 }
 
 export function formatCost(cost: number): string {

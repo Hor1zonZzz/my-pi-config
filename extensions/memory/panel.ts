@@ -25,7 +25,6 @@ export interface PanelData {
 
 export interface PanelActions {
 	setEnabled(value: boolean): Promise<void>;
-	setPassive(value: boolean): Promise<void>;
 	setDreamAuto(value: boolean): Promise<void>;
 	deleteNote(note: NoteInfo): Promise<void>;
 	/** Starts the detached dream worker; its result is reported when a later session starts. */
@@ -42,12 +41,6 @@ export function ago(ms: number | undefined, now = Date.now()): string {
 	const hours = Math.floor(minutes / 60);
 	if (hours < 24) return `${hours} 小时前`;
 	return `${Math.floor(hours / 24)} 天前`;
-}
-
-function noteState(note: NoteInfo): string {
-	const source = typeof note.meta.source === "string" ? note.meta.source : "active";
-	if (source === "passive") return note.meta.verified ? "passive · 已验证" : "passive · 未验证";
-	return source;
 }
 
 interface Row {
@@ -208,15 +201,8 @@ export function createMemoryPanel(
 		{
 			id: "enabled",
 			label: "记忆",
-			description: "关闭后不注入记忆、不提供 memory 工具、不做被动捕获。改动从下一轮开始生效。",
+			description: "关闭后不注入记忆、不提供 memory 工具。改动从下一轮开始生效。",
 			currentValue: data.config.enabled ? ON : OFF,
-			values: [ON, OFF],
-		},
-		{
-			id: "passive",
-			label: "被动捕获（实验）",
-			description: "每轮结束后由 Jev（OpenRouter）判断是否值得记，再由 DeepSeek Flash 写笔记。",
-			currentValue: data.config.passive ? ON : OFF,
 			values: [ON, OFF],
 		},
 		{
@@ -229,7 +215,7 @@ export function createMemoryPanel(
 					"笔记",
 					notes.map((note) => ({
 						label: note.name,
-						value: `${typeof note.meta.type === "string" ? note.meta.type : "-"} · ${noteState(note)} · ${note.description}`,
+						value: `${typeof note.meta.type === "string" ? note.meta.type : "-"} · ${note.description}`,
 						open: () => view(note.path, noteText(note)),
 						remove: {
 							prompt: `删除 ${note.name}`,
@@ -292,7 +278,7 @@ export function createMemoryPanel(
 		{
 			id: "calls",
 			label: "调用历史",
-			description: "calls.jsonl：每次 Jev / DeepSeek 调用的完整输入输出、耗时和费用。",
+			description: "calls.jsonl：每次 Dream agent 运行的输入输出、耗时和费用。",
 			currentValue: `${summary.total} 次 · ${formatCost(summary.cost)}`,
 			submenu: (value, close) => {
 				const rows: Row[] = summary.roles.map((role) => ({
@@ -328,7 +314,6 @@ export function createMemoryPanel(
 		getSettingsListTheme(),
 		(id, value) => {
 			if (id === "enabled") void actions.setEnabled(value === ON);
-			if (id === "passive") void actions.setPassive(value === ON);
 		},
 		() => done(),
 	);

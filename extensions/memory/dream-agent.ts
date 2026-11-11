@@ -3,23 +3,15 @@
  * DeepSeek Flash with high thinking, like the cookbook's transcript-analyzer and memory-organizer.
  *
  * The session loads no discovered extensions, skills, prompt templates, or context files: the full
- * memory extension would inject itself, capture its own turns, and start dreams inside the dream.
+ * memory extension would inject itself and start dreams inside the dream.
  * It runs in the dream's work directory with Pi's base tools; the prompt keeps it to the notes and the
  * session copies, not the project. One inline extension adds the `memory` tool (the way to change notes;
- * create never overwrites), `confirm_passive` for analyzers, and maps /memories paths given to
+ * create never overwrites) and maps /memories paths given to
  * read/grep/find/ls onto the notes directory. Its session files go to <memory>/dreams/, never
  * to the project's session directory, so later dreams do not review dreams.
  */
 import type { Api, Model } from "@earendil-works/pi-ai";
-import {
-	createAgentSession,
-	DefaultResourceLoader,
-	defineTool,
-	type ExtensionAPI,
-	SessionManager,
-	SettingsManager,
-} from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { createAgentSession, DefaultResourceLoader, type ExtensionAPI, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { CallUsage } from "./call-log.ts";
 import type { AgentRun, AgentTask, DreamAgents } from "./dream.ts";
 import { createMemoryTool, MEMORY_TOOL } from "./memory-tool.ts";
@@ -29,7 +21,6 @@ import { MEMORY_ROOT } from "./tool.ts";
 /** Pi's base tools, all of them. */
 export const BASE_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
 const PATH_TOOLS = new Set(["read", "grep", "find", "ls"]);
-const CONFIRM_TOOL = "confirm_passive";
 
 function addUsage(total: CallUsage | null, usage: unknown): CallUsage | null {
 	if (!usage || typeof usage !== "object") return total;
@@ -59,34 +50,10 @@ export function createDreamAgents(options: DreamAgentOptions): DreamAgents {
 		async run(task: AgentTask, signal: AbortSignal): Promise<AgentRun> {
 			if (!model) throw new Error("DeepSeek Flash is unavailable");
 			const notes = options.notes;
-			const confirmed = new Set<string>();
 			const analyzer = task.role === "analyze";
 
 			const inline = (pi: ExtensionAPI) => {
 				pi.registerTool(createMemoryTool({ notes: () => notes, options: { overwrite: false } }));
-				if (analyzer) {
-					pi.registerTool(
-						defineTool({
-							name: CONFIRM_TOOL,
-							label: "Confirm passive note",
-							description:
-								"Mark notes with `source: passive` (and no `verified`) as confirmed because the sessions you read clearly support them. A passive note is removed once two dreams that read its source session did not confirm it.",
-							parameters: Type.Object({ names: Type.Array(Type.String(), { description: "Note names (frontmatter name)" }) }),
-							async execute(_id, params) {
-								const accepted = params.names.filter((name) => task.passiveCandidates.has(name));
-								const rejected = params.names.filter((name) => !task.passiveCandidates.has(name));
-								for (const name of accepted) confirmed.add(name);
-								const text = [
-									accepted.length ? `Confirmed: ${accepted.join(", ")}` : "",
-									rejected.length ? `Not unverified passive notes (ignored): ${rejected.join(", ")}` : "",
-								]
-									.filter(Boolean)
-									.join("\n");
-								return { content: [{ type: "text", text: text || "Nothing to confirm." }], details: { accepted, rejected } };
-							},
-						}),
-					);
-				}
 				pi.on("tool_call", (event) => {
 					if (!PATH_TOOLS.has(event.toolName)) return undefined;
 					// Agents naturally reuse the memory tool's /memories paths with read/grep; map them to the notes directory.
@@ -116,7 +83,7 @@ export function createDreamAgents(options: DreamAgentOptions): DreamAgents {
 				model,
 				thinkingLevel: "high",
 				resourceLoader,
-				tools: [...BASE_TOOLS, MEMORY_TOOL, ...(analyzer ? [CONFIRM_TOOL] : [])],
+				tools: [...BASE_TOOLS, MEMORY_TOOL],
 				sessionManager: SessionManager.create(task.workDir, options.dreamsDir),
 				settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 2 } }),
 			});
@@ -141,7 +108,6 @@ export function createDreamAgents(options: DreamAgentOptions): DreamAgents {
 					ok,
 					error: ok ? undefined : (last?.errorMessage ?? (signal.aborted ? "aborted" : `stopped: ${stopReason}`)),
 					stopReason,
-					confirmed: [...confirmed],
 					usage,
 					toolCalls,
 					finalText: session.getLastAssistantText() ?? "",

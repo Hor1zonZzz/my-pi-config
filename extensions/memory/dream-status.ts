@@ -70,6 +70,6 @@ export function summarize(result: DreamResult): string {
 		case "nothing":
 			return "上次 Dream：上次整理之后（最近 3 天内）没有新会话。";
 		default:
-			return `上次 Dream 完成：读取 ${result.sessions} 个会话${result.organizeFailed ? "，整理失败" : ""} · 新增 ${result.created} · 修改 ${result.updated} · 删除 ${result.deleted}（含被动 ${result.removedPassive}）· 验证被动笔记 ${result.confirmed}`;
+			return `上次 Dream 完成：读取 ${result.sessions} 个会话${result.organizeFailed ? "，整理失败" : ""} · 新增 ${result.created} · 修改 ${result.updated} · 删除 ${result.deleted}`;
 	}
 }

@@ -10,14 +10,11 @@ import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { CallUsage } from "./call-log.ts";
 import { appendCall } from "./call-log.ts";
-import type { ModelRef } from "./port.ts";
-import { appendLog, deleteNote, listNotes, type NoteInfo, rebuildIndex, snapshot, snapshotName, writeNote } from "./store.ts";
+import { appendLog, listNotes, rebuildIndex, snapshot, snapshotName } from "./store.ts";
 import { type SessionFile, sessionsSince } from "./transcript.ts";
 
 /** Sessions one dream reads (one analyzer); the rest wait for the next dream. */
 export const DREAM_MAX_SESSIONS = 20;
-/** A passive note is removed after this many dreams that read its source session could not confirm it. */
-export const PASSIVE_UNVERIFIED_LIMIT = 2;
 export const DREAM_MIN_NEW_SESSIONS = 3;
 export const DREAM_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /** Dreams read only sessions changed within this window: older ones describe a project that has moved on. */
@@ -35,21 +32,22 @@ export interface AgentTask {
 	workDir: string;
 	/** Analyze only: the copied raw session JSONL files (absolute paths) and their ids, oldest first. */
 	transcripts?: { path: string; session: string }[];
-	/** Analyze only: passive notes the agent may confirm. */
-	passiveCandidates: ReadonlySet<string>;
 }
 
 export interface AgentRun {
 	ok: boolean;
 	error?: string;
 	stopReason: string;
-	/** Names the analyzer confirmed with confirm_passive. */
-	confirmed: string[];
 	usage: CallUsage | null;
 	toolCalls: number;
 	finalText: string;
 	/** The agent's own session file under dreams/. */
 	sessionFile?: string;
+}
+
+export interface ModelRef {
+	provider: string;
+	model: string;
 }
 
 export interface DreamAgents {
@@ -81,15 +79,9 @@ export interface DreamResult {
 	created: number;
 	updated: number;
 	deleted: number;
-	confirmed: number;
-	removedPassive: number;
 	organizeFailed: boolean;
 	/** The new lastDreamAt: the newest session file read. Unset unless status is "done" or "nothing". */
 	readUntil?: number;
-}
-
-function isPassiveUnverified(note: NoteInfo): boolean {
-	return note.meta.source === "passive" && !note.meta.verified;
 }
 
 async function noteTexts(notes: string): Promise<Map<string, string>> {
@@ -122,7 +114,7 @@ async function recordRun(
 		stopReason: run.stopReason,
 		error: run.error ?? null,
 		input: task,
-		output: { finalText: run.finalText, confirmed: run.confirmed, toolCalls: run.toolCalls, sessionFile: run.sessionFile ?? null },
+		output: { finalText: run.finalText, toolCalls: run.toolCalls, sessionFile: run.sessionFile ?? null },
 		outcome: run.ok ? "applied" : "error",
 	}).catch(() => {});
 }
@@ -132,7 +124,7 @@ async function safeRun(agents: DreamAgents, task: AgentTask, signal: AbortSignal
 		return await agents.run(task, signal);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		return { ok: false, error: message, stopReason: "error", confirmed: [], usage: null, toolCalls: 0, finalText: "" };
+		return { ok: false, error: message, stopReason: "error", usage: null, toolCalls: 0, finalText: "" };
 	}
 }
 
@@ -144,8 +136,6 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 		created: 0,
 		updated: 0,
 		deleted: 0,
-		confirmed: 0,
-		removedPassive: 0,
 		organizeFailed: false,
 	};
 	const { agents, signal } = input;
@@ -163,7 +153,6 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 		await snapshot(input.dir, now);
 		await rebuildIndex(input.notes);
 		const before = await noteTexts(input.notes);
-		const passiveBefore = new Set((await listNotes(input.notes)).filter(isPassiveUnverified).map((note) => note.name));
 
 		// Copy each raw session file, so the analyzer reads a stable copy even if that session is still running.
 		await mkdir(join(workDir, "sessions"), { recursive: true });
@@ -178,7 +167,7 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 		if (signal.aborted) return { ...result, status: "aborted" };
 		const transcripts = files.map((file) => ({ path: file.path, session: file.session.id }));
 		const started = Date.now();
-		const analysis = await safeRun(agents, { role: "analyze", workDir, transcripts, passiveCandidates: passiveBefore }, signal);
+		const analysis = await safeRun(agents, { role: "analyze", workDir, transcripts }, signal);
 		await recordRun(input, ref, "deepseek-analyze", { transcripts }, started, analysis);
 		if (signal.aborted) return { ...result, status: "aborted" };
 		result.sessions = files.length;
@@ -187,39 +176,14 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 			await rebuildIndex(input.notes);
 			return { ...result, failedSessions: files.length, status: "error", reason: analysis.error ?? "analysis failed" };
 		}
-		const confirmed = new Set(analysis.confirmed);
-		/** Sessions the analyzer finished: only these can confirm or fail to confirm a passive note. */
-		const read = new Set(files.map((file) => file.session.id));
 
 		// Organize the whole store once.
 		if ((await listNotes(input.notes)).length > 1) {
 			const started = Date.now();
-			const run = await safeRun(agents, { role: "organize", workDir, passiveCandidates: new Set() }, signal);
+			const run = await safeRun(agents, { role: "organize", workDir }, signal);
 			await recordRun(input, ref, "deepseek-organize", {}, started, run);
 			if (signal.aborted) return { ...result, status: "aborted" };
 			result.organizeFailed = !run.ok;
-		}
-
-		// Passive notes: confirmed ones become ordinary notes; ones no dream can confirm go away. A dream that
-		// did not read the session a note came from has no evidence either way and leaves its count alone.
-		for (const note of await listNotes(input.notes)) {
-			if (!passiveBefore.has(note.name) || !isPassiveUnverified(note)) continue;
-			if (confirmed.has(note.name)) {
-				const { unverifiedDreams: _drop, ...meta } = note.meta;
-				await writeNote(input.notes, note.path, { ...meta, verified: now.toISOString().slice(0, 10) }, note.body);
-				result.confirmed += 1;
-				continue;
-			}
-			const sources = Array.isArray(note.meta.sessions) ? (note.meta.sessions as unknown[]).map(String) : [];
-			if (sources.length > 0 && !sources.some((id) => read.has(id))) continue;
-			const misses = (typeof note.meta.unverifiedDreams === "number" ? note.meta.unverifiedDreams : 0) + 1;
-			if (misses >= PASSIVE_UNVERIFIED_LIMIT) {
-				await deleteNote(input.notes, note.path);
-				await appendLog(input.dir, `dream removed passive note ${note.name}: not confirmed by ${misses} dreams`, now);
-				result.removedPassive += 1;
-			} else {
-				await writeNote(input.notes, note.path, { ...note.meta, unverifiedDreams: misses }, note.body);
-			}
 		}
 
 		// What changed, measured on disk rather than taken from the agents' word.
@@ -233,7 +197,7 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 
 		await appendLog(
 			input.dir,
-			`dream read ${result.sessions} sessions (${result.failedSessions} failed${result.organizeFailed ? ", organize failed" : ""}): created ${result.created}, updated ${result.updated}, deleted ${result.deleted}, confirmed ${result.confirmed}, removed passive ${result.removedPassive}`,
+			`dream read ${result.sessions} sessions (${result.failedSessions} failed${result.organizeFailed ? ", organize failed" : ""}): created ${result.created}, updated ${result.updated}, deleted ${result.deleted}`,
 			now,
 		);
 		result.readUntil = sessions[sessions.length - 1].mtimeMs;

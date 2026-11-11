@@ -4,7 +4,7 @@
  * <agent-dir>/memory/<project-key>/
  *   config.json   MemoryConfig
  *   calls.jsonl   model call history (see call-log.ts)
- *   log.md        append-only log of passive writes and dreams
+ *   log.md        append-only log of dreams and deletions
  *   .snapshots/   copies of notes/ taken before each dream
  *   notes/        the directory the model sees as /memories
  *     MEMORY.md   generated index, one line per note
@@ -21,31 +21,21 @@ export const INDEX_MAX_LINES = 200;
 export const INDEX_MAX_BYTES = 25_000;
 export const NOTE_TYPES = ["user", "feedback", "project", "reference"] as const;
 export type NoteType = (typeof NOTE_TYPES)[number];
-export type NoteSource = "active" | "passive" | "dream";
 
 export interface MemoryConfig {
 	enabled: boolean;
-	/** Background capture of each settled turn (Jev judge + DeepSeek writer). Experimental. */
-	passive: boolean;
 	/** Run a dream on session start at most once a day. */
 	dreamAuto: boolean;
 	/** Epoch ms of the newest session file the last completed dream read. */
 	lastDreamAt?: number;
 }
 
-export const DEFAULT_CONFIG: MemoryConfig = { enabled: true, passive: true, dreamAuto: true };
+export const DEFAULT_CONFIG: MemoryConfig = { enabled: true, dreamAuto: true };
 
 export interface NoteMeta {
 	name?: string;
 	description?: string;
 	type?: string;
-	source?: string;
-	sessions?: string[];
-	updated?: string;
-	/** ISO date of the dream that confirmed a passive note against a transcript. */
-	verified?: string;
-	/** Dreams in a row that could not confirm a passive note. */
-	unverifiedDreams?: number;
 	[key: string]: unknown;
 }
 
@@ -77,7 +67,6 @@ export async function readConfig(dir: string): Promise<MemoryConfig> {
 		const raw = JSON.parse(await readFile(join(dir, "config.json"), "utf8")) as Partial<MemoryConfig>;
 		return {
 			enabled: typeof raw.enabled === "boolean" ? raw.enabled : DEFAULT_CONFIG.enabled,
-			passive: typeof raw.passive === "boolean" ? raw.passive : DEFAULT_CONFIG.passive,
 			dreamAuto: typeof raw.dreamAuto === "boolean" ? raw.dreamAuto : DEFAULT_CONFIG.dreamAuto,
 			lastDreamAt: typeof raw.lastDreamAt === "number" ? raw.lastDreamAt : undefined,
 		};
@@ -133,7 +122,7 @@ function parseValue(raw: string): unknown {
 	return raw.replace(/^"(.*)"$/, "$1");
 }
 
-const META_ORDER = ["name", "description", "type", "source", "sessions", "updated", "verified", "unverifiedDreams"];
+const META_ORDER = ["name", "description", "type"];
 
 export function serializeNote(meta: NoteMeta, body: string): string {
 	const keys = [

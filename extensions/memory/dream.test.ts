@@ -24,7 +24,7 @@ function agents(notes: string, analyze: Script, organize: Script = async () => {
 			seen.push(task);
 			const transcript = (await Promise.all((task.transcripts ?? []).map((t) => readFile(t.path, "utf8")))).join("\n");
 			const extra = (await (task.role === "analyze" ? analyze : organize)(task, transcript, notes)) ?? {};
-			return { ok: true, stopReason: "stop", confirmed: [], usage, toolCalls: 1, finalText: "done", sessionFile: "/dreams/x.jsonl", ...extra };
+			return { ok: true, stopReason: "stop", usage, toolCalls: 1, finalText: "done", sessionFile: "/dreams/x.jsonl", ...extra };
 		},
 	};
 }
@@ -69,7 +69,7 @@ test("no new sessions means nothing to do; no model means unavailable", async (t
 
 test("one analyzer over every raw session copy, then one organizer; changes are measured on disk", async (t) => {
 	const s = await setup(t);
-	await writeNote(s.notes, "use-pnpm.md", { name: "use-pnpm", description: "pnpm", type: "feedback", source: "passive", unverifiedDreams: 0 }, "pnpm");
+	await writeNote(s.notes, "use-pnpm.md", { name: "use-pnpm", description: "pnpm", type: "feedback" }, "pnpm");
 	await writeNote(s.notes, "pnpm-again.md", { name: "pnpm-again", description: "pnpm dup", type: "feedback" }, "pnpm");
 	await s.addSession("a", 100, "use pnpm please");
 	await s.addSession("b", 150, "run pnpm test");
@@ -81,10 +81,8 @@ test("one analyzer over every raw session copy, then one organizer; changes are 
 			agents(
 				s.notes,
 				async (task, transcript, notes) => {
-					assert.deepEqual([...task.passiveCandidates], ["use-pnpm"]);
 					assert.ok(transcript.includes("use pnpm please") && transcript.includes("pnpm test"));
 					await executeMemoryCommand(notes, { command: "create", path: "/memories/test-cmd.md", file_text: "---\nname: test-cmd\ndescription: 测试命令\ntype: project\n---\n\npnpm test" }, { overwrite: false });
-					return { confirmed: ["use-pnpm"] };
 				},
 				async (_task, _transcript, notes) => {
 					await executeMemoryCommand(notes, { command: "delete", path: "/memories/pnpm-again.md" });
@@ -107,14 +105,13 @@ test("one analyzer over every raw session copy, then one organizer; changes are 
 			["organize", undefined],
 		],
 	);
-	assert.deepEqual([result.sessions, result.created, result.updated, result.deleted, result.confirmed], [2, 1, 1, 1, 1]);
+	assert.deepEqual([result.sessions, result.created, result.updated, result.deleted], [2, 1, 0, 1]);
 	assert.equal(result.readUntil, at(150));
 	const notes = await listNotes(s.notes);
 	assert.deepEqual(
 		notes.map((note) => note.name),
 		["test-cmd", "use-pnpm"],
 	);
-	assert.equal(notes.find((note) => note.name === "use-pnpm")?.meta.verified, "2026-11-10");
 	const snapshots = await readdir(join(s.dir, ".snapshots"));
 	assert.deepEqual((await readdir(join(s.dir, ".snapshots", snapshots[0]))).sort(), ["pnpm-again.md", "use-pnpm.md"]);
 	assert.deepEqual(
@@ -139,20 +136,6 @@ test("one analyzer run reads at most maxSessions, oldest first; the rest wait fo
 	assert.equal(result.readUntil, at(102));
 });
 
-test("a passive note no dream confirms is removed after two dreams", async (t) => {
-	const s = await setup(t);
-	await writeNote(s.notes, "guess.md", { name: "guess", description: "a guess", type: "project", source: "passive", unverifiedDreams: 0 }, "maybe");
-	await s.addSession("a", 100, "hello");
-	const first = await dream(input(s, agents(s.notes, async () => {})));
-	assert.equal(first.removedPassive, 0);
-	assert.equal((await listNotes(s.notes))[0].meta.unverifiedDreams, 1);
-	await s.addSession("b", 300, "hello again");
-	const second = await dream(input(s, agents(s.notes, async () => {}), first.readUntil));
-	assert.equal(second.removedPassive, 1);
-	assert.deepEqual(await listNotes(s.notes), []);
-	assert.match(await readFile(join(s.dir, "log.md"), "utf8"), /removed passive note guess/);
-});
-
 test("a failed analysis is an error that reads nothing, so every session is read again next time", async (t) => {
 	const s = await setup(t);
 	await s.addSession("a", 100, "first");
@@ -168,18 +151,6 @@ test("a failed analysis is an error that reads nothing, so every session is read
 	const all = await dream(input(s, crash));
 	assert.equal(all.status, "error");
 	assert.equal((await readCalls(s.dir)).at(-1)?.error, "down");
-});
-
-test("a passive note keeps its count when a dream did not read its source session", async (t) => {
-	const s = await setup(t);
-	const meta = { name: "guess", description: "a guess", type: "project", source: "passive", sessions: ["later"], unverifiedDreams: 0 };
-	await writeNote(s.notes, "guess.md", meta, "maybe");
-	await s.addSession("a", 100, "older work");
-	const first = await dream(input(s, agents(s.notes, async () => {})));
-	assert.equal((await listNotes(s.notes))[0].meta.unverifiedDreams, 0);
-	await s.addSession("later", 300, "where the guess came from");
-	await dream(input(s, agents(s.notes, async () => {}), first.readUntil));
-	assert.equal((await listNotes(s.notes))[0].meta.unverifiedDreams, 1);
 });
 
 test("the analyzer gets a byte-identical copy of the raw session file", async (t) => {

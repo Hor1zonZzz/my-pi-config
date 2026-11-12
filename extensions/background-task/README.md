@@ -38,6 +38,10 @@ When a task ends, a `background-task` custom message with the outcome, duration,
 | Terminated by `SIGTERM`, `SIGINT`, or `SIGHUP`, or stopped with `/bg stop` | `triggerTurn: false`: recorded for the next turn without waking the model |
 | Killed by session shutdown | not reported |
 
+### Running checks
+
+Every 10 minutes of a task's run time (counted from its start, also for a promoted `bash` command), a `background-task` message with `details.kind: "check"` is sent with `deliverAs: "steer"`, `triggerTurn: true`. It gives the elapsed time, the line count, how many lines arrived since the previous check (so a stalled task shows "no new output"), and up to the last 30 lines (4 KiB), and asks the model to stop and adjust a stuck, failing, or unneeded task or confirm it in one line. Checks stop when the task ends and are never sent to another session. Long-running servers are checked too.
+
 ### Lifecycle
 
 - Pressing Esc to abort a turn does not affect background tasks.
@@ -75,9 +79,10 @@ monitor({ command: string, description: string, timeout_ms?: number, cwd?: strin
 - Lines that arrive within 200 ms are delivered together as one `monitor` custom message headed by the description, with at most 40 lines (4 KiB, 500 characters per line); the rest is referenced by log line numbers. Each event is delivered with `deliverAs: "steer"`, `triggerTurn: true`.
 - `timeout_ms` defaults to 5 minutes and is clamped to 1 second–30 minutes. At expiry the script is killed and the model is told to start a new monitor if it still needs the watch.
 - A monitor that sends 30 events or receives 300 lines within one minute is stopped for flooding, and the model is told to use a tighter filter.
+- A monitor that has printed no stdout line after 5 minutes is reported once (`details.kind: "silent"`, `deliverAs: "steer"`, `triggerTurn: true`) with the common causes of a silent script and up to the last 20 lines of its stderr, so the model can fix a broken script instead of waiting for the expiry. Monitors with a timeout of 5 minutes or less are not reminded.
 - The model stops a monitor with `kill -- -<pgid>`; the user stops one with `/bg stop <id>`.
 - At most 8 monitors run at once per session.
-- The tool's prompt guidelines cover choosing `background_task` for a single notification, per-line flushing (`grep --line-buffered`, no `head`), matching failure states as well as success, and keeping event volume low.
+- The tool's prompt guidelines cover choosing `background_task` for a single notification, per-line flushing (`grep --line-buffered`, no `head`), matching failure states as well as success, keeping event volume low, printing progress lines instead of only the final state, avoiding wrappers that hold output until their command exits, and `pgrep -f` patterns that match the shell running them.
 
 ### End reports
 
@@ -98,7 +103,7 @@ Monitors follow the same lifecycle as background tasks: they survive Esc and are
 
 ## Footer entries
 
-Accent-colored `bg N` and `mon N` footer entries show the number of running tasks and monitors; an entry is hidden while nothing of its kind is running.
+Accent-colored `bg N` and `mon N` footer entries show the number of running tasks and monitors; an entry is hidden while nothing of its kind is running. In the TUI they sit on Pi's stats line, right after the context usage (`… 4.0%/128k (auto)  bg 1  mon 2      model`), instead of on a line of their own: the extension installs a `setFooter` wrapper around Pi's own footer instance (found in the TUI tree) that takes their width out of the padding before the model name. When that padding is too narrow they lead the extension status line instead; if Pi's footer cannot be found they fall back to ordinary `setStatus` entries. Another extension that replaces the footer would replace this one too.
 
 In the interactive TUI the entries can take focus:
 
@@ -110,9 +115,20 @@ In the interactive TUI the entries can take focus:
 | `↑` or `Esc` | Return to the editor |
 | Any other key | Return to the editor and type normally |
 
-The list shows running items first, then finished ones, newest first, with ID, state, duration, and command or monitor description. `↑`/`↓` select, `x` stops the selected running item (the same as `/bg stop`, without confirmation), and `Esc` or `Enter` closes the list and keeps the entry focused.
+The list shows running items first, then finished ones, newest first, with ID, state, duration, and command or monitor description. `↑`/`↓` select, `x` stops the selected running item (the same as `/bg stop`, without confirmation), `Enter` opens the selected item's output, and `Esc` closes the list and keeps the entry focused.
+
+The output viewer shows the item's ID, state, elapsed time, line (and event) counts, command or description, and log path, then the end of its log (the last 64 KiB, cleaned and wrapped), filling the screen except for 14 rows; for a monitor this is its stdout, followed by up to 4 lines of stderr when there is any. It follows the log while it grows; `↑`/`↓` and `PgUp`/`PgDn` scroll back (the view stays on the same lines as more arrive), `g`/`Home` and `G`/`End` jump to the top and back to following, `x` stops a running item, and `Esc` or `←` returns to the list. The list and viewer redraw every second only while they are open; nothing else in the TUI updates on its own.
 
 The editor keeps real keyboard focus: a raw terminal input listener (`ctx.ui.onTerminalInput`) sees keys first and consumes only the navigation keys while an entry is focused. That listener also runs while a built-in selector or dialog (for example `/login` or `/model`) has replaced the editor, so it acts only while the main editor has focus and otherwise leaves every key to that component. Pi has no public "editor focused" query: a zero-line `belowEditor` widget hands its factory's `TUI` to the extension, and the focused component counts as the editor when it has pi-tui `Editor`'s `getText()`. Whether the cursor is on the last line uses the editor's public `getLines()`, `getCursor()`, and `isShowingAutocomplete()`, plus its private `isOnLastVisualLine()` and `historyIndex` when present (wrapped last line and history browsing); without them it falls back to the last logical line. The list is a `ctx.ui.custom()` screen.
+
+## TUI rendering
+
+`render.ts` draws everything this extension shows in the transcript:
+
+- Tool rows: `background_task` shows `bg ❯ <command>` and `● bg-N started in the background`; `monitor` shows `mon <description> · up to <timeout>` and `● mon-N watching`; a `bash` command moved to the background shows `● bg-N moved to the background` with its last output lines. Expanding a row adds the log paths and how to stop it.
+- Messages: exit reports, running checks, monitor events, the silent reminder, and monitor end reports are cards on Pi's custom message background with a state icon (`✓`, `✗`, `■`, `↻`, `◆`, `▲`, `◷`), the ID, elapsed time and clock time, the command or description, and the last few lines. Expanding a card adds the full text the model received. They are built from structured `details` (`kind`, `command`, `description`, `elapsedMs`, `tail`/`preview`/`finalEvents`/`stderrTail`, …); messages from older versions without them keep the plain text.
+
+Tool rows and messages never change after they are drawn. Pi's main-screen renderer can update a line above the viewport only by clearing the screen and scrollback, so current output is shown on demand by the footer entries' output viewer instead.
 
 ## Tests
 

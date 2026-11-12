@@ -7,26 +7,28 @@ import {
 	defineTool,
 	type ExtensionAPI,
 	getAgentDir,
-	getMarkdownTheme,
+	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Markdown } from "@earendil-works/pi-tui";
+import { Text } from "@earendil-works/pi-tui";
 import {
 	firstLine,
 	formatDuration,
 	outcomeText,
+	previewLines,
 	promotedMessage,
 	shortOutcome,
 	startedMessage,
 	type TaskRecord,
 } from "./format.ts";
 import {
+	DEFAULT_TIMEOUT_MS,
 	MAX_TIMEOUT_MS,
 	MIN_TIMEOUT_MS,
 	monitorOutcomeText,
 	monitorStartedMessage,
 	shortMonitorOutcome,
 } from "./monitor-format.ts";
-import { MONITOR_MESSAGE_TYPE, MonitorManager } from "./monitor-manager.ts";
+import { MONITOR_MESSAGE_TYPE, MonitorManager, SILENT_AFTER_MS } from "./monitor-manager.ts";
 import {
 	ensureScratchpad,
 	pruneScratchpads,
@@ -34,8 +36,16 @@ import {
 	scratchpadRoot,
 	sessionScratchpad,
 } from "./scratchpad.ts";
-import { type PanelRow, StatusPanels } from "./status-ui.ts";
-import { BackgroundTaskManager, MESSAGE_TYPE, promoteAfterMsFrom } from "./task-manager.ts";
+import {
+	renderMonitorCall,
+	renderMonitorMessage,
+	renderMonitorRow,
+	renderTaskCall,
+	renderTaskMessage,
+	renderTaskRow,
+} from "./render.ts";
+import { type PanelDetail, type PanelRow, StatusPanels } from "./status-ui.ts";
+import { BackgroundTaskManager, CHECK_INTERVAL_MS, MESSAGE_TYPE, promoteAfterMsFrom } from "./task-manager.ts";
 
 const STATUS_KEY = "background-task";
 const MONITOR_STATUS_KEY = "monitor";
@@ -44,6 +54,21 @@ const PROMPT_SECTION = "scratchpad";
 const BACKGROUND_TOOLS = ["background_task", "monitor"];
 /** Thrown through the built-in bash execution once its command has moved to the background. */
 const PROMOTED = "moved to background";
+
+/** The text of a tool result, for errors rendered without the custom card. */
+function errorText(result: { content: { type: string; text?: string }[] }, theme: Theme): Text {
+	const text = result.content
+		.filter((part) => part.type === "text")
+		.map((part) => part.text ?? "")
+		.join("\n");
+	return new Text(theme.fg("error", text), 0, 0);
+}
+
+/** The first line of a command, plus how many more lines it has. */
+function commandTitle(command: string): string {
+	const lines = command.trim().split("\n");
+	return lines.length > 1 ? `${lines[0]} (+${lines.length - 1} lines)` : (lines[0] ?? "");
+}
 
 /** Running rows first, then finished ones, newest first in each group. */
 function panelRows<T extends { id: string; status: string; startedAt: number; endedAt?: number }>(
@@ -89,6 +114,34 @@ export default function (pi: ExtensionAPI) {
 				...(builtin.promptGuidelines ?? []),
 				`A bash command still running after ${promoteAfter} is moved to the background: the call returns with the task ID, log path, and output so far, and the exit is reported automatically. Do not rerun, poll, or sleep waiting for it; continue with other work or end your turn.`,
 			],
+			// A command moved to the background is shown as a task row; anything else keeps the built-in look.
+			renderResult(result, options, theme, context) {
+				const details = result.details as
+					| { backgroundTaskId?: string; pgid?: number; fullOutputPath?: string; promotedAfterMs?: number; tail?: string[] }
+					| undefined;
+				if (!details?.backgroundTaskId || options.isPartial) {
+					return builtin.renderResult
+						? builtin.renderResult(result as Parameters<typeof builtin.renderResult>[0], options, theme, context)
+						: new Text("", 0, 0);
+				}
+				// The built-in renderer's elapsed-time ticker only stops on a final result it renders itself.
+				const builtinState = context.state as { interval?: ReturnType<typeof setInterval> };
+				if (builtinState.interval) {
+					clearInterval(builtinState.interval);
+					builtinState.interval = undefined;
+				}
+				return renderTaskRow(
+					theme,
+					{
+						taskId: details.backgroundTaskId,
+						pgid: details.pgid,
+						logPath: details.fullOutputPath,
+						promotedAfterMs: details.promotedAfterMs ?? promoteAfterMs,
+						tail: details.tail,
+					},
+					options.expanded,
+				);
+			},
 			async execute(toolCallId, params, signal, onUpdate, ctx) {
 				// A timeout no longer than the threshold always ends the command in the foreground.
 				if (params.timeout !== undefined && params.timeout * 1000 <= promoteAfterMs) {
@@ -111,10 +164,17 @@ export default function (pi: ExtensionAPI) {
 					if (!promoted) throw error;
 					const { task, tail } = promoted;
 					// The built-in renderer shows fullOutputPath as "Full output: <log>".
-					const details: BashToolDetails & { backgroundTaskId: string; pgid?: number } = {
+					const details: BashToolDetails & {
+						backgroundTaskId: string;
+						pgid?: number;
+						promotedAfterMs?: number;
+						tail: string[];
+					} = {
 						fullOutputPath: task.logPath,
 						backgroundTaskId: task.id,
 						pgid: task.pgid,
+						promotedAfterMs: task.promotedAfterMs,
+						tail: previewLines(tail, 8),
 					};
 					return { content: [{ type: "text", text: promotedMessage(task, tail) }], details };
 				}
@@ -131,6 +191,20 @@ export default function (pi: ExtensionAPI) {
 			running: () => manager.runningIds().length,
 			rows: (now) =>
 				panelRows(manager.list(), now, (task) => ({ state: shortOutcome(task), label: firstLine(task.command, 200) })),
+			detail: (id, now): PanelDetail | undefined => {
+				const task = manager.snapshot(id)?.record;
+				if (!task) return undefined;
+				return {
+					id,
+					running: task.status === "running",
+					state: shortOutcome(task),
+					elapsed: formatDuration((task.endedAt ?? now) - task.startedAt),
+					title: commandTitle(task.command),
+					meta: `${task.lines} line${task.lines === 1 ? "" : "s"}${task.pgid ? ` · pgid ${task.pgid}` : ""}`,
+					logLabel: "output",
+					logPath: task.logPath,
+				};
+			},
 			stop: (id) => manager.stop(id),
 		},
 		{
@@ -145,6 +219,23 @@ export default function (pi: ExtensionAPI) {
 					state: shortMonitorOutcome(monitor),
 					label: `${firstLine(monitor.description, 80)} · ${monitor.events} events`,
 				})),
+			detail: (id, now): PanelDetail | undefined => {
+				const monitor = monitors.snapshot(id)?.record;
+				if (!monitor) return undefined;
+				const elapsedMs = (monitor.endedAt ?? now) - monitor.startedAt;
+				const left = monitor.status === "running" ? ` · ${formatDuration(Math.max(0, monitor.timeoutMs - elapsedMs))} left` : "";
+				return {
+					id,
+					running: monitor.status === "running",
+					state: shortMonitorOutcome(monitor),
+					elapsed: formatDuration(elapsedMs),
+					title: monitor.description,
+					meta: `${monitor.events} event${monitor.events === 1 ? "" : "s"} · ${monitor.lines} line${monitor.lines === 1 ? "" : "s"}${left}`,
+					logLabel: "stdout (every line was an event)",
+					logPath: monitor.logPath,
+					stderrPath: monitor.stderrPath,
+				};
+			},
 			stop: (id) => monitors.stop(id),
 		},
 	]);
@@ -162,6 +253,7 @@ export default function (pi: ExtensionAPI) {
 					: "Use background_task instead of bash for commands likely to take more than about 30 seconds (builds, full test suites, installs, downloads) and for servers or watchers that keep running.",
 				"After starting a background task, continue with other work or end your turn. Do not poll, sleep, or tail the log in a loop waiting for it; its exit is reported automatically.",
 				"Read a background task's log with read; the exit report gives its line count, so use an offset near the end. Stop a task with `kill -- -<pgid>`, and stop servers you started once they are no longer needed.",
+				`Every ${CHECK_INTERVAL_MS / 60_000} minutes a task is still running, you are sent the end of its log and asked to check it: if it is stuck, failing, or no longer needed, stop it and adjust; otherwise answer in one line. Prefer commands that print progress as they go, so these checks show whether it is advancing.`,
 			],
 			parameters: Type.Object({
 				command: Type.String({ description: "Shell command to run in the background" }),
@@ -171,6 +263,14 @@ export default function (pi: ExtensionAPI) {
 					}),
 				),
 			}),
+			renderCall(args, theme) {
+				return renderTaskCall(theme, args.command, args.cwd);
+			},
+			renderResult(result, options, theme, context) {
+				const details = result.details as { taskId?: string; pgid?: number; logPath?: string } | undefined;
+				if (context.isError || !details?.taskId) return errorText(result, theme);
+				return renderTaskRow(theme, { taskId: details.taskId, pgid: details.pgid, logPath: details.logPath }, options.expanded);
+			},
 			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 				const task = await manager.start(params.command, resolve(ctx.cwd, params.cwd ?? "."));
 				return {
@@ -194,6 +294,10 @@ export default function (pi: ExtensionAPI) {
 				"A monitor's filter must match every terminal state, not only success: also match errors, tracebacks, crashes, `Killed`, and failed or cancelled statuses, because a silent monitor looks the same as one still waiting. For a command you run directly in the script, add `2>&1` so its errors reach the filter.",
 				"Emit only lines you would act on; never stream raw logs. A monitor that produces too many events is stopped. Poll remote APIs no more than every 30 seconds and tolerate transient failures (`|| true`).",
 				"Give each monitor a specific description such as `errors in deploy.log`. Stop one early with `kill -- -<pgid>`. After starting one, continue other work or end your turn; do not sleep or poll waiting for its events.",
+				"Only what reaches the script's stdout is an event. A polling loop that keeps its result in a variable and prints only on the final state sends nothing until then; when progress matters (counts, stages, new results), print a short line each time it changes.",
+				"A wrapper that collects output and prints it when its command exits (for example a remote-exec helper that compacts its log) delivers nothing to a monitor until then; use its streaming mode, or call `ssh host '…'` directly. On the remote side flush every line as well (`grep --line-buffered`, `python3 -u`).",
+				"`pgrep -f PATTERN` also matches any shell whose command line contains PATTERN, such as the `ssh host '…'` or `bash -c` running the check, so the check always sees the process as alive. Write the pattern as `[d]ownload.py` so it cannot match itself.",
+				`A monitor that prints no stdout line in its first ${SILENT_AFTER_MS / 60_000} minutes is reported to you once; then check whether the script is broken and fix it, or confirm the silence is expected.`,
 			],
 			parameters: Type.Object({
 				command: Type.String({
@@ -213,6 +317,26 @@ export default function (pi: ExtensionAPI) {
 					}),
 				),
 			}),
+			renderCall(args, theme, context) {
+				return renderMonitorCall(theme, args, context.expanded, DEFAULT_TIMEOUT_MS);
+			},
+			renderResult(result, options, theme, context) {
+				const details = result.details as
+					| { monitorId?: string; pgid?: number; logPath?: string; stderrPath?: string; timeoutMs?: number }
+					| undefined;
+				if (context.isError || !details?.monitorId) return errorText(result, theme);
+				return renderMonitorRow(
+					theme,
+					{
+						monitorId: details.monitorId,
+						pgid: details.pgid,
+						logPath: details.logPath,
+						stderrPath: details.stderrPath,
+						timeoutMs: details.timeoutMs,
+					},
+					options.expanded,
+				);
+			},
 			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 				const monitor = await monitors.start({
 					command: params.command,
@@ -234,12 +358,8 @@ export default function (pi: ExtensionAPI) {
 		}),
 	);
 
-	for (const type of [MESSAGE_TYPE, MONITOR_MESSAGE_TYPE]) {
-		pi.registerMessageRenderer(
-			type,
-			(message) => new Markdown(String(message.content), 0, 0, getMarkdownTheme()),
-		);
-	}
+	pi.registerMessageRenderer(MESSAGE_TYPE, renderTaskMessage);
+	pi.registerMessageRenderer(MONITOR_MESSAGE_TYPE, renderMonitorMessage);
 
 	pi.registerCommand("bg", {
 		description: "List this session's background tasks and monitors, or stop one with /bg stop <id>",
@@ -297,11 +417,7 @@ export default function (pi: ExtensionAPI) {
 			scratchpad = undefined;
 			if (ctx.hasUI) ctx.ui.notify(`Could not create the session scratchpad: ${String(error)}`, "warning");
 		}
-		manager.startSession({
-			sessionId,
-			scratchpad: dir,
-			setStatus: () => panels.refresh(),
-		});
+		manager.startSession({ sessionId, scratchpad: dir, setStatus: () => panels.refresh() });
 		monitors.startSession({ sessionId, scratchpad: dir, setStatus: () => panels.refresh() });
 		if (ctx.hasUI) panels.attach(ctx.ui, ctx.mode === "tui");
 		if (!ctx.hasUI) {

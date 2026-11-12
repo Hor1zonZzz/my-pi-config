@@ -1,7 +1,7 @@
 import { createWriteStream } from "node:fs";
 import { mkdir, open, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { signalFromExitCode } from "./format.ts";
+import { clip, signalFromExitCode } from "./format.ts";
 import {
 	clampTimeout,
 	type EventBatch,
@@ -9,6 +9,7 @@ import {
 	finalMessage,
 	type MonitorRecord,
 	type MonitorStopReason,
+	silentMessage,
 } from "./monitor-format.ts";
 import { OutputLog } from "./output-log.ts";
 import {
@@ -34,6 +35,8 @@ export const BATCH_MS = 200;
 export const FLOOD_WINDOW_MS = 60 * 1000;
 export const FLOOD_EVENTS = 30;
 export const FLOOD_LINES = 300;
+/** A monitor without a stdout line after this long is reported to the model once. */
+export const SILENT_AFTER_MS = 5 * 60 * 1000;
 const MAX_FINISHED_MONITORS = 50;
 const SHUTDOWN_WAIT_MS = 2000;
 const STDERR_TAIL_BYTES = 8 * 1024;
@@ -43,6 +46,26 @@ interface RunningMonitor {
 	record: MonitorRecord;
 	controller: AbortController;
 	done: Promise<void>;
+}
+
+/** A monitor's state for display: a copy of its record and the lines of its latest event. */
+export interface MonitorSnapshot {
+	record: MonitorRecord;
+	lastEvent: string[];
+}
+
+/** Lines of an event or stderr tail kept in message details and snapshots for renderers. */
+export const PREVIEW_LINES = 8;
+const PREVIEW_LINE_CHARS = 240;
+
+function preview(lines: readonly string[], from: "start" | "end"): string[] {
+	const selected = from === "start" ? lines.slice(0, PREVIEW_LINES) : lines.slice(-PREVIEW_LINES);
+	return selected.map((line) => clip(line, PREVIEW_LINE_CHARS));
+}
+
+export interface MonitorManagerOptions {
+	/** Delay of the one-time "no output yet" reminder; 0 disables it. */
+	silentAfterMs?: number;
 }
 
 export interface MonitorOptions {
@@ -85,16 +108,20 @@ export class MonitorManager {
 	private session?: SessionBinding;
 	private readonly running = new Map<string, RunningMonitor>();
 	private finished: MonitorRecord[] = [];
+	/** The latest event lines of each monitor, running or finished, for snapshots. */
+	private readonly lastEvents = new Map<string, string[]>();
 	private readonly ids = new IdSequence("mon");
 	private shuttingDown = false;
 	private readonly exec: ExecFn;
 	private readonly send: SendFn;
 	private readonly now: () => number;
+	private readonly silentAfterMs: number;
 
-	constructor(exec: ExecFn, send: SendFn, now: () => number = Date.now) {
+	constructor(exec: ExecFn, send: SendFn, now: () => number = Date.now, options: MonitorManagerOptions = {}) {
 		this.exec = exec;
 		this.send = send;
 		this.now = now;
+		this.silentAfterMs = options.silentAfterMs ?? SILENT_AFTER_MS;
 	}
 
 	startSession(binding: SessionBinding): void {
@@ -116,6 +143,15 @@ export class MonitorManager {
 
 	runningIds(): string[] {
 		return [...this.running.keys()];
+	}
+
+	/** The current state of a monitor of this session, or undefined for an unknown ID. */
+	snapshot(id: string): MonitorSnapshot | undefined {
+		// IDs restart in every session, so only this session's monitors match.
+		const record =
+			this.running.get(id)?.record ??
+			this.finished.find((monitor) => monitor.id === id && monitor.sessionId === this.session?.sessionId);
+		return record ? { record: { ...record }, lastEvent: this.lastEvents.get(`${record.sessionId}/${id}`) ?? [] } : undefined;
 	}
 
 	/** Resolves when the monitor has ended and its final report has been handled. */
@@ -234,6 +270,13 @@ export class MonitorManager {
 		].join("\n");
 		const timeout = setTimeout(() => stop("timeout"), record.timeoutMs);
 		let ended = false;
+		// A monitor that expires before the reminder is reported at expiry instead.
+		const skipReminder = () => ended || controller.signal.aborted || record.lines > 0;
+		const silentTimer =
+			this.silentAfterMs > 0 && this.silentAfterMs < record.timeoutMs
+				? setTimeout(() => void this.remindSilent(record, skipReminder), this.silentAfterMs)
+				: undefined;
+		silentTimer?.unref?.();
 		const execution = this.exec(wrapped, directory, {
 			onData: (data) => output.push(data),
 			signal: controller.signal,
@@ -247,6 +290,7 @@ export class MonitorManager {
 		const done = execution.then(async (result) => {
 			ended = true;
 			clearTimeout(timeout);
+			if (silentTimer) clearTimeout(silentTimer);
 			output.end();
 			if (batchTimer) clearTimeout(batchTimer);
 			batchTimer = undefined;
@@ -272,7 +316,13 @@ export class MonitorManager {
 			await rm(pidPath, { force: true }).catch(() => {});
 			this.running.delete(id);
 			this.finished.push(record);
-			if (this.finished.length > MAX_FINISHED_MONITORS) this.finished.shift();
+			if (pending && pending.lines.length > 0) {
+				this.lastEvents.set(`${record.sessionId}/${record.id}`, preview(pending.lines, "end"));
+			}
+			if (this.finished.length > MAX_FINISHED_MONITORS) {
+				const dropped = this.finished.shift();
+				if (dropped) this.lastEvents.delete(`${dropped.sessionId}/${dropped.id}`);
+			}
 			this.updateStatus();
 			this.deliverFinal(record, pending, stderrTail);
 		});
@@ -311,6 +361,7 @@ export class MonitorManager {
 	}
 
 	private deliverEvent(record: MonitorRecord, batch: EventBatch): void {
+		this.lastEvents.set(`${record.sessionId}/${record.id}`, preview(batch.lines, "end"));
 		if (!this.ownsSession(record)) return;
 		this.trySend(
 			{
@@ -320,9 +371,40 @@ export class MonitorManager {
 				details: {
 					monitorId: record.id,
 					kind: "event",
+					description: record.description,
+					event: record.events,
+					elapsedMs: this.now() - record.startedAt,
+					timeoutMs: record.timeoutMs,
 					firstLine: batch.firstLine,
 					lines: batch.lines.length,
+					preview: preview(batch.lines, "start"),
 					logPath: record.logPath,
+				},
+			},
+			true,
+		);
+	}
+
+	/** Tell the model once that a monitor has printed nothing, unless that changed meanwhile. */
+	private async remindSilent(record: MonitorRecord, skip: () => boolean): Promise<void> {
+		if (skip()) return;
+		const stderrTail = await readTail(record.stderrPath);
+		if (skip() || !this.ownsSession(record)) return;
+		this.trySend(
+			{
+				customType: MONITOR_MESSAGE_TYPE,
+				content: silentMessage(record, this.now() - record.startedAt, stderrTail),
+				display: true,
+				details: {
+					monitorId: record.id,
+					kind: "silent",
+					description: record.description,
+					pgid: record.pgid,
+					elapsedMs: this.now() - record.startedAt,
+					timeoutMs: record.timeoutMs,
+					stderrTail: preview(stderrTail, "end"),
+					logPath: record.logPath,
+					stderrPath: record.stderrPath,
 				},
 			},
 			true,
@@ -343,6 +425,12 @@ export class MonitorManager {
 				details: {
 					monitorId: record.id,
 					kind: "end",
+					description: record.description,
+					elapsedMs: (record.endedAt ?? record.startedAt) - record.startedAt,
+					timeoutMs: record.timeoutMs,
+					error: record.error,
+					finalEvents: pending ? preview(pending.lines, "start") : [],
+					stderrTail: preview(stderrTail, "end"),
 					status: record.status,
 					stopReason: record.stopReason,
 					exitCode: record.exitCode,

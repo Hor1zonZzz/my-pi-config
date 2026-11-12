@@ -154,3 +154,46 @@ export function shortOutcome(task: TaskRecord): { text: string; tone: StateTone 
 	if (task.signal) return { text: task.signal, tone: "muted" };
 	return { text: `exit ${task.exitCode}`, tone: task.exitCode === 0 ? "success" : "error" };
 }
+
+/**
+ * The periodic reminder for a task still running. `newLines` is the output added since the
+ * previous reminder (or since the start), so a stalled task is visible at a glance.
+ */
+export function checkMessage(
+	task: TaskRecord,
+	elapsedMs: number,
+	lineCount: number,
+	/** Lines added since the previous reminder; undefined for the first one. */
+	newLines: number | undefined,
+	tail: readonly string[],
+): string {
+	const elapsed = formatDuration(elapsedMs);
+	const progress =
+		newLines === undefined
+			? ""
+			: newLines > 0
+				? ` (${newLines} new line${newLines === 1 ? "" : "s"} since the last check)`
+				: " (no new output since the last check)";
+	const stop = task.pgid ? `\`kill -- -${task.pgid}\`` : "the user's /bg stop";
+	const lines = [
+		`Background task ${task.id} is still running after ${elapsed}${progress}.`,
+		`Check that it is progressing as expected. If it is stuck, failing, or no longer needed, stop it with ${stop} and adjust; if it looks fine, say so in one line and continue. Its exit is still reported automatically, so do not poll or sleep waiting for it.`,
+		"",
+		`Command: ${clip(task.command.trim().replace(/\s*\n\s*/g, " ; "), COMMAND_CHARS)}`,
+		`Log: ${task.logPath} (${lineCount} line${lineCount === 1 ? "" : "s"} so far)`,
+	];
+	const shown = boundedTail(tail);
+	if (shown.length > 0) {
+		lines.push("", `Last ${shown.length} line${shown.length === 1 ? "" : "s"}:`, codeBlock(shown.join("\n")));
+	} else {
+		lines.push("", "No output so far.");
+	}
+	return lines.join("\n");
+}
+
+const PREVIEW_LINE_CHARS = 240;
+
+/** The last `count` lines, clipped for message details that renderers show without parsing content. */
+export function previewLines(lines: readonly string[], count: number): string[] {
+	return lines.slice(-count).map((line) => clip(line, PREVIEW_LINE_CHARS));
+}

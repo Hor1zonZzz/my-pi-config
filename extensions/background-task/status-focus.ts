@@ -67,3 +67,23 @@ export function listWindow(
 	const start = Math.min(Math.max(0, clamped - Math.floor(size / 2)), count - size);
 	return { selected: clamped, start, end: start + size };
 }
+
+/**
+ * Put `segment` right after the left part of Pi's footer stats line, taking its width out of
+ * the padding that right-aligns the model name. The padding is the first run of two or more
+ * spaces; `restore` (the dim color code) is reapplied after the segment because the padding
+ * and model name sit inside one dim span. Undefined when the padding is missing or too short
+ * to keep two spaces before the model name.
+ */
+export function mergeIntoStatsLine(
+	line: string,
+	segment: string,
+	restore: string,
+	width: (text: string) => number,
+): string | undefined {
+	const match = / {2,}/.exec(line);
+	if (!match) return undefined;
+	const room = match[0].length - 1 - width(segment);
+	if (room < 2) return undefined;
+	return `${line.slice(0, match.index)} ${segment}${restore}${" ".repeat(room)}${line.slice(match.index + match[0].length)}`;
+}

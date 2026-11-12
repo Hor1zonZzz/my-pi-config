@@ -202,3 +202,39 @@ test("the promotion threshold comes from the environment", () => {
 	assert.equal(promoteAfterMsFrom("-1"), 30_000);
 	assert.equal(promoteAfterMsFrom("soon"), 30_000);
 });
+
+test("reminds the model to check a task at every interval while it runs", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "bg-task-"));
+	const sent: { message: { content: string; details: Record<string, unknown> }; options: unknown }[] = [];
+	const manager = new BackgroundTaskManager(exec, (message, options) => sent.push({ message, options }), Date.now, {
+		checkIntervalMs: 400,
+	});
+	manager.startSession({ sessionId: "s1", scratchpad: root });
+	t.after(async () => {
+		await manager.shutdown();
+		await rm(root, { recursive: true, force: true });
+	});
+	// Output during the first interval only, then silence until the second check has passed.
+	const task = await manager.start("echo working; sleep 1.0", root);
+	await manager.whenDone(task.id);
+
+	const checks = sent.filter((entry) => entry.message.details.kind === "check");
+	assert.equal(checks.length, 2);
+	for (const check of checks) assert.deepEqual(check.options, { deliverAs: "steer", triggerTurn: true });
+	assert.match(checks[0].message.content, /^Background task bg-1 is still running after \d+s\.\n/);
+	assert.match(checks[0].message.content, /stop it with `kill -- -\d+`/);
+	assert.match(checks[0].message.content, /```text\nworking\n```/);
+	assert.match(checks[1].message.content, /no new output since the last check/);
+	assert.equal(checks[1].message.details.newLines, 0);
+	// The exit report still follows, and no check comes after it.
+	assert.match(sent.at(-1)?.message.content ?? "", /bg-1 exited with code 0/);
+	await new Promise((resolve) => setTimeout(resolve, 500));
+	assert.equal(sent.filter((entry) => entry.message.details.kind === "check").length, 2);
+});
+
+test("a task that ends before the interval gets no check", async (t) => {
+	const { root, manager, sent } = await fixture(t);
+	const task = await manager.start("echo quick", root);
+	await manager.whenDone(task.id);
+	assert.equal(sent.filter((entry) => entry.message.details.kind === "check").length, 0);
+});

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { focusTransition, listWindow, reconcileFocus } from "./status-focus.ts";
+import { focusTransition, listWindow, mergeIntoStatsLine, reconcileFocus } from "./status-focus.ts";
 
 test("down with the editor cursor at the bottom focuses the first visible footer entry", () => {
 	assert.deepEqual(focusTransition(undefined, "down", ["bg", "mon"], true), { focused: "bg", consume: true });
@@ -45,4 +45,14 @@ test("the list window keeps the selection visible", () => {
 	assert.deepEqual(listWindow(19, 20, 5), { selected: 19, start: 15, end: 20 });
 	assert.deepEqual(listWindow(25, 20, 5), { selected: 19, start: 15, end: 20 });
 	assert.deepEqual(listWindow(-1, 20, 5), { selected: 0, start: 0, end: 5 });
+});
+
+test("merges footer entries into the stats line padding", () => {
+	const width = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, "").length;
+	const line = "\x1b[2m↑1k 3%/128k\x1b[0m\x1b[2m          demo\x1b[0m";
+	const merged = mergeIntoStatsLine(line, "\x1b[36m bg 1 \x1b[39m", "\x1b[2m", width);
+	assert.equal(merged, "\x1b[2m↑1k 3%/128k\x1b[0m\x1b[2m \x1b[36m bg 1 \x1b[39m\x1b[2m   demo\x1b[0m");
+	assert.equal(width(merged ?? ""), width(line));
+	assert.equal(mergeIntoStatsLine(line, "x".repeat(8), "", width), undefined);
+	assert.equal(mergeIntoStatsLine("no padding here", "x", "", width), undefined);
 });

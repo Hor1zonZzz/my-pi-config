@@ -144,3 +144,51 @@ test("timeouts are clamped and long events are bounded", () => {
 	assert.match(content, /line 39\n```/);
 	assert.match(content, /60 more lines omitted; see \/x\/mon-1\.log lines 11–110\./);
 });
+
+async function silentFixture(t: TestContext, silentAfterMs: number) {
+	const root = await mkdtemp(join(tmpdir(), "monitor-"));
+	const sent: Sent[] = [];
+	const manager = new MonitorManager(exec, (message, options) => sent.push({ message, options }), Date.now, {
+		silentAfterMs,
+	});
+	manager.startSession({ sessionId: "s1", scratchpad: root });
+	t.after(async () => {
+		await manager.shutdown();
+		await rm(root, { recursive: true, force: true });
+	});
+	const start = (command: string, timeoutMs = 60_000) =>
+		manager.start({ command, description: "quiet watch", cwd: root, timeoutMs });
+	const silent = () => sent.filter((entry) => entry.message.details.kind === "silent");
+	return { manager, sent, start, silent };
+}
+
+test("a monitor without stdout is reported once after the silence delay", async (t) => {
+	const { manager, start, silent } = await silentFixture(t, 300);
+	const monitor = await start("echo 'ssh: connect timed out' >&2; sleep 0.9");
+	await manager.whenDone(monitor.id);
+
+	assert.equal(silent().length, 1);
+	assert.deepEqual(silent()[0].options, WAKE);
+	const content = silent()[0].message.content;
+	assert.match(content, /^Monitor mon-1 \(quiet watch\) has run for \d+s without printing a single stdout line/);
+	assert.match(content, /`\[p\]attern`/);
+	assert.match(content, /stop it with `kill -- -\d+`/);
+	assert.match(content, /ssh: connect timed out/);
+});
+
+test("no silence reminder once a line arrived or the monitor ended", async (t) => {
+	const { manager, start, silent } = await silentFixture(t, 300);
+	const talking = await start("echo hello; sleep 0.6");
+	const quick = await start("true");
+	await Promise.all([manager.whenDone(talking.id), manager.whenDone(quick.id)]);
+	await new Promise((resolve) => setTimeout(resolve, 400));
+	assert.equal(silent().length, 0);
+});
+
+test("no silence reminder when the monitor expires first", async (t) => {
+	const { manager, start, silent, sent } = await silentFixture(t, 1000);
+	const monitor = await start("sleep 5", 1000);
+	await manager.whenDone(monitor.id);
+	assert.equal(silent().length, 0);
+	assert.match(sent.at(-1)?.message.content ?? "", /expired/);
+});

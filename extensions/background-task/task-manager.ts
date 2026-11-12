@@ -2,7 +2,9 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
+	checkMessage,
 	completionMessage,
+	previewLines,
 	signalFromExitCode,
 	type StopReason,
 	type TaskRecord,
@@ -27,6 +29,8 @@ import { touch } from "./scratchpad.ts";
 export type { CompletionMessage, ExecFn, SendFn, SessionBinding } from "./process.ts";
 
 export const MAX_RUNNING_TASKS = 16;
+/** A task still running is reported to the model at every multiple of this since its start. */
+export const CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const MAX_FINISHED_TASKS = 50;
 const SHUTDOWN_WAIT_MS = 2000;
 
@@ -64,10 +68,25 @@ let foregroundCounter = 0;
 interface RunningTask {
 	record: TaskRecord;
 	controller: AbortController;
+	output: OutputLog;
 	done: Promise<void>;
 }
 
+/** A task's state for display: a copy of its record with the live line count, and its last lines. */
+export interface TaskSnapshot {
+	record: TaskRecord;
+	tail: string[];
+}
+
+/** Lines of output kept in message details and snapshots for renderers. */
+export const PREVIEW_LINES = 8;
+
 export const MESSAGE_TYPE = "background-task";
+
+export interface TaskManagerOptions {
+	/** Interval of the "still running" reminders; 0 disables them. */
+	checkIntervalMs?: number;
+}
 
 export class BackgroundTaskManager {
 	private session?: SessionBinding;
@@ -75,16 +94,20 @@ export class BackgroundTaskManager {
 	/** Controllers of `bash` commands still running in the foreground. */
 	private readonly foreground = new Set<AbortController>();
 	private finished: TaskRecord[] = [];
+	/** The last lines of finished tasks, for snapshots. */
+	private readonly finishedTails = new Map<string, string[]>();
 	private readonly ids = new IdSequence("bg");
 	private shuttingDown = false;
 	private readonly exec: ExecFn;
 	private readonly send: SendFn;
 	private readonly now: () => number;
+	private readonly checkIntervalMs: number;
 
-	constructor(exec: ExecFn, send: SendFn, now: () => number = Date.now) {
+	constructor(exec: ExecFn, send: SendFn, now: () => number = Date.now, options: TaskManagerOptions = {}) {
 		this.exec = exec;
 		this.send = send;
 		this.now = now;
+		this.checkIntervalMs = options.checkIntervalMs ?? CHECK_INTERVAL_MS;
 	}
 
 	startSession(binding: SessionBinding): void {
@@ -106,6 +129,20 @@ export class BackgroundTaskManager {
 
 	runningIds(): string[] {
 		return [...this.running.keys()];
+	}
+
+	/** The current state of a task of this session, or undefined for an unknown ID. */
+	snapshot(id: string): TaskSnapshot | undefined {
+		const running = this.running.get(id);
+		if (running) {
+			return {
+				record: { ...running.record, lines: running.output.lineCount },
+				tail: previewLines(running.output.tail, PREVIEW_LINES),
+			};
+		}
+		// IDs restart in every session, so only this session's finished tasks match.
+		const record = this.finished.find((task) => task.id === id && task.sessionId === this.session?.sessionId);
+		return record ? { record: { ...record }, tail: this.finishedTails.get(id) ?? [] } : undefined;
 	}
 
 	/** Resolves when the task has finished and its completion has been handled. */
@@ -153,7 +190,7 @@ export class BackgroundTaskManager {
 
 		const run = this.launch(command, directory, pidPath, logPath, {});
 		const done = this.track(record, run, pidPath, metaPath);
-		this.running.set(id, { record, controller: run.controller, done });
+		this.running.set(id, { record, controller: run.controller, output: run.output, done });
 		this.updateStatus();
 
 		// A quick command may finish first; its completion handler then records the ID.
@@ -239,7 +276,7 @@ export class BackgroundTaskManager {
 			};
 			this.foreground.delete(run.controller);
 			const done = this.track(record, run, pidPath, metaPath);
-			this.running.set(id, { record, controller: run.controller, done });
+			this.running.set(id, { record, controller: run.controller, output: run.output, done });
 			this.updateStatus();
 			await writeJsonAtomic(metaPath, record).catch(() => {});
 			return { promoted: true, task: { ...record }, tail: [...run.output.tail] };
@@ -303,7 +340,9 @@ export class BackgroundTaskManager {
 
 	/** Record a running task's end, persist it, and report it to its session. */
 	private track(record: TaskRecord, run: Launched, pidPath: string, metaPath: string): Promise<void> {
+		const cancelChecks = this.scheduleChecks(record, run);
 		return run.execution.then(async (result) => {
+			cancelChecks();
 			run.output.end();
 			await closeStream(run.stream);
 			record.endedAt = this.now();
@@ -327,10 +366,79 @@ export class BackgroundTaskManager {
 			await rm(pidPath, { force: true }).catch(() => {});
 			this.running.delete(record.id);
 			this.finished.push(record);
-			if (this.finished.length > MAX_FINISHED_TASKS) this.finished.shift();
+			this.finishedTails.set(record.id, previewLines(run.output.tail, PREVIEW_LINES));
+			if (this.finished.length > MAX_FINISHED_TASKS) {
+				const dropped = this.finished.shift();
+				if (dropped) this.finishedTails.delete(dropped.id);
+			}
 			this.updateStatus();
 			this.deliver(record, run.output.tail);
 		});
+	}
+
+	/**
+	 * Remind the model of a running task at every multiple of the check interval since it
+	 * started, with its progress since the previous reminder and the end of its log.
+	 */
+	private scheduleChecks(record: TaskRecord, run: Launched): () => void {
+		const interval = this.checkIntervalMs;
+		if (!(interval > 0)) return () => {};
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let linesAtLastCheck: number | undefined;
+		const schedule = () => {
+			const elapsed = this.now() - record.startedAt;
+			const next = (Math.floor(elapsed / interval) + 1) * interval;
+			timer = setTimeout(remind, next - elapsed);
+			timer.unref?.();
+		};
+		const remind = () => {
+			timer = undefined;
+			if (run.ended || run.controller.signal.aborted) return;
+			const lineCount = run.output.lineCount;
+			const newLines = linesAtLastCheck === undefined ? undefined : lineCount - linesAtLastCheck;
+			this.deliverCheck(record, this.now() - record.startedAt, lineCount, newLines, run.output.tail);
+			linesAtLastCheck = lineCount;
+			schedule();
+		};
+		schedule();
+		return () => {
+			if (timer) clearTimeout(timer);
+			timer = undefined;
+		};
+	}
+
+	private deliverCheck(
+		record: TaskRecord,
+		elapsedMs: number,
+		lineCount: number,
+		newLines: number | undefined,
+		tail: readonly string[],
+	): void {
+		const session = this.session;
+		if (this.shuttingDown || !session || session.sessionId !== record.sessionId) return;
+		try {
+			this.send(
+				{
+					customType: MESSAGE_TYPE,
+					content: checkMessage(record, elapsedMs, lineCount, newLines, tail),
+					display: true,
+					details: {
+						taskId: record.id,
+						kind: "check",
+						command: record.command,
+						pgid: record.pgid,
+						elapsedMs,
+						lines: lineCount,
+						newLines,
+						tail: previewLines(tail, PREVIEW_LINES),
+						logPath: record.logPath,
+					},
+				},
+				{ deliverAs: "steer", triggerTurn: true },
+			);
+		} catch {
+			// The session runtime may already be gone.
+		}
 	}
 
 	/** Stop a running task on the user's request. */
@@ -371,9 +479,17 @@ export class BackgroundTaskManager {
 					display: true,
 					details: {
 						taskId: record.id,
+						kind: "exit",
 						status: record.status,
 						exitCode: record.exitCode,
 						signal: record.signal,
+						stopReason: record.stopReason,
+						error: record.error,
+						timeout: record.timeout,
+						command: record.command,
+						elapsedMs: (record.endedAt ?? record.startedAt) - record.startedAt,
+						lines: record.lines,
+						tail: previewLines(tail, PREVIEW_LINES),
 						logPath: record.logPath,
 					},
 				},

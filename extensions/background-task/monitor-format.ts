@@ -157,3 +157,23 @@ export function monitorStartedMessage(monitor: MonitorRecord): string {
 		stop,
 	].join("\n");
 }
+
+/** The one-time reminder for a monitor that has not printed a stdout line yet. */
+export function silentMessage(monitor: MonitorRecord, elapsedMs: number, stderrTail: readonly string[]): string {
+	const left = formatDuration(monitor.timeoutMs - elapsedMs);
+	const stop = monitor.pgid ? `\`kill -- -${monitor.pgid}\`` : "the user's /bg stop";
+	const lines = [
+		`Monitor ${label(monitor)} has run for ${formatDuration(elapsedMs)} without printing a single stdout line, so no event has reached you. It expires in ${left}.`,
+		"If you expected output by now, the script is probably broken. Common causes: it prints only at the very end; a wrapper holds output until its command exits; a pipeline stage is not line-buffered; the filter never matches (for example `pgrep -f pattern` matching the shell that runs it, which `[p]attern` avoids); errors go to stderr, which is not an event.",
+		`If it is broken, stop it with ${stop} and start a corrected monitor. If silence is expected, say so in one line and continue.`,
+		"",
+		`Command: ${clip(monitor.command.trim().replace(/\s*\n\s*/g, " ; "), COMMAND_CHARS)}`,
+	];
+	const stderr = boundedTail(stderrTail);
+	if (stderr.length > 0) {
+		lines.push("", `Last stderr lines (${monitor.stderrPath}):`, codeBlock(stderr.join("\n")));
+	} else {
+		lines.push(`stderr: ${monitor.stderrPath} (empty)`);
+	}
+	return lines.join("\n");
+}

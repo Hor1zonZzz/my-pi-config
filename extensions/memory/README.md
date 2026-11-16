@@ -17,7 +17,7 @@ Memory is per project only; there is no global memory. It is on by default in ev
 
 ## Injection and prompt caching
 
-The `memory` section says what memory is for, not how to use it, and lists the index. The index is read once on `session_start` and frozen: notes written later in the session (by the model or by a dream) go to disk but do not change the injected bytes, so Pi's section diff stays empty and the prompt cache keeps hitting. The frozen index is refreshed after compaction, which already invalidates the cache. The purpose text is a constant and the index is sorted by path with no timestamps or counts, so new sessions with unchanged notes also send identical bytes.
+The `memory` section says what memory is for, not how to use it, and lists the index. It frames the notes as a legacy reference from earlier sessions: the current session's messages and the code as it is now come first, a note never sets the task, recorded preferences hold until the user says otherwise, and recorded facts about the code are leads to check before relying on them. The index is read once on `session_start` and frozen: notes written later in the session (by the model or by a dream) go to disk but do not change the injected bytes, so Pi's section diff stays empty and the prompt cache keeps hitting. The frozen index is refreshed after compaction, which already invalidates the cache. The purpose text is a constant and the index is sorted by path with no timestamps or counts, so new sessions with unchanged notes also send identical bytes.
 
 ## Active memory: the `memory` tool
 

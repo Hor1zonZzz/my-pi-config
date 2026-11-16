@@ -7,13 +7,16 @@ export const PROMPT_SECTION = "memory";
 
 const PURPOSE = [
 	"This project has a persistent memory at /memories, which you read and write with the `memory` tool.",
-	"It exists so that each new session in this project starts with what earlier sessions learned: the user's stable preferences and corrections, decisions and the reasons for them, and facts about this project that the code and docs do not show.",
-	"Notes can be wrong or out of date. The session transcripts are the record of what happened; when a note matters, confirm it against the code or the user, and fix the note if it is wrong.",
+	"The notes are a legacy reference written by earlier sessions: the user's preferences and corrections, past decisions and their reasons, and facts about this project as they stood then. They describe the past, not the present.",
+	"The current context comes first: the user's messages in this session, then the code, files, and command output as they are now, then the notes. Explore the current state yourself instead of starting from what a note says.",
+	"A note does not set your task: do not resume, repeat, or continue work a note describes unless the user asks for it.",
+	"A recorded preference or correction still holds unless this session says otherwise. A recorded fact about the code or project (a file, function, command, setting, or state) is a lead to check, not a given: confirm it against what you see now before relying on it.",
+	"When a note disagrees with the current context, follow the current context, and fix or delete the note.",
 	"Each note is one markdown file with frontmatter (name, description, type: user | feedback | project | reference). /memories/MEMORY.md is generated from that frontmatter.",
 ].join("\n");
 
 export function memoryPromptSection(index: string): string {
-	return `${PURPOSE}\n\nIndex (/memories/MEMORY.md):\n${index}`;
+	return `${PURPOSE}\n\nIndex of notes from earlier sessions (/memories/MEMORY.md); read a note only when it bears on the current task:\n${index}`;
 }
 
 // ── Dream agents (DeepSeek Flash in their own Pi sessions) ─────────────────────

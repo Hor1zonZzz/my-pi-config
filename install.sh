@@ -13,6 +13,7 @@ LATEST_PACKAGES=(
 	"npm:@earendil-works/pi-voice"
 	"git:github.com/badlogic/pi-subagent"
 	"npm:@router-for-me/pi-cliproxyapi-provider"
+	"git:github.com/johnlindquist/pi-emphasis"
 )
 AGENT_DIR="${PI_CODING_AGENT_DIR:-${PI_AGENT_DIR:-$HOME/.pi/agent}}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"

@@ -44,7 +44,8 @@ test("install preserves Pi's ChatGPT deviceId and the local default model, the s
 		"npm:@earendil-works/pi-voice",
 		"git:github.com/badlogic/pi-subagent",
 		"npm:@router-for-me/pi-cliproxyapi-provider",
+		"git:github.com/johnlindquist/pi-emphasis",
 	].map((source) => `${agent} |update --extension ${source} --no-approve`));
 	const packages = installed.packages.map((entry: string | { source: string }) => typeof entry === "string" ? entry : entry.source);
-	for (const source of ["npm:@earendil-works/pi-voice", "git:github.com/badlogic/pi-subagent", "npm:@router-for-me/pi-cliproxyapi-provider"]) assert.ok(packages.includes(source), source);
+	for (const source of ["npm:@earendil-works/pi-voice", "git:github.com/badlogic/pi-subagent", "npm:@router-for-me/pi-cliproxyapi-provider", "git:github.com/johnlindquist/pi-emphasis"]) assert.ok(packages.includes(source), source);
 });

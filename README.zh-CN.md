@@ -12,6 +12,10 @@
 - `skills/` — 远端受管的技能缓存；Herdr 会在安装期间从其上游 Git 仓库刷新
 - `install.sh` — 备份并安装到 `~/.pi/agent`
 
+## 回复样式
+
+[`pi-emphasis`](https://github.com/johnlindquist/pi-emphasis) 作为外部包安装，需要 Pi 1.5 或更新版本，为终端回复添加彩色状态标签、图标和粗体强调色。保留插件默认设置，包括回复格式规则（约 1,500 个提示词 tokens）；在启动 Pi 前设置 `PI_EMPHASIS_GUIDANCE=0` 可关闭规则但保留渲染。图标和圆角端帽需要 Nerd Font 符号；设置 `PI_EMPHASIS_PILL_ICONS=0` 和 `PI_EMPHASIS_ROUND_CAPS=0` 可改用无图标方形标签。
+
 ## 本地扩展
 
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
@@ -43,7 +47,7 @@ cd my-pi-config
 
 `settings.json` 中声明的包依赖由 Pi 在启动时安装。请单独完成身份认证；本仓库有意不包含凭据。
 
-每次安装都会对 Pi Voice、`pi-subagent` 和 `pi-cliproxyapi-provider` 运行 `pi update --extension`：未安装时直接安装，已安装时更新到最新版；更新失败只打印警告，不会中断安装。
+每次安装都会对 Pi Voice、`pi-subagent`、`pi-cliproxyapi-provider` 和 `pi-emphasis` 运行 `pi update --extension`：未安装时直接安装，已安装时更新到最新版；更新失败只打印警告，不会中断安装。
 
 安装脚本会保留 Pi 用于 ChatGPT 登录的运行时 `deviceId` 和本机已选的默认 provider 与模型，并保留已退役的 `/codex-accounts` 扩展留下的两套本机账号库。
 

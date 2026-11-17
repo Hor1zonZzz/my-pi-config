@@ -13,6 +13,10 @@ English | [中文文档](README.zh-CN.md)
   Git repository during installation
 - `install.sh` — backup and install into `~/.pi/agent`
 
+## Reply styling
+
+[`pi-emphasis`](https://github.com/johnlindquist/pi-emphasis) is installed as an external package and requires Pi 1.5 or newer. It adds colored status pills, icons, and bold-text emphasis to terminal replies. Defaults are unchanged, including reply-style guidance (about 1,500 prompt tokens); set `PI_EMPHASIS_GUIDANCE=0` before starting Pi to disable that guidance while keeping rendering. Nerd Font symbols are needed for icons and rounded caps; set `PI_EMPHASIS_PILL_ICONS=0` and `PI_EMPHASIS_ROUND_CAPS=0` for plain chips.
+
 ## Local extensions
 
 - `questionnaire.ts` — Pi's official interactive multi-question tool example
@@ -55,7 +59,7 @@ subagent extension with its installed agents (`planner`, `reviewer`, `scout`,
 `worker`) and workflow prompts, and links `~/.pi/agent/bin/subagent` to the
 `pi-subagent` package checkout so the `subagent` CLI is on Pi's bash `PATH`;
 the link resolves once Pi has installed the package. Every install then runs
-`pi update --extension` for Pi Voice, `pi-subagent`, and `pi-cliproxyapi-provider`,
+`pi update --extension` for Pi Voice, `pi-subagent`, `pi-cliproxyapi-provider`, and `pi-emphasis`,
 which installs each one if it is missing and otherwise moves it to its newest
 release; a failed update only prints a warning. `pi-subagent` needs tmux
 and Node.js 22.19 or newer. Restart Pi or run:

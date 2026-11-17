@@ -29,7 +29,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 Some files must be maintained together:
 
 - `settings.json` lists `git:github.com/badlogic/pi-subagent`, and `install.sh` links its CLI into `<agent-dir>/bin/subagent`; keep the package path in both.
-- `install.sh` `LATEST_PACKAGES` (Pi Voice, `pi-subagent`, `pi-cliproxyapi-provider`) must name unpinned sources that `settings.json` lists; `install.test.ts` checks both.
+- `install.sh` `LATEST_PACKAGES` (Pi Voice, `pi-subagent`, `pi-cliproxyapi-provider`, `pi-emphasis`) must name unpinned sources that `settings.json` lists; `install.test.ts` checks both.
 - `extensions/herdr/` owns `integration-check.ts`, the background-monitor modules, and `skills/herdr-pi-reference/`; `install.sh` must install that skill into the target skills directory and remove the former standalone extension paths. `herdr-agent-state.ts` is installed and overwritten by Herdr. The local extension may use documented Herdr CLI behavior but must not vendor, import, modify, install, or update the Herdr-managed integration. The background monitor is session-scoped and must not deliver a completion to a replacement Pi session.
 
 ## Upstream-Derived Code

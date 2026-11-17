@@ -6,6 +6,7 @@
     "npm:@ogulcancelik/pi-herdr",
     "npm:@earendil-works/pi-voice",
     "git:github.com/badlogic/pi-subagent",
-    "npm:@router-for-me/pi-cliproxyapi-provider"
+    "npm:@router-for-me/pi-cliproxyapi-provider",
+    "git:github.com/johnlindquist/pi-emphasis"
   ]
 }

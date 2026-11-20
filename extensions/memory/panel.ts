@@ -112,7 +112,7 @@ class ListView implements Component {
 		this.tui.requestRender();
 	}
 
-	render(width: number): string[] {
+	render(width: number): readonly string[] {
 		if (this.child) return this.child.render(width);
 		const t = this.theme;
 		const lines = [` ${t.fg("accent", t.bold(this.title))}`];

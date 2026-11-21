@@ -68,6 +68,8 @@ and Node.js 22.19 or newer. Restart Pi or run:
 /reload
 ```
 
+Every install also fetches the latest [`mpl` extension](https://github.com/dmmulroy/.dotfiles/tree/main/home/.pi/agent/extensions/mpl) from upstream `main`, installs its runtime dependencies from its own `package.json` with npm, and places it in `~/.pi/agent/extensions/mpl/`. This step uses Git, npm, and Node.js 24 or newer. If the fetch or dependency install fails, the installer exits with an error and leaves any existing `mpl` installation unchanged.
+
 Package dependencies declared in `settings.json` are installed by Pi on startup. Authenticate separately; credentials are intentionally not included.
 
 ## Useful commands

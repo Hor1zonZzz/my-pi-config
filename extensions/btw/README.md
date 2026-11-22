@@ -1,14 +1,19 @@
 # btw
 
-Claude Code-style `/btw` ephemeral side-question panel for Pi.
+Claude Code-style `/btw` side-question panel for Pi.
 
 ## Behavior
 
 - **Bottom-docked inline panel**: Renders in Pi's bottom editor/status area (directly above the status bar), never covering the main conversation transcript.
-- **Zero context pollution**: Reads the current session context read-only (reusing the active prompt cache prefix) and streams answers without writing anything to the main session history.
-- **Multi-turn follow-ups**: Type directly in the panel's `›` input box and press `Enter` to ask follow-up questions; all turns stay ephemeral and vanish on `Esc`.
+- **Zero main-context pollution**: Reads the current session context read-only (reusing the active prompt cache prefix) so `/btw` turns are never sent to the main conversation LLM.
+- **Session history & token accounting**:
+  - Persists every completed `/btw` Q&A turn into the session `.jsonl` via `pi.appendEntry("btw", ...)`.
+  - Records token & cost usage into Pi's session stats via `sessionManager.appendUsage("btw", ...)` so the status bar totals include `/btw` usage without inflating the main context window percentage.
+  - Run bare `/btw` (without arguments) to review this session's previous `/btw` turns and continue asking follow-ups.
+- **Multi-turn follow-ups**: Type directly in the panel's `>` input box and press `Enter` to ask follow-up questions.
+- **pi-emphasis integration**: Automatically applies `pi-emphasis` pill/label rendering when installed.
 - **Shortcuts**:
   - `Enter`: send follow-up question
   - `Esc` / `Ctrl+C`: abort streaming or close panel
-  - `Ctrl+Y`: copy latest answer (`pbcopy`)
+  - `Ctrl+Y`: copy latest answer (`pbcopy`, raw Markdown)
   - `↑` / `↓` / `PageUp` / `PageDown` / mouse wheel: scroll answer

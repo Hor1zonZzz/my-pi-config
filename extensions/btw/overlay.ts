@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import type { AssistantMessageEvent, Message } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent, Message, Usage } from "@earendil-works/pi-ai";
 import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import {
 	Input,
@@ -53,10 +53,26 @@ interface BtwTurn {
 	outputTokens: number;
 }
 
+export interface BtwPersistedTurn {
+	question: string;
+	answer: string;
+	elapsedMs: number;
+	cacheRead: number;
+	outputTokens: number;
+}
+
+export interface BtwCompletedTurn {
+	question: string;
+	answer: string;
+	elapsedMs: number;
+	usage?: Usage;
+}
+
 export interface BtwOverlayOptions {
 	tui: TUI;
 	theme: Theme;
-	initialQuestion: string;
+	initialQuestion?: string;
+	initialTurns?: readonly BtwPersistedTurn[];
 	modelLabel: string;
 	markdownTransform?: (markdown: string, availableWidth: number) => string;
 	askSideQuestion: (
@@ -64,6 +80,7 @@ export interface BtwOverlayOptions {
 		question: string,
 		signal: AbortSignal,
 	) => AsyncIterable<AssistantMessageEvent>;
+	onTurnComplete?: (turn: BtwCompletedTurn) => void;
 	done: () => void;
 }
 
@@ -76,6 +93,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 	private markdownTransform?: (markdown: string, availableWidth: number) => string;
 	private modelLabel: string;
 	private askSideQuestion: BtwOverlayOptions["askSideQuestion"];
+	private onTurnComplete?: BtwOverlayOptions["onTurnComplete"];
 	private done: () => void;
 
 	private turns: BtwTurn[] = [];
@@ -101,6 +119,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 		this.markdownTransform = opts.markdownTransform;
 		this.modelLabel = opts.modelLabel;
 		this.askSideQuestion = opts.askSideQuestion;
+		this.onTurnComplete = opts.onTurnComplete;
 		this.done = opts.done;
 
 		this.input = new Input();
@@ -115,7 +134,46 @@ export class BtwOverlayComponent implements Component, Focusable {
 			this.handleEscape();
 		};
 
-		this.startTurn(opts.initialQuestion);
+		// Preload historical turns (e.g., when bare `/btw` is invoked to view session history)
+		if (opts.initialTurns && opts.initialTurns.length > 0) {
+			for (const prev of opts.initialTurns) {
+				const md = new Markdown(
+					prev.answer,
+					0,
+					0,
+					this.mdTheme,
+					undefined,
+					this.markdownTransform ? { transform: this.markdownTransform } : undefined,
+				);
+				this.turns.push({
+					question: prev.question,
+					answer: prev.answer,
+					markdown: md,
+					elapsedMs: prev.elapsedMs,
+					cacheRead: prev.cacheRead,
+					outputTokens: prev.outputTokens,
+				});
+				this.sideHistory.push({
+					role: "user",
+					content: [{ type: "text", text: prev.question }],
+					timestamp: Date.now(),
+				});
+				this.sideHistory.push({
+					role: "assistant",
+					content: [{ type: "text", text: prev.answer }],
+					api: "openai-completions",
+					provider: "btw",
+					model: this.modelLabel,
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+					stopReason: "stop",
+					timestamp: Date.now(),
+				});
+			}
+		}
+
+		if (opts.initialQuestion) {
+			this.startTurn(opts.initialQuestion);
+		}
 	}
 
 	private startTurn(question: string): void {
@@ -164,6 +222,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 		ac: AbortController,
 	): Promise<void> {
 		let finalMessage: Message | null = null;
+		let finalUsage: Usage | undefined;
 		try {
 			for await (const ev of stream) {
 				if (this.disposed || ac.signal.aborted) break;
@@ -175,6 +234,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 					finalMessage = ev.message;
 					const usage = ev.message.usage;
 					if (usage) {
+						finalUsage = usage;
 						turn.cacheRead = usage.cacheRead ?? 0;
 						turn.outputTokens = usage.output ?? 0;
 					}
@@ -208,6 +268,12 @@ export class BtwOverlayComponent implements Component, Focusable {
 						timestamp: Date.now(),
 					});
 				}
+				this.onTurnComplete?.({
+					question,
+					answer: turn.answer,
+					elapsedMs: turn.elapsedMs,
+					usage: finalUsage,
+				});
 			}
 			if (this.abortController === ac) {
 				this.abortController = null;

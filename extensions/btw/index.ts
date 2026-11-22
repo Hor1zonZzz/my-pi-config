@@ -8,12 +8,28 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Context, Message } from "@earendil-works/pi-ai";
+import type { Context, Message, Usage } from "@earendil-works/pi-ai";
 import { convertToLlm, getAgentDir, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
-import { BtwOverlayComponent } from "./overlay.ts";
+import { BtwOverlayComponent, type BtwPersistedTurn } from "./overlay.ts";
+
+const BTW_ENTRY_TYPE = "btw";
 
 const BTW_INSTRUCTION =
 	"[Side question via /btw — ephemeral, NOT added to main conversation history. Answer the user's question directly and concisely based on the conversation context above. Do not call tools or suggest edits unless asked.]\n\n";
+
+interface BtwEntryData {
+	question: string;
+	answer: string;
+	provider: string;
+	model: string;
+	elapsedMs: number;
+	usage?: Usage;
+	timestamp: number;
+}
+
+interface SessionManagerWithUsage {
+	appendUsage?: (kind: string, provider: string, model: string, usage: Usage, note?: string) => unknown;
+}
 
 type EmphasisModule = {
 	createPalette?: (theme: unknown, boldColor?: string) => unknown;
@@ -71,18 +87,41 @@ function buildMarkdownTransform(
 
 export default function btwExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("btw", {
-		description: "Ask a quick side question (with multi-turn follow-ups) in the bottom panel without adding it to context",
+		description: "Ask a quick side question (with multi-turn follow-ups) in the bottom panel; persists history & usage without polluting main context",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("/btw requires interactive UI mode.", "warning");
 				return;
 			}
 
+			// Collect prior /btw turns persisted in this session (custom entries never enter main LLM context)
+			const priorTurns: BtwPersistedTurn[] = [];
+			for (const entry of ctx.sessionManager.getEntries()) {
+				if (entry.type === "custom" && entry.customType === BTW_ENTRY_TYPE && entry.data) {
+					const d = entry.data as Partial<BtwEntryData>;
+					if (typeof d.question === "string" && typeof d.answer === "string") {
+						priorTurns.push({
+							question: d.question,
+							answer: d.answer,
+							elapsedMs: typeof d.elapsedMs === "number" ? d.elapsedMs : 0,
+							cacheRead: d.usage?.cacheRead ?? 0,
+							outputTokens: d.usage?.output ?? 0,
+						});
+					}
+				}
+			}
+
 			let question = args.trim();
+			let initialHistory: BtwPersistedTurn[] = [];
 			if (!question) {
-				const entered = await ctx.ui.input("btw", "Ask a quick side question (won't enter context)…");
-				if (!entered || !entered.trim()) return;
-				question = entered.trim();
+				if (priorTurns.length > 0) {
+					// Bare `/btw` opens this session's /btw history for review or follow-up
+					initialHistory = priorTurns;
+				} else {
+					const entered = await ctx.ui.input("btw", "Ask a quick side question (won't enter context)…");
+					if (!entered || !entered.trim()) return;
+					question = entered.trim();
+				}
 			}
 
 			const model = ctx.model;
@@ -104,7 +143,8 @@ export default function btwExtension(pi: ExtensionAPI): void {
 				new BtwOverlayComponent({
 					tui,
 					theme,
-					initialQuestion: question,
+					initialQuestion: question || undefined,
+					initialTurns: initialHistory,
 					modelLabel,
 					markdownTransform: buildMarkdownTransform(emphasis, theme),
 					askSideQuestion: (sideHistory, nextQuestion, signal) => {
@@ -122,6 +162,32 @@ export default function btwExtension(pi: ExtensionAPI): void {
 							signal,
 							reasoning: "low",
 						});
+					},
+					onTurnComplete: (turn) => {
+						// Persist Q&A in session .jsonl as a custom entry (never sent to main LLM)
+						const entryData: BtwEntryData = {
+							question: turn.question,
+							answer: turn.answer,
+							provider: model.provider,
+							model: model.id,
+							elapsedMs: turn.elapsedMs,
+							usage: turn.usage,
+							timestamp: Date.now(),
+						};
+						pi.appendEntry(BTW_ENTRY_TYPE, entryData);
+
+						// Record token & cost usage into Pi's session stats (footer totals) without
+						// inflating the main conversation's context window percentage.
+						if (turn.usage) {
+							const sm = ctx.sessionManager as unknown as SessionManagerWithUsage;
+							if (typeof sm.appendUsage === "function") {
+								try {
+									sm.appendUsage(BTW_ENTRY_TYPE, model.provider, model.id, turn.usage, turn.question.slice(0, 80));
+								} catch {
+									// Ignore if sessionManager implementation rejects usage entry
+								}
+							}
+						}
 					},
 					done: () => done(undefined),
 				}),

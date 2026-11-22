@@ -50,7 +50,7 @@ cd my-pi-config
 
 每次安装都会对 Pi Voice、`pi-subagent`、`pi-cliproxyapi-provider` 和 `pi-emphasis` 运行 `pi update --extension`：未安装时直接安装，已安装时更新到最新版；更新失败只打印警告，不会中断安装。
 
-每次安装也会从上游 `main` 获取最新版 [`mpl` 绘图扩展](https://github.com/dmmulroy/.dotfiles/tree/main/home/.pi/agent/extensions/mpl)，用 npm 按扩展自带的 `package.json` 安装运行依赖，再放到 `~/.pi/agent/extensions/mpl/`。这一步需要 Git、npm 和 Node.js 24 或更新版本。下载或安装依赖失败时，脚本会报错退出，已有的 `mpl` 不受影响。
+每次安装也会自动同步（并在缺少预编译产物时编译）本地 `inline-chart` 的 Rust 渲染引擎到 `~/.pi/agent/extensions/inline-chart/bin/inline-chart-engine`，并清理旧的 `mpl` 扩展。
 
 安装脚本会保留 Pi 用于 ChatGPT 登录的运行时 `deviceId` 和本机已选的默认 provider 与模型，并保留已退役的 `/codex-accounts` 扩展留下的两套本机账号库。
 

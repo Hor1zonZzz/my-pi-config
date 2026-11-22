@@ -9,8 +9,7 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 ## Repository Map
 
 - `settings.json` — global Pi defaults and Pi package dependencies, including the external `pi-subagent` git package that provides subagents and the `pi-cliproxyapi-provider` npm package that registers CLIProxyAPI models.
-- `install.sh` — backs up the current user configuration, refreshes the Herdr
-  skill cache, and copies managed files into the Pi agent directory.
+- `install.sh` + `install-cli.mjs` — interactive space-to-toggle multi-select and CLI-driven (`--all`, `--only`, `--add`, `--remove`, `--exclude`, `--list`) installer that backs up the current user configuration, refreshes the Herdr skill cache when `herdr` is selected, merges `settings.json`, and installs/removes selected components and bundles into the Pi agent directory.
 - `prompts/` — local general-purpose prompt templates installed as global slash commands.
 - `skills/` — remote-managed skill caches; `install.sh` refreshes Herdr from
   its upstream Git repository and installs it to the target Pi skills directory.
@@ -29,8 +28,8 @@ This is a configuration repository, not the Pi Coding Agent source tree and not 
 
 Some files must be maintained together:
 
-- `settings.json` lists `git:github.com/badlogic/pi-subagent`, and `install.sh` links its CLI into `<agent-dir>/bin/subagent`; keep the package path in both.
-- `install.sh` `LATEST_PACKAGES` (Pi Voice, `pi-subagent`, `pi-cliproxyapi-provider`, `pi-emphasis`) must name unpinned sources that `settings.json` lists; `install.test.ts` checks both.
+- `settings.json` lists `git:github.com/badlogic/pi-subagent`, `install-cli.mjs` bundles it with `bin/subagent`, and `install.sh` links its CLI into `<agent-dir>/bin/subagent` when selected; keep the package path in sync.
+- `install-cli.mjs` `COMPONENTS` is the single source of truth for all installable local extensions, external packages (including `updateLatest` entries: Pi Voice, `pi-subagent`, `pi-cliproxyapi-provider`, `pi-emphasis`), and prompts; `install.test.ts` checks that every extension, prompt, and `settings.json` package is registered in `COMPONENTS`.
 - `extensions/herdr/` owns `integration-check.ts`, the background-monitor modules, and `skills/herdr-pi-reference/`; `install.sh` must install that skill into the target skills directory and remove the former standalone extension paths. `herdr-agent-state.ts` is installed and overwritten by Herdr. The local extension may use documented Herdr CLI behavior but must not vendor, import, modify, install, or update the Herdr-managed integration. The background monitor is session-scoped and must not deliver a completion to a replacement Pi session.
 
 ## Upstream-Derived Code

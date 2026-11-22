@@ -11,7 +11,7 @@ English | [中文文档](README.zh-CN.md)
 - `prompts/` — local general-purpose prompt templates, including `/understand` and `/explore-understand` for manually controlled requirement alignment
 - `skills/` — remote-managed skill caches; Herdr is refreshed from its upstream
   Git repository during installation
-- `install.sh` — backup and install into `~/.pi/agent`
+- `install.sh` + `install-cli.mjs` — interactive multi-select and CLI-driven backup/installer into `~/.pi/agent`
 
 ## Reply styling
 
@@ -41,27 +41,48 @@ cd my-pi-config
 ./install.sh
 ```
 
+Running `./install.sh` in an interactive terminal opens a space-to-toggle multi-select menu (starting with nothing checked, marking already-installed items, and bundling tightly coupled components together):
+
+- **Bundled components**:
+  - `herdr` — `extensions/herdr/`, `npm:@ogulcancelik/pi-herdr`, and the `herdr` + `herdr-pi-reference` skills
+  - `inline-chart` — `extensions/inline-chart/` and the Rust `inline-chart-engine` binary
+  - `pi-subagent` — `git:github.com/badlogic/pi-subagent` and the `bin/subagent` CLI symlink
+- **Standalone components**: each remaining local extension (`background-task`, `btw`, `codex-statusline`, `esc-clear`, `memory`, `notify`, `questionnaire`, `tps`), external package (`pi-annotate`, `pi-voice`, `pi-cliproxyapi-provider`, `pi-emphasis`), and prompt (`understand`, `explore-understand`) can be selected individually.
+- **TUI shortcuts**: `↑`/`↓` or `j`/`k` to move, `Space` to toggle, `a` to select/clear all, `i` to load currently installed items, `Enter` to confirm (asks before removing any currently installed item), `q`/`Esc` to cancel.
+
+CLI flags are supported for non-interactive or scripted installs (running `./install.sh` without a TTY defaults to `--all`):
+
+```bash
+./install.sh --list                               # List components, bundles, and installed status
+./install.sh --all                                # Install everything (sync mode)
+./install.sh --only memory,btw,esc-clear          # Sync to only these items (unselected repo items are backed up and removed)
+./install.sh --add inline-chart,pi-subagent       # Incrementally install/update without touching other installed items
+./install.sh --all --exclude herdr,pi-voice       # Install all except excluded items
+./install.sh --remove pi-emphasis                 # Remove only the specified repo-managed items (after backup)
+```
+
+Comma-separated lists also accept group aliases: `all`, `extensions`, `packages`, and `prompts`.
+
 The installer creates a timestamped backup under `~/.pi/agent/backups/` before
-replacing managed files. It preserves Pi's runtime `deviceId` for ChatGPT login and the locally chosen
-default provider and model, which this repository does not set,
+replacing or removing managed files. It preserves Pi's runtime `deviceId` for ChatGPT login, the locally chosen
+default provider and model (which this repository does not set), any user-added third-party entries in `settings.json.packages`,
 and leaves the credential vaults of the retired `/codex-accounts` extension untouched. It sets no model overrides and
-never modifies the local `models.json`. It also refreshes the Herdr skill from upstream `master`, installs it
+never modifies the local `models.json`. When `herdr` is selected, it refreshes the Herdr skill from upstream `master`, installs it
 to `~/.pi/agent/skills/herdr/`, and installs the Herdr-owned `herdr-pi-reference`
 skill to `~/.pi/agent/skills/herdr-pi-reference/`; an existing Herdr cache is
 used when the remote is temporarily unavailable. When Pi starts inside Herdr,
 the local integration checker warns if Herdr's Pi integration is missing or
 outdated; it never installs or updates the Herdr-managed integration
-automatically. During migration the installer also backs up and removes the
+automatically. In sync mode, the installer also backs up and removes the
 retired `extensions/plan-mode/`, `extensions/code-mode/`, `extensions/hairline/`,
 `extensions/codex-fast-toggle/`, `extensions/codex-server-compaction/`, and
 `extensions/codex-accounts/`, the former global `codex-fast.json` state file, and the retired external
-`pi-openai-server-compaction` Git package checkout. It removes the former local
+`pi-openai-server-compaction` Git package checkout, as well as the former local
 subagent extension with its installed agents (`planner`, `reviewer`, `scout`,
-`worker`) and workflow prompts, and links `~/.pi/agent/bin/subagent` to the
+`worker`) and workflow prompts. When `pi-subagent` is selected, it links `~/.pi/agent/bin/subagent` to the
 `pi-subagent` package checkout so the `subagent` CLI is on Pi's bash `PATH`;
-the link resolves once Pi has installed the package. Every install then runs
-`pi update --extension` for Pi Voice, `pi-subagent`, `pi-cliproxyapi-provider`, and `pi-emphasis`,
-which installs each one if it is missing and otherwise moves it to its newest
+the link resolves once Pi has installed the package. For each selected latest-tracking package (Pi Voice, `pi-subagent`, `pi-cliproxyapi-provider`, and `pi-emphasis`), the installer runs
+`pi update --extension`, which installs it if missing and otherwise moves it to its newest
 release; a failed update only prints a warning. `pi-subagent` needs tmux
 and Node.js 22.19 or newer. Restart Pi or run:
 
@@ -69,7 +90,7 @@ and Node.js 22.19 or newer. Restart Pi or run:
 /reload
 ```
 
-Every install also builds (if needed) and installs the local `inline-chart` Rust rendering binary into `~/.pi/agent/extensions/inline-chart/bin/inline-chart-engine`, and removes the retired `mpl` extension if present.
+When `inline-chart` is selected, the installer also copies (or builds via `cargo` when needed) the local `inline-chart` Rust rendering binary into `~/.pi/agent/extensions/inline-chart/bin/inline-chart-engine`, and removes the retired `mpl` extension if present.
 
 Package dependencies declared in `settings.json` are installed by Pi on startup. Authenticate separately; credentials are intentionally not included.
 

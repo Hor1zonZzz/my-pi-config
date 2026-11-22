@@ -4,19 +4,91 @@
  * the main transcript) and reuses the active conversation context (and prompt cache prefix)
  * without adding anything to the main session context.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Context, Message, Usage } from "@earendil-works/pi-ai";
-import { convertToLlm, getAgentDir, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
+import type { Api, Context, Message, Model, Usage } from "@earendil-works/pi-ai";
+import { convertToLlm, getAgentDir, type ExtensionAPI, type ExtensionCommandContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { BtwOverlayComponent, type BtwPersistedTurn } from "./overlay.ts";
 
 const BTW_ENTRY_TYPE = "btw";
 const BTW_CLEAR_ENTRY_TYPE = "btw_clear";
+const FOLLOW_MAIN_LABEL = "跟随主模型 (默认)";
 
 const BTW_INSTRUCTION =
-	"[Side question via /btw — ephemeral, NOT added to main conversation history. Answer the user's question directly and concisely based on the conversation context above. Do not call tools or suggest edits unless asked.]\n\n";
+	"[Side question via /btw — ephemeral, NOT added to main conversation history. Answer the user's question directly and concisely based on the conversation context above. Tools are disabled; do not call tools or suggest edits unless asked.]\n\n";
+
+interface BtwConfig {
+	/** Optional `"provider/modelId"` override; `null` or omitted means follow the active main model. */
+	model?: string | null;
+}
+
+function getAgentDirSafe(): string {
+	try {
+		return getAgentDir();
+	} catch {
+		return join(homedir(), ".pi", "agent");
+	}
+}
+
+function getBtwConfigPath(): string {
+	return join(getAgentDirSafe(), "btw.json");
+}
+
+function readBtwConfig(): BtwConfig {
+	try {
+		const p = getBtwConfigPath();
+		if (!existsSync(p)) return {};
+		const parsed = JSON.parse(readFileSync(p, "utf8")) as BtwConfig;
+		return parsed && typeof parsed === "object" ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+function writeBtwConfig(cfg: BtwConfig): void {
+	try {
+		writeFileSync(getBtwConfigPath(), `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+	} catch {
+		// Ignore write errors in read-only environments
+	}
+}
+
+function resolveBtwModel(ctx: ExtensionCommandContext): { model: Model<Api> | undefined; isCustom: boolean } {
+	const cfg = readBtwConfig();
+	if (cfg.model && cfg.model.includes("/")) {
+		const slash = cfg.model.indexOf("/");
+		const provider = cfg.model.slice(0, slash);
+		const modelId = cfg.model.slice(slash + 1);
+		const found = ctx.modelRegistry.find(provider, modelId);
+		if (found) return { model: found, isCustom: true };
+	}
+	return { model: ctx.model, isCustom: false };
+}
+
+async function pickBtwModel(ctx: ExtensionCommandContext): Promise<{ model: Model<Api> | undefined; isCustom: boolean } | undefined> {
+	const currentCfg = readBtwConfig().model ?? null;
+	const mainLabel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "无";
+	const followOption = `${FOLLOW_MAIN_LABEL} [${mainLabel}]${currentCfg === null ? " ✓" : ""}`;
+	const available = ctx.modelRegistry.getAvailable();
+	const modelOptions = available.map((m) => {
+		const key = `${m.provider}/${m.id}`;
+		return currentCfg === key ? `${key} ✓` : key;
+	});
+
+	const choice = await ctx.ui.select("选择 /btw 追问模型", [followOption, ...modelOptions]);
+	if (!choice) return undefined;
+
+	if (choice.startsWith(FOLLOW_MAIN_LABEL)) {
+		writeBtwConfig({ model: null });
+		return { model: ctx.model, isCustom: false };
+	}
+
+	const cleaned = choice.replace(/ ✓$/, "");
+	writeBtwConfig({ model: cleaned });
+	return resolveBtwModel(ctx);
+}
 
 interface BtwEntryData {
 	question: string;
@@ -87,11 +159,44 @@ function buildMarkdownTransform(
 }
 
 export default function btwExtension(pi: ExtensionAPI): void {
+	pi.registerCommand("btw-model", {
+		description: "Select a dedicated model for /btw side questions (or reset to follow the main model)",
+		handler: async (_args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("/btw-model requires interactive UI mode.", "warning");
+				return;
+			}
+			const picked = await pickBtwModel(ctx);
+			if (!picked) return;
+			if (!picked.model) {
+				ctx.ui.notify("/btw 已设为跟随主模型（当前无活动主模型）。", "info");
+				return;
+			}
+			const label = `${picked.model.provider}/${picked.model.id}`;
+			ctx.ui.notify(
+				picked.isCustom ? `/btw 追问模型已切换为: ${label}` : `/btw 已恢复跟随主模型 (${label})`,
+				"info",
+			);
+		},
+	});
+
 	pi.registerCommand("btw", {
 		description: "Ask a quick side question (with multi-turn follow-ups) in the bottom panel; persists history & usage without polluting main context",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("/btw requires interactive UI mode.", "warning");
+				return;
+			}
+
+			if (args.trim() === "model" || args.trim() === "--model") {
+				const picked = await pickBtwModel(ctx);
+				if (picked?.model) {
+					const label = `${picked.model.provider}/${picked.model.id}`;
+					ctx.ui.notify(
+						picked.isCustom ? `/btw 追问模型已切换为: ${label}` : `/btw 已恢复跟随主模型 (${label})`,
+						"info",
+					);
+				}
 				return;
 			}
 
@@ -128,22 +233,21 @@ export default function btwExtension(pi: ExtensionAPI): void {
 				}
 			}
 
-			const model = ctx.model;
-			if (!model) {
+			let activeSelection = resolveBtwModel(ctx);
+			if (!activeSelection.model) {
 				ctx.ui.notify("No active model configured for /btw.", "error");
 				return;
 			}
 
-			// Snapshot current session context read-only so main prompt cache prefix is reused
-			// without mutating sessionManager or polluting the main conversation.
-			// Note: in Pi >=1.6, buildSessionContext().messages already includes the session's
-			// `role: "system"` message (with sections). Do NOT also set llmContext.systemPrompt
-			// when a system message is already present, or the system prompt gets sent twice
-			// (~9k wasted tokens) and breaks prompt cache prefix matching on the first /btw turn.
+			const formatModelLabel = (sel: { model: Model<Api>; isCustom: boolean }) =>
+				sel.isCustom ? `${sel.model.provider}/${sel.model.id} (自定义)` : `${sel.model.provider}/${sel.model.id}`;
+
+			// Snapshot current session context read-only without mutating sessionManager.
+			// Note: buildSessionContext().messages already includes the session's `role: "system"`
+			// message in Pi >=1.6; avoid duplicating systemPrompt to save ~9k input tokens.
 			const baseMessages: Message[] = convertToLlm(ctx.sessionManager.buildSessionContext().messages);
 			const hasSystemMsg = baseMessages.some((m) => (m as { role?: string }).role === "system");
 			const fallbackSystemPrompt = hasSystemMsg ? undefined : ctx.getSystemPrompt();
-			const modelLabel = `${model.provider}/${model.id}`;
 
 			// Render inline in Pi's bottom editor/status slot (not a centered modal overlay),
 			// matching Claude Code's bottom-docked /btw panel so the main transcript stays visible.
@@ -154,9 +258,10 @@ export default function btwExtension(pi: ExtensionAPI): void {
 					theme,
 					initialQuestion: question || undefined,
 					initialTurns: initialHistory,
-					modelLabel,
+					modelLabel: formatModelLabel(activeSelection as { model: Model<Api>; isCustom: boolean }),
 					markdownTransform: buildMarkdownTransform(emphasis, theme),
 					askSideQuestion: (sideHistory, nextQuestion, signal) => {
+						const currentModel = activeSelection.model!;
 						const prefix = sideHistory.length === 0 ? BTW_INSTRUCTION : "";
 						const userMsg: Message = {
 							role: "user",
@@ -167,19 +272,26 @@ export default function btwExtension(pi: ExtensionAPI): void {
 							...(fallbackSystemPrompt ? { systemPrompt: fallbackSystemPrompt } : {}),
 							messages: [...baseMessages, ...sideHistory, userMsg],
 						};
-						return ctx.modelRegistry.streamSimple(model, llmContext, {
+						return ctx.modelRegistry.streamSimple(currentModel, llmContext, {
 							signal,
 							reasoning: "low",
 							sessionId: ctx.sessionManager.getSessionId(),
 						});
 					},
+					onSelectModel: async () => {
+						const picked = await pickBtwModel(ctx);
+						if (!picked?.model) return undefined;
+						activeSelection = picked;
+						return formatModelLabel(picked as { model: Model<Api>; isCustom: boolean });
+					},
 					onTurnComplete: (turn) => {
+						const currentModel = activeSelection.model!;
 						// Persist Q&A in session .jsonl as a custom entry (never sent to main LLM)
 						const entryData: BtwEntryData = {
 							question: turn.question,
 							answer: turn.answer,
-							provider: model.provider,
-							model: model.id,
+							provider: currentModel.provider,
+							model: currentModel.id,
 							elapsedMs: turn.elapsedMs,
 							usage: turn.usage,
 							timestamp: Date.now(),
@@ -192,7 +304,7 @@ export default function btwExtension(pi: ExtensionAPI): void {
 							const sm = ctx.sessionManager as unknown as SessionManagerWithUsage;
 							if (typeof sm.appendUsage === "function") {
 								try {
-									sm.appendUsage(BTW_ENTRY_TYPE, model.provider, model.id, turn.usage, turn.question.slice(0, 80));
+									sm.appendUsage(BTW_ENTRY_TYPE, currentModel.provider, currentModel.id, turn.usage, turn.question.slice(0, 80));
 								} catch {
 									// Ignore if sessionManager implementation rejects usage entry
 								}

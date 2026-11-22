@@ -80,6 +80,7 @@ export interface BtwOverlayOptions {
 		question: string,
 		signal: AbortSignal,
 	) => AsyncIterable<AssistantMessageEvent>;
+	onSelectModel?: () => Promise<string | undefined>;
 	onTurnComplete?: (turn: BtwCompletedTurn) => void;
 	onClear?: () => void;
 	done: () => void;
@@ -94,6 +95,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 	private markdownTransform?: (markdown: string, availableWidth: number) => string;
 	private modelLabel: string;
 	private askSideQuestion: BtwOverlayOptions["askSideQuestion"];
+	private onSelectModel?: () => Promise<string | undefined>;
 	private onTurnComplete?: BtwOverlayOptions["onTurnComplete"];
 	private onClear?: () => void;
 	private done: () => void;
@@ -124,6 +126,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 		this.markdownTransform = opts.markdownTransform;
 		this.modelLabel = opts.modelLabel;
 		this.askSideQuestion = opts.askSideQuestion;
+		this.onSelectModel = opts.onSelectModel;
 		this.onTurnComplete = opts.onTurnComplete;
 		this.onClear = opts.onClear;
 		this.done = opts.done;
@@ -415,6 +418,31 @@ export class BtwOverlayComponent implements Component, Focusable {
 			}
 			return;
 		}
+		if (matchesKey(data, "ctrl+p") && !this.streaming && this.onSelectModel) {
+			void this.onSelectModel().then((newLabel) => {
+				if (newLabel && !this.disposed) {
+					this.modelLabel = newLabel;
+					this.tui.requestRender();
+				}
+			});
+			return;
+		}
+		// Single-key shortcuts when input box is empty & idle (Claude Code style: x = clear, m = switch model)
+		if (!this.streaming && !this.input.getValue()) {
+			if ((data === "x" || data === "X") && this.turns.length > 0) {
+				this.clearThread();
+				return;
+			}
+			if ((data === "m" || data === "M") && this.onSelectModel) {
+				void this.onSelectModel().then((newLabel) => {
+					if (newLabel && !this.disposed) {
+						this.modelLabel = newLabel;
+						this.tui.requestRender();
+					}
+				});
+				return;
+			}
+		}
 		if (matchesKey(data, "tab") || data === "\t" || matchesKey(data, "ctrl+o")) {
 			if (this.turns.length > 1) {
 				this.toggleAllHistory();
@@ -584,7 +612,8 @@ export class BtwOverlayComponent implements Component, Focusable {
 			rightHint = muted("Esc 取消");
 		} else {
 			const hintParts = ["⏎ 追问", "Esc 关闭"];
-			if (this.turns.length > 0) hintParts.push("^Y 复制", "^L 清空");
+			if (this.turns.length > 0) hintParts.push("^Y 复制", "x 清空");
+			if (this.onSelectModel) hintParts.push("m 换模型");
 			if (this.turns.length > 1) hintParts.push(this.allEarlierExpanded() ? "Tab/点击 折叠" : "Tab/点击 展开");
 			if (this.maxScroll > 0) hintParts.push("↑↓ 滚动");
 			rightHint = muted(hintParts.join(" · "));

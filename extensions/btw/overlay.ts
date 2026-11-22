@@ -248,6 +248,13 @@ export class BtwOverlayComponent implements Component, Focusable {
 						turn.cacheRead = usage.cacheRead ?? 0;
 						turn.outputTokens = usage.output ?? 0;
 					}
+					if (!turn.answer.trim() && !turn.error) {
+						if (ev.message.stopReason === "toolUse") {
+							turn.error = "/btw 已禁用工具，模型尝试调用工具；如需执行操作请在主对话中提问。";
+						} else {
+							turn.error = "模型未返回文本内容。";
+						}
+					}
 				} else if (ev.type === "error") {
 					turn.error = ev.error.errorMessage || "Request failed";
 				}

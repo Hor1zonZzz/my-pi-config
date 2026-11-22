@@ -17,7 +17,95 @@ const BTW_CLEAR_ENTRY_TYPE = "btw_clear";
 const FOLLOW_MAIN_LABEL = "跟随主模型 (默认)";
 
 const BTW_INSTRUCTION =
-	"[Side question via /btw — ephemeral, NOT added to main conversation history. Answer the user's question directly and concisely based on the conversation context above. Tools are disabled; do not call tools or suggest edits unless asked.]\n\n";
+	"[Side question via /btw — ephemeral, NOT added to main conversation history. IMPORTANT: All tools are DISABLED in /btw. Do NOT call or attempt to call any tools; answer directly and concisely in plain text/Markdown using only the conversation context above.]\n\n";
+
+/**
+ * Convert toolCall / toolResult / thinking blocks in the main conversation snapshot
+ * into plain text so `/btw` works reliably with tools disabled across ALL providers
+ * (Anthropic, OpenAI Responses, Gemini, etc.) without API errors or cross-model
+ * thinking-signature mismatches.
+ */
+function sanitizeMessagesForNoTools(messages: readonly Message[]): Message[] {
+	const out: Message[] = [];
+	for (const msg of messages) {
+		const role = (msg as { role?: string }).role;
+		if (role === "system") {
+			out.push(msg);
+			continue;
+		}
+		if (role === "toolResult") {
+			const tr = msg as { toolName?: string; content?: unknown; timestamp?: number };
+			const rawText = Array.isArray(tr.content)
+				? tr.content
+						.map((c: unknown) => {
+							if (typeof c === "string") return c;
+							if (c && typeof c === "object" && "text" in c && typeof (c as { text?: unknown }).text === "string") {
+								return (c as { text: string }).text;
+							}
+							return "";
+						})
+						.filter(Boolean)
+						.join("\n")
+				: typeof tr.content === "string"
+					? tr.content
+					: "";
+			const clipped = rawText.length > 4000 ? `${rawText.slice(0, 4000)}\n…(truncated)` : rawText;
+			const label = tr.toolName ? `[Tool result (${tr.toolName})]` : "[Tool result]";
+			const text = clipped ? `${label}\n${clipped}` : `${label} (empty)`;
+			const prev = out[out.length - 1];
+			if (prev && prev.role === "user" && Array.isArray(prev.content)) {
+				prev.content = [...prev.content, { type: "text", text }];
+			} else {
+				out.push({
+					role: "user",
+					content: [{ type: "text", text }],
+					timestamp: tr.timestamp ?? Date.now(),
+				});
+			}
+			continue;
+		}
+		if (role === "assistant") {
+			const am = msg as Extract<Message, { role: "assistant" }>;
+			const parts: { type: "text"; text: string }[] = [];
+			if (Array.isArray(am.content)) {
+				for (const block of am.content) {
+					if (block.type === "text" && block.text) {
+						parts.push({ type: "text", text: block.text });
+					} else if (block.type === "toolCall") {
+						parts.push({ type: "text", text: `[Called tool: ${block.name}]` });
+					}
+					// Skip thinking blocks to avoid cross-provider signature errors
+				}
+			}
+			if (parts.length > 0) {
+				out.push({
+					...am,
+					content: parts,
+				});
+			}
+			continue;
+		}
+		if (role === "user") {
+			const um = msg as Extract<Message, { role: "user" }>;
+			const prev = out[out.length - 1];
+			if (prev && prev.role === "user" && Array.isArray(prev.content)) {
+				const extra = Array.isArray(um.content)
+					? um.content
+					: [{ type: "text" as const, text: String(um.content ?? "") }];
+				prev.content = [...prev.content, ...extra];
+			} else {
+				out.push(
+					Array.isArray(um.content)
+						? { ...um, content: [...um.content] }
+						: um,
+				);
+			}
+			continue;
+		}
+		out.push(msg);
+	}
+	return out;
+}
 
 interface BtwConfig {
 	/** Optional `"provider/modelId"` override; `null` or omitted means follow the active main model. */
@@ -242,10 +330,10 @@ export default function btwExtension(pi: ExtensionAPI): void {
 			const formatModelLabel = (sel: { model: Model<Api>; isCustom: boolean }) =>
 				sel.isCustom ? `${sel.model.provider}/${sel.model.id} (自定义)` : `${sel.model.provider}/${sel.model.id}`;
 
-			// Snapshot current session context read-only without mutating sessionManager.
-			// Note: buildSessionContext().messages already includes the session's `role: "system"`
-			// message in Pi >=1.6; avoid duplicating systemPrompt to save ~9k input tokens.
-			const baseMessages: Message[] = convertToLlm(ctx.sessionManager.buildSessionContext().messages);
+			// Snapshot current session context read-only and flatten toolCall/toolResult blocks
+			// into plain text so tools-disabled /btw calls never fail on any provider/model.
+			const rawMessages: Message[] = convertToLlm(ctx.sessionManager.buildSessionContext().messages);
+			const baseMessages: Message[] = sanitizeMessagesForNoTools(rawMessages);
 			const hasSystemMsg = baseMessages.some((m) => (m as { role?: string }).role === "system");
 			const fallbackSystemPrompt = hasSystemMsg ? undefined : ctx.getSystemPrompt();
 

@@ -4,7 +4,7 @@
  * Automatically adapts to terminal window width (HiDPI responsive resize) and host Pi/Rex theme colors.
  */
 import type { ExtensionAPI, ToolDefinition, ToolNamespace } from "@earendil-works/pi-coding-agent";
-import { Text, type Component, type TUI } from "@earendil-works/pi-tui";
+import { getCapabilities, Text, type Component, type TUI } from "@earendil-works/pi-tui";
 import { Type, type TSchema } from "typebox";
 import { engineClient, type ChartSpec, type RenderResponse } from "./client.ts";
 import { extractThemeSnapshot, InlineChartComponent, type HostThemeLike } from "./component.ts";
@@ -294,9 +294,10 @@ function createInlineChartTool(pi: ExtensionAPI): ToolDefinition<TSchema, { char
 }
 
 export default function piInlineChartExtension(pi: ExtensionAPI): void {
+	const hasKittyGraphics = getCapabilities().images === "kitty";
 	const isRex = Boolean(process.env.REX_SESSION || process.env.TERM_PROGRAM?.toLowerCase() === "rex");
 	const forceEnable = process.env.PI_INLINE_CHART_ALWAYS === "1";
-	if (!isRex && !forceEnable) {
+	if (!hasKittyGraphics && !isRex && !forceEnable) {
 		return;
 	}
 

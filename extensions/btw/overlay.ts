@@ -81,6 +81,7 @@ export interface BtwOverlayOptions {
 		signal: AbortSignal,
 	) => AsyncIterable<AssistantMessageEvent>;
 	onTurnComplete?: (turn: BtwCompletedTurn) => void;
+	onClear?: () => void;
 	done: () => void;
 }
 
@@ -94,6 +95,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 	private modelLabel: string;
 	private askSideQuestion: BtwOverlayOptions["askSideQuestion"];
 	private onTurnComplete?: BtwOverlayOptions["onTurnComplete"];
+	private onClear?: () => void;
 	private done: () => void;
 
 	private turns: BtwTurn[] = [];
@@ -111,6 +113,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 	private spinnerTimer: ReturnType<typeof setInterval> | null = null;
 	private copiedFlash = false;
 	private copiedTimer: ReturnType<typeof setTimeout> | null = null;
+	private clearedNotice = false;
 	private disposed = false;
 
 	constructor(opts: BtwOverlayOptions) {
@@ -121,6 +124,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 		this.modelLabel = opts.modelLabel;
 		this.askSideQuestion = opts.askSideQuestion;
 		this.onTurnComplete = opts.onTurnComplete;
+		this.onClear = opts.onClear;
 		this.done = opts.done;
 
 		this.input = new Input();
@@ -179,6 +183,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 
 	private startTurn(question: string): void {
 		if (this.disposed || this.streaming) return;
+		this.clearedNotice = false;
 		const turn: BtwTurn = {
 			question,
 			answer: "",
@@ -339,6 +344,27 @@ export class BtwOverlayComponent implements Component, Focusable {
 		child.stdin?.end(last.answer);
 	}
 
+	private clearThread(): void {
+		if (this.streaming && this.abortController) {
+			this.abortController.abort();
+			this.abortController = null;
+			this.streaming = false;
+		}
+		if (this.spinnerTimer) {
+			clearInterval(this.spinnerTimer);
+			this.spinnerTimer = null;
+		}
+		this.turns = [];
+		this.sideHistory = [];
+		this.scrollOffset = 0;
+		this.maxScroll = 0;
+		this.historyExpanded = false;
+		this.autoFollow = true;
+		this.clearedNotice = true;
+		this.onClear?.();
+		this.tui.requestRender();
+	}
+
 	handleInput(data: string): void {
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
 			this.handleEscape();
@@ -346,6 +372,12 @@ export class BtwOverlayComponent implements Component, Focusable {
 		}
 		if (matchesKey(data, "ctrl+y")) {
 			this.copyLastAnswer();
+			return;
+		}
+		if (matchesKey(data, "ctrl+l")) {
+			if (this.turns.length > 0 || this.streaming) {
+				this.clearThread();
+			}
 			return;
 		}
 		if (matchesKey(data, "tab") && this.turns.length > 1) {
@@ -438,6 +470,12 @@ export class BtwOverlayComponent implements Component, Focusable {
 
 		// Body: earlier turns collapse to 1-line summaries unless expanded via Tab
 		const rawBody: string[] = [];
+		if (this.turns.length === 0) {
+			const msg = this.clearedNotice
+				? "✓ 已清空当前追问上下文，直接输入新问题即可开始新对话（历史仍留存在 session 中）"
+				: "输入问题开始旁路对话（不进入主对话 context）";
+			rawBody.push(muted(msg));
+		}
 		const lastIdx = this.turns.length - 1;
 		for (let i = 0; i < this.turns.length; i++) {
 			const turn = this.turns[i];
@@ -487,7 +525,8 @@ export class BtwOverlayComponent implements Component, Focusable {
 		} else if (this.streaming) {
 			rightHint = muted("Esc 取消");
 		} else {
-			const hintParts = ["⏎ 追问", "Esc 关闭", "^Y 复制"];
+			const hintParts = ["⏎ 追问", "Esc 关闭"];
+			if (this.turns.length > 0) hintParts.push("^Y 复制", "^L 清空");
 			if (this.turns.length > 1) hintParts.push(this.historyExpanded ? "Tab 折叠" : "Tab 展开");
 			if (this.maxScroll > 0) hintParts.push("↑↓ 滚动");
 			rightHint = muted(hintParts.join(" · "));
@@ -500,7 +539,8 @@ export class BtwOverlayComponent implements Component, Focusable {
 			inputLeft = muted(`${SPINNER_FRAMES[this.spinnerIdx]} 回复中…`);
 		} else if (!this.input.getValue()) {
 			const rendered = (this.input.render(innerW)[0] ?? "> ").trimEnd();
-			inputLeft = `${rendered} ${muted("继续追问…")}`;
+			const placeholder = this.turns.length === 0 ? "输入新问题…" : "继续追问…";
+			inputLeft = `${rendered} ${muted(placeholder)}`;
 		} else {
 			inputLeft = (this.input.render(innerW)[0] ?? "").trimEnd();
 		}

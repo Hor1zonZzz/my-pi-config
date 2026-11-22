@@ -13,6 +13,7 @@ import { convertToLlm, getAgentDir, type ExtensionAPI, type Theme } from "@earen
 import { BtwOverlayComponent, type BtwPersistedTurn } from "./overlay.ts";
 
 const BTW_ENTRY_TYPE = "btw";
+const BTW_CLEAR_ENTRY_TYPE = "btw_clear";
 
 const BTW_INSTRUCTION =
 	"[Side question via /btw — ephemeral, NOT added to main conversation history. Answer the user's question directly and concisely based on the conversation context above. Do not call tools or suggest edits unless asked.]\n\n";
@@ -94,10 +95,13 @@ export default function btwExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			// Collect prior /btw turns persisted in this session (custom entries never enter main LLM context)
-			const priorTurns: BtwPersistedTurn[] = [];
+			// Collect active /btw turns persisted since the last clear marker
+			// (all earlier entries remain in the session .jsonl, never entering main LLM context)
+			let priorTurns: BtwPersistedTurn[] = [];
 			for (const entry of ctx.sessionManager.getEntries()) {
-				if (entry.type === "custom" && entry.customType === BTW_ENTRY_TYPE && entry.data) {
+				if (entry.type === "custom" && entry.customType === BTW_CLEAR_ENTRY_TYPE) {
+					priorTurns = [];
+				} else if (entry.type === "custom" && entry.customType === BTW_ENTRY_TYPE && entry.data) {
 					const d = entry.data as Partial<BtwEntryData>;
 					if (typeof d.question === "string" && typeof d.answer === "string") {
 						priorTurns.push({
@@ -189,6 +193,9 @@ export default function btwExtension(pi: ExtensionAPI): void {
 								}
 							}
 						}
+					},
+					onClear: () => {
+						pi.appendEntry(BTW_CLEAR_ENTRY_TYPE, { timestamp: Date.now() });
 					},
 					done: () => done(undefined),
 				}),

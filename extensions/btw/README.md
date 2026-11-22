@@ -14,6 +14,7 @@ Claude Code-style `/btw` side-question panel for Pi.
 - **pi-emphasis integration**: Automatically applies `pi-emphasis` pill/label rendering when installed.
 - **Shortcuts**:
   - `Enter`: send follow-up question
+  - `Ctrl+L`: clear current `/btw` thread and start a fresh side question (prior entries stay archived in the session `.jsonl`)
   - `Tab`: expand / collapse earlier `/btw` turns
   - `Esc` / `Ctrl+C`: abort streaming or close panel
   - `Ctrl+Y`: copy latest answer (`pbcopy`, raw Markdown)

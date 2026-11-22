@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import {
 	allocateImageId,
 	getCapabilities,
@@ -105,12 +106,29 @@ export class InlineChartComponent implements Component {
 	private lastThemeFingerprint = "";
 	private hitRegions: HitRegion[] = [];
 
-	// Latest-only async render pipeline (never queues stale frames)
+	// Latest-only async render pipeline with frame pacing (caps PTY bandwidth so terminal never queues stale frames)
 	private inflight = false;
 	private pendingRerender = false;
+	private pendingReason = "init";
+	private coalescedCount = 0;
+	private mouseEventCount = 0;
+	private lastFrameSentAt = 0;
+	private paceTimer: ReturnType<typeof setTimeout> | null = null;
+	private lastHoverCol: number | null = null;
 	private desiredWidthPx = 1080;
 	private desiredHeightPx = 420;
 	private desiredDpr = 2.0;
+
+	private static readonly MIN_FRAME_INTERVAL_MS = 28; // ~35 fps cap prevents PTY queue backlog
+
+	private logTelemetry(entry: Record<string, unknown>): void {
+		if (process.env.INLINE_CHART_TELEMETRY !== "1") return;
+		try {
+			appendFileSync("/tmp/inline-chart-telemetry.jsonl", JSON.stringify({ ts: Date.now(), ...entry }) + "\n");
+		} catch {
+			// Ignore telemetry write errors
+		}
+	}
 
 	constructor(init: InlineChartInitialState) {
 		this.spec = init.spec;
@@ -150,13 +168,35 @@ export class InlineChartComponent implements Component {
 		}
 	}
 
-	private scheduleRender(widthPx: number, heightPx: number, dpr?: number): void {
+	private scheduleRender(widthPx: number, heightPx: number, dpr?: number, reason = "update"): void {
 		this.desiredWidthPx = widthPx;
 		this.desiredHeightPx = heightPx;
 		if (dpr !== undefined) this.desiredDpr = dpr;
+		this.pendingReason = reason;
 		if (this.inflight) {
 			this.pendingRerender = true;
+			this.coalescedCount += 1;
 			return;
+		}
+		const elapsed = performance.now() - this.lastFrameSentAt;
+		const isHighFreq = reason === "hover" || reason === "slider";
+		if (isHighFreq && elapsed < InlineChartComponent.MIN_FRAME_INTERVAL_MS) {
+			this.pendingRerender = true;
+			this.coalescedCount += 1;
+			if (!this.paceTimer) {
+				const wait = Math.max(1, Math.ceil(InlineChartComponent.MIN_FRAME_INTERVAL_MS - elapsed));
+				this.paceTimer = setTimeout(() => {
+					this.paceTimer = null;
+					if (!this.inflight && this.pendingRerender) {
+						this.runRenderLoop();
+					}
+				}, wait);
+			}
+			return;
+		}
+		if (this.paceTimer) {
+			clearTimeout(this.paceTimer);
+			this.paceTimer = null;
 		}
 		this.runRenderLoop();
 	}
@@ -164,36 +204,73 @@ export class InlineChartComponent implements Component {
 	private async runRenderLoop(): Promise<void> {
 		this.inflight = true;
 		try {
-			do {
-				this.pendingRerender = false;
-				const snap = extractThemeSnapshot(this.getTheme());
-				this.lastThemeFingerprint = snap.fingerprint;
-				this.lastTargetW = this.desiredWidthPx;
-				this.lastTargetH = this.desiredHeightPx;
-				const resp = await engineClient.render({
-					width_px: this.desiredWidthPx,
-					height_px: this.desiredHeightPx,
-					dpr: this.desiredDpr,
-					native_axes: true,
-					spec: this.spec,
-					control_values: { ...this.controlValues },
-					hidden_series: [...this.hiddenSeries],
-					hover_x: this.hoverX,
-					hover_norm_x: this.hoverNormX,
-					hover_norm_y: this.hoverNormY,
-					view_x_domain: this.viewXDomain,
-					theme: snap.mode,
-					palette: snap.palette,
+			this.pendingRerender = false;
+			const reason = this.pendingReason;
+			const coalesced = this.coalescedCount;
+			const mouseEv = this.mouseEventCount;
+			this.coalescedCount = 0;
+			this.mouseEventCount = 0;
+			const snap = extractThemeSnapshot(this.getTheme());
+			this.lastThemeFingerprint = snap.fingerprint;
+			this.lastTargetW = this.desiredWidthPx;
+			this.lastTargetH = this.desiredHeightPx;
+			const t0 = performance.now();
+			const resp = await engineClient.render({
+				width_px: this.desiredWidthPx,
+				height_px: this.desiredHeightPx,
+				dpr: this.desiredDpr,
+				native_axes: true,
+				spec: this.spec,
+				control_values: { ...this.controlValues },
+				hidden_series: [...this.hiddenSeries],
+				hover_x: this.hoverX,
+				hover_norm_x: this.hoverNormX,
+				hover_norm_y: this.hoverNormY,
+				view_x_domain: this.viewXDomain,
+				theme: snap.mode,
+				palette: snap.palette,
+			});
+			const ipcMs = performance.now() - t0;
+			this.lastFrameSentAt = performance.now();
+			if (resp.ok && resp.png_base64) {
+				this.frame = resp;
+				const tInv = performance.now();
+				this.onInvalidate();
+				const invMs = performance.now() - tInv;
+				this.logTelemetry({
+					chart: this.spec.title,
+					style: this.spec.series[0]?.style || "solid",
+					reason,
+					w: resp.width_px,
+					h: resp.height_px,
+					draw_ms: Number((resp.draw_ms ?? 0).toFixed(2)),
+					encode_ms: Number((resp.encode_ms ?? 0).toFixed(2)),
+					rust_ms: Number(resp.render_ms.toFixed(2)),
+					ipc_ms: Number(ipcMs.toFixed(2)),
+					invalidate_ms: Number(invMs.toFixed(2)),
+					png_kb: Math.round((resp.png_base64.length * 0.75) / 1024),
+					b64_kb: Math.round(resp.png_base64.length / 1024),
+					coalesced,
+					mouse_ev: mouseEv,
 				});
-				if (resp.ok && resp.png_base64) {
-					this.frame = resp;
-					this.onInvalidate();
-				}
-			} while (this.pendingRerender);
+			}
 		} catch {
 			// Keep previous valid frame on transient error
 		} finally {
 			this.inflight = false;
+			// If more events arrived while inflight, schedule next paced frame instead of tight-looping
+			if (this.pendingRerender && !this.paceTimer) {
+				const wait = Math.max(
+					1,
+					Math.ceil(InlineChartComponent.MIN_FRAME_INTERVAL_MS - (performance.now() - this.lastFrameSentAt)),
+				);
+				this.paceTimer = setTimeout(() => {
+					this.paceTimer = null;
+					if (!this.inflight && this.pendingRerender) {
+						this.runRenderLoop();
+					}
+				}, wait);
+			}
 		}
 	}
 
@@ -268,7 +345,7 @@ export class InlineChartComponent implements Component {
 			this.lastTargetW = targetW;
 			this.lastTargetH = targetH;
 			this.lastThemeFingerprint = snap.fingerprint;
-			this.scheduleRender(targetW, targetH, dpr);
+			this.scheduleRender(targetW, targetH, dpr, sizeChanged ? "resize" : "theme");
 		}
 		this.lastImageCols = maxCols;
 
@@ -628,12 +705,13 @@ export class InlineChartComponent implements Component {
 		const clamped = Math.max(ctrl.min, Math.min(ctrl.max, Number(snapped.toFixed(6))));
 		if (this.controlValues[ctrl.id] === clamped) return false;
 		this.controlValues[ctrl.id] = clamped;
-		this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px);
+		this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px, undefined, "slider");
 		return true;
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (!this.frame) return undefined;
+		this.mouseEventCount += 1;
 
 		// Active slider drag capture
 		if (this.activeSliderId) {
@@ -697,19 +775,29 @@ export class InlineChartComponent implements Component {
 				return { handled: true, render: false };
 			}
 			if (relX >= 0 && relX < this.lastImageCols && (event.type === "move" || event.type === "drag")) {
+				const is2DHover = !this.frame.native_axes_used;
+				if (!is2DHover) {
+					// Cartesian chart: only redraw when mouse moves to a different X column (ignore vertical jitter!)
+					if (this.lastHoverCol === relX) {
+						return { handled: true, render: false };
+					}
+					this.lastHoverCol = relX;
+					this.hoverX = this.columnToDataX(event.x);
+					this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px, undefined, "hover");
+					return { handled: true, render: false };
+				}
 				const normX = Math.max(0, Math.min(1, (relX + 0.5) / Math.max(1, this.lastImageCols)));
 				const normY = Math.max(0, Math.min(1, (relY + 0.5) / Math.max(1, this.lastRenderedImageRows)));
-				const dataX = this.columnToDataX(event.x);
 				const normChanged =
 					this.hoverNormX === null ||
 					this.hoverNormY === null ||
-					Math.abs(this.hoverNormX - normX) > 0.01 ||
-					Math.abs(this.hoverNormY - normY) > 0.02;
-				if (dataX !== null || normChanged) {
+					Math.abs(this.hoverNormX - normX) > 0.015 ||
+					Math.abs(this.hoverNormY - normY) > 0.025;
+				if (normChanged) {
 					this.hoverNormX = normX;
 					this.hoverNormY = normY;
-					this.hoverX = dataX;
-					this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px);
+					this.hoverX = this.columnToDataX(event.x);
+					this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px, undefined, "hover");
 					return { handled: true, render: false };
 				}
 			}

@@ -44,6 +44,8 @@ fn main() {
                 y_ticks: None,
                 hover_readings: None,
                 render_ms: 0.0,
+                draw_ms: 0.0,
+                encode_ms: 0.0,
             },
         };
 

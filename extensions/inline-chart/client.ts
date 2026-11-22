@@ -167,6 +167,8 @@ export interface RenderResponse {
 	y_ticks?: AxisTick[];
 	hover_readings?: HoverReading[];
 	render_ms: number;
+	draw_ms?: number;
+	encode_ms?: number;
 }
 
 const here = dirname(fileURLToPath(import.meta.url));

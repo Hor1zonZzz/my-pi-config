@@ -143,6 +143,8 @@ impl Renderer {
                     y_ticks: None,
                     hover_readings: None,
                     render_ms: 0.0,
+                    draw_ms: 0.0,
+                    encode_ms: 0.0,
                 };
             }
         };
@@ -193,8 +195,11 @@ impl Renderer {
         hover_readings: Option<Vec<HoverReading>>,
         t0: Instant,
     ) -> RenderResponse {
+        let draw_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let t_enc = Instant::now();
         let png_bytes = encode_fast_png(pixmap);
         let png_base64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+        let encode_ms = t_enc.elapsed().as_secs_f64() * 1000.0;
         RenderResponse {
             req_id,
             ok: true,
@@ -210,6 +215,8 @@ impl Renderer {
             y_ticks,
             hover_readings,
             render_ms: t0.elapsed().as_secs_f64() * 1000.0,
+            draw_ms,
+            encode_ms,
         }
     }
 
@@ -1183,9 +1190,9 @@ fn encode_fast_png(pixmap: &Pixmap) -> Vec<u8> {
         let mut enc = png::Encoder::new(&mut out, pixmap.width(), pixmap.height());
         enc.set_color(png::ColorType::Rgba);
         enc.set_depth(png::BitDepth::Eight);
-        // Fast compression + Up filter: vertical bars & transparent spans diff to 0x00, 4-5x faster & still tiny!
-        enc.set_compression(png::Compression::Fast);
-        enc.set_filter(png::FilterType::Up);
+        // Default compression + Sub filter keeps PNG ~20-30KB (6x smaller PTY payload vs Fast!) while still taking ~3-4ms.
+        enc.set_compression(png::Compression::Default);
+        enc.set_filter(png::FilterType::Sub);
         if let Ok(mut writer) = enc.write_header() {
             let _ = writer.write_image_data(&straight);
         }

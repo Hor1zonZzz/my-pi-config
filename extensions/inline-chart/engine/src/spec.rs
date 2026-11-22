@@ -258,4 +258,6 @@ pub struct RenderResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hover_readings: Option<Vec<HoverReading>>,
     pub render_ms: f64,
+    pub draw_ms: f64,
+    pub encode_ms: f64,
 }

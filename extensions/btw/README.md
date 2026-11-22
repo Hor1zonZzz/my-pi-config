@@ -12,7 +12,7 @@ Claude Code-style `/btw` side-question panel for Pi.
   - Run bare `/btw` (without arguments) to review this session's previous `/btw` turns and continue asking follow-ups.
 - **Multi-turn follow-ups**: Type directly in the panel's `>` input box and press `Enter` to ask follow-up questions.
 - **pi-emphasis integration**: Automatically applies `pi-emphasis` pill/label rendering when installed.
-- **Dedicated model override**: Defaults to the main session's active model, or configure a dedicated fast/cheap `/btw` model via `/btw-model`, `/btw model`, or pressing `m` (when input is empty) / `Ctrl+P` inside the panel (persisted in `~/.pi/agent/btw.json`).
+- **Dedicated model override (reuses Pi's `/model` searchable selector)**: Defaults to the main session's active model, or search & pick a dedicated `/btw` model via `/btw-model [query]`, `/btw model [query]`, or pressing `m` (when input is empty) / `Ctrl+P` inside the panel (persisted in `~/.pi/agent/btw.json`; run `/btw-model reset` or press `Ctrl+R` inside the selector to restore following the main model).
 - **Shortcuts**:
   - `Enter`: send follow-up question
   - `x` (when input is empty) / `Ctrl+L`: clear current `/btw` thread and start a fresh side question (prior entries stay archived in the session `.jsonl`)

@@ -9,12 +9,19 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Api, Context, Message, Model, Usage } from "@earendil-works/pi-ai";
-import { convertToLlm, getAgentDir, type ExtensionAPI, type ExtensionCommandContext, type Theme } from "@earendil-works/pi-coding-agent";
+import {
+	convertToLlm,
+	getAgentDir,
+	ModelSelectorComponent,
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+	type Theme,
+} from "@earendil-works/pi-coding-agent";
+import { matchesKey } from "@earendil-works/pi-tui";
 import { BtwOverlayComponent, type BtwPersistedTurn } from "./overlay.ts";
 
 const BTW_ENTRY_TYPE = "btw";
 const BTW_CLEAR_ENTRY_TYPE = "btw_clear";
-const FOLLOW_MAIN_LABEL = "跟随主模型 (默认)";
 
 const BTW_INSTRUCTION =
 	"[Side question via /btw — ephemeral, NOT added to main conversation history. IMPORTANT: All tools are DISABLED in /btw. Do NOT call or attempt to call any tools; answer directly and concisely in plain text/Markdown using only the conversation context above.]\n\n";
@@ -155,27 +162,58 @@ function resolveBtwModel(ctx: ExtensionCommandContext): { model: Model<Api> | un
 	return { model: ctx.model, isCustom: false };
 }
 
-async function pickBtwModel(ctx: ExtensionCommandContext): Promise<{ model: Model<Api> | undefined; isCustom: boolean } | undefined> {
-	const currentCfg = readBtwConfig().model ?? null;
-	const mainLabel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "无";
-	const followOption = `${FOLLOW_MAIN_LABEL} [${mainLabel}]${currentCfg === null ? " ✓" : ""}`;
-	const available = ctx.modelRegistry.getAvailable();
-	const modelOptions = available.map((m) => {
-		const key = `${m.provider}/${m.id}`;
-		return currentCfg === key ? `${key} ✓` : key;
-	});
-
-	const choice = await ctx.ui.select("选择 /btw 追问模型", [followOption, ...modelOptions]);
-	if (!choice) return undefined;
-
-	if (choice.startsWith(FOLLOW_MAIN_LABEL)) {
+async function pickBtwModel(
+	ctx: ExtensionCommandContext,
+	initialSearch?: string,
+): Promise<{ model: Model<Api> | undefined; isCustom: boolean } | undefined> {
+	const trimmed = initialSearch?.trim();
+	if (trimmed === "reset" || trimmed === "default") {
 		writeBtwConfig({ model: null });
 		return { model: ctx.model, isCustom: false };
 	}
 
-	const cleaned = choice.replace(/ ✓$/, "");
-	writeBtwConfig({ model: cleaned });
-	return resolveBtwModel(ctx);
+	const currentSel = resolveBtwModel(ctx);
+	// Minimal ModelRuntime adapter backed by ctx.modelRegistry so we can directly reuse
+	// Pi's built-in /model ModelSelectorComponent (with fuzzy search, scoped models, etc.).
+	const runtimeAdapter = {
+		getAvailableSnapshot: () => ctx.modelRegistry.getAvailable(),
+		getModel: (provider: string, id: string) => ctx.modelRegistry.find(provider, id),
+		refresh: async () => ({ errors: new Map<string, string>(), aborted: false }),
+		getError: () => ctx.modelRegistry.getError(),
+	};
+
+	const result = await ctx.ui.custom<{ kind: "select"; model: Model<Api> } | { kind: "reset" } | undefined>(
+		(tui, _theme, _keybindings, done) => {
+			const selector = new ModelSelectorComponent(
+				tui,
+				currentSel.model,
+				runtimeAdapter as never,
+				ctx.scopedModels,
+				(selectedModel) => done({ kind: "select", model: selectedModel }),
+				() => done(undefined),
+				trimmed || undefined,
+			);
+			const origHandleInput = selector.handleInput.bind(selector);
+			selector.handleInput = (keyData: string) => {
+				if (matchesKey(keyData, "ctrl+r")) {
+					done({ kind: "reset" });
+					return;
+				}
+				origHandleInput(keyData);
+			};
+			return selector;
+		},
+	);
+
+	if (!result) return undefined;
+	if (result.kind === "reset") {
+		writeBtwConfig({ model: null });
+		return { model: ctx.model, isCustom: false };
+	}
+
+	const key = `${result.model.provider}/${result.model.id}`;
+	writeBtwConfig({ model: key });
+	return { model: result.model, isCustom: true };
 }
 
 interface BtwEntryData {
@@ -248,13 +286,13 @@ function buildMarkdownTransform(
 
 export default function btwExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("btw-model", {
-		description: "Select a dedicated model for /btw side questions (or reset to follow the main model)",
-		handler: async (_args, ctx) => {
+		description: "Search and select a dedicated model for /btw (reuses Pi's /model selector; pass 'reset' or press Ctrl+R to follow main model)",
+		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("/btw-model requires interactive UI mode.", "warning");
 				return;
 			}
-			const picked = await pickBtwModel(ctx);
+			const picked = await pickBtwModel(ctx, args);
 			if (!picked) return;
 			if (!picked.model) {
 				ctx.ui.notify("/btw 已设为跟随主模型（当前无活动主模型）。", "info");
@@ -276,8 +314,10 @@ export default function btwExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			if (args.trim() === "model" || args.trim() === "--model") {
-				const picked = await pickBtwModel(ctx);
+			const trimmedArgs = args.trim();
+			if (trimmedArgs === "model" || trimmedArgs === "--model" || trimmedArgs.startsWith("model ")) {
+				const query = trimmedArgs.startsWith("model ") ? trimmedArgs.slice(6).trim() : undefined;
+				const picked = await pickBtwModel(ctx, query);
 				if (picked?.model) {
 					const label = `${picked.model.provider}/${picked.model.id}`;
 					ctx.ui.notify(

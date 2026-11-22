@@ -269,6 +269,10 @@ export default function piInlineChartExtension(pi: ExtensionAPI): void {
 		captureHostRefs(ctx);
 	});
 
+	pi.on("session_shutdown", () => {
+		engineClient.dispose();
+	});
+
 	pi.registerEntryRenderer<ChartEntryData>(ENTRY_TYPE, (entry, _options, theme) => {
 		activeTheme = theme as unknown as HostThemeLike;
 		const data = entry.data;

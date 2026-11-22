@@ -58,6 +58,7 @@ export interface BtwOverlayOptions {
 	theme: Theme;
 	initialQuestion: string;
 	modelLabel: string;
+	markdownTransform?: (markdown: string, availableWidth: number) => string;
 	askSideQuestion: (
 		sideHistory: readonly Message[],
 		question: string,
@@ -72,6 +73,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 	private tui: TUI;
 	private theme: Theme;
 	private mdTheme: MarkdownTheme;
+	private markdownTransform?: (markdown: string, availableWidth: number) => string;
 	private modelLabel: string;
 	private askSideQuestion: BtwOverlayOptions["askSideQuestion"];
 	private done: () => void;
@@ -96,6 +98,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 		this.tui = opts.tui;
 		this.theme = opts.theme;
 		this.mdTheme = safeMarkdownTheme(opts.theme);
+		this.markdownTransform = opts.markdownTransform;
 		this.modelLabel = opts.modelLabel;
 		this.askSideQuestion = opts.askSideQuestion;
 		this.done = opts.done;
@@ -120,7 +123,14 @@ export class BtwOverlayComponent implements Component, Focusable {
 		const turn: BtwTurn = {
 			question,
 			answer: "",
-			markdown: new Markdown("", 0, 0, this.mdTheme),
+			markdown: new Markdown(
+				"",
+				0,
+				0,
+				this.mdTheme,
+				undefined,
+				this.markdownTransform ? { transform: this.markdownTransform } : undefined,
+			),
 			elapsedMs: 0,
 			cacheRead: 0,
 			outputTokens: 0,

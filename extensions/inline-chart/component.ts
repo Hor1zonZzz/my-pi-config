@@ -329,7 +329,10 @@ export class InlineChartComponent implements Component {
 				};
 
 				if (caps.images === "kitty") {
-					lines.push(`${makeYPrefix(0)}${res.sequence}`);
+					// Place chart behind non-default cell backgrounds & text (Kitty spec: z < -2^30)
+					// so Pi overlays like "Jump to latest message" always render cleanly on top of bars/lines.
+					const seq = res.sequence.replace("\x1b_G", "\x1b_Gz=-1073741825,");
+					lines.push(`${makeYPrefix(0)}${seq}`);
 					for (let i = 1; i < res.rows; i++) {
 						lines.push(makeYPrefix(i));
 					}

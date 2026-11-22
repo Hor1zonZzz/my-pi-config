@@ -184,7 +184,31 @@ const temporaryPath = `${targetPath}.${process.pid}.tmp`;
 fs.writeFileSync(temporaryPath, `${JSON.stringify(nextSettings, null, 2)}\n`, "utf8");
 fs.renameSync(temporaryPath, targetPath);
 NODE
+install_inline_chart_engine() {
+	local src_engine="$ROOT_DIR/extensions/inline-chart/engine"
+	local dst_dir="$AGENT_DIR/extensions/inline-chart"
+	local dst_bin="$dst_dir/bin/inline-chart-engine"
+	rm -rf "$dst_dir/engine/target"
+	if [[ -x "$ROOT_DIR/extensions/inline-chart/bin/inline-chart-engine" ]]; then
+		mkdir -p "$dst_dir/bin"
+		cp "$ROOT_DIR/extensions/inline-chart/bin/inline-chart-engine" "$dst_bin"
+		chmod +x "$dst_bin"
+		return
+	fi
+	if command -v cargo >/dev/null 2>&1 && [[ -f "$src_engine/Cargo.toml" ]]; then
+		if (cd "$src_engine" && cargo build --release --quiet); then
+			mkdir -p "$dst_dir/bin"
+			cp "$src_engine/target/release/inline-chart-engine" "$dst_bin"
+			chmod +x "$dst_bin"
+			printf 'Built inline-chart-engine binary into %s\n' "$dst_bin"
+		else
+			printf 'Warning: cargo build failed for inline-chart-engine.\n' >&2
+		fi
+	fi
+}
+
 cp -R "$ROOT_DIR/extensions/." "$AGENT_DIR/extensions/"
+install_inline_chart_engine
 cp -R "$ROOT_DIR/prompts/." "$AGENT_DIR/prompts/"
 install_herdr_skill
 install_herdr_pi_reference_skill

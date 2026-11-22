@@ -34,3 +34,7 @@ scratchpad/
 .idea/
 .vscode/
 *.swp
+
+# Rust build artifacts for inline-chart
+extensions/inline-chart/engine/target/
+extensions/inline-chart/bin/inline-chart-engine

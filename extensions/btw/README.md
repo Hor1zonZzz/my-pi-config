@@ -1,12 +1,14 @@
 # btw
 
-Claude Code 风格的 `/btw` 临时旁路快问扩展（支持浮层内多轮追问）：
+Claude Code-style `/btw` ephemeral side-question panel for Pi.
 
-- **用法**：输入 `/btw <问题>`（或只输入 `/btw` 弹窗输入）。
-- **零污染主上下文**：只读快照当前主对话的 `messages` 与 `systemPrompt`（直接复用主对话 Prompt Cache，响应快、成本低）；浮层内可连续多轮追问，关闭即丢弃，**绝不写入主对话 context**。
-- **悬浮小窗交互**：
-  - 实时流式 Markdown 渲染
-  - 底部自带追问输入框：直接打字 + `Enter` 继续追问
-  - `Esc`：生成中取消当前回复，空闲时关闭悬浮窗
-  - `↑` / `↓` / `PgUp` / `PgDn` / 鼠标滚轮滚动多轮对话记录
-  - `Ctrl+Y` 一键复制最新回答到剪贴板
+## Behavior
+
+- **Bottom-docked inline panel**: Renders in Pi's bottom editor/status area (directly above the status bar), never covering the main conversation transcript.
+- **Zero context pollution**: Reads the current session context read-only (reusing the active prompt cache prefix) and streams answers without writing anything to the main session history.
+- **Multi-turn follow-ups**: Type directly in the panel's `›` input box and press `Enter` to ask follow-up questions; all turns stay ephemeral and vanish on `Esc`.
+- **Shortcuts**:
+  - `Enter`: send follow-up question
+  - `Esc` / `Ctrl+C`: abort streaming or close panel
+  - `Ctrl+Y`: copy latest answer (`pbcopy`)
+  - `↑` / `↓` / `PageUp` / `PageDown` / mouse wheel: scroll answer

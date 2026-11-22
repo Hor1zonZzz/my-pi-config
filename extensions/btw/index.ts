@@ -1,7 +1,8 @@
 /**
- * /btw — Claude Code-style ephemeral side question overlay with multi-turn follow-ups.
- * Reuses the active conversation context (and prompt cache prefix) to answer quick
- * side questions without adding anything to the main session context.
+ * /btw — Claude Code-style ephemeral side question panel with multi-turn follow-ups.
+ * Renders inline in Pi's bottom editor/status area (above the footer, without covering
+ * the main transcript) and reuses the active conversation context (and prompt cache prefix)
+ * without adding anything to the main session context.
  */
 import type { Context, Message } from "@earendil-works/pi-ai";
 import { convertToLlm, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -12,7 +13,7 @@ const BTW_INSTRUCTION =
 
 export default function btwExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("btw", {
-		description: "Ask a quick side question (with multi-turn follow-ups) in an overlay without adding it to context",
+		description: "Ask a quick side question (with multi-turn follow-ups) in the bottom panel without adding it to context",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("/btw requires interactive UI mode.", "warning");
@@ -38,39 +39,32 @@ export default function btwExtension(pi: ExtensionAPI): void {
 			const baseMessages: Message[] = convertToLlm(ctx.sessionManager.buildSessionContext().messages);
 			const modelLabel = `${model.provider}/${model.id}`;
 
-			await ctx.ui.custom<void>(
-				(tui, theme, _keybindings, done) =>
-					new BtwOverlayComponent({
-						tui,
-						theme,
-						initialQuestion: question,
-						modelLabel,
-						askSideQuestion: (sideHistory, nextQuestion, signal) => {
-							const prefix = sideHistory.length === 0 ? BTW_INSTRUCTION : "";
-							const userMsg: Message = {
-								role: "user",
-								content: [{ type: "text", text: `${prefix}${nextQuestion}` }],
-								timestamp: Date.now(),
-							};
-							const llmContext: Context = {
-								systemPrompt,
-								messages: [...baseMessages, ...sideHistory, userMsg],
-							};
-							return ctx.modelRegistry.streamSimple(model, llmContext, {
-								signal,
-								reasoning: "low",
-							});
-						},
-						done: () => done(undefined),
-					}),
-				{
-					overlay: true,
-					overlayOptions: {
-						anchor: "center",
-						width: "82%",
-						maxHeight: "78%",
+			// Render inline in Pi's bottom editor/status slot (not a centered modal overlay),
+			// matching Claude Code's bottom-docked /btw panel so the main transcript stays visible.
+			await ctx.ui.custom<void>((tui, theme, _keybindings, done) =>
+				new BtwOverlayComponent({
+					tui,
+					theme,
+					initialQuestion: question,
+					modelLabel,
+					askSideQuestion: (sideHistory, nextQuestion, signal) => {
+						const prefix = sideHistory.length === 0 ? BTW_INSTRUCTION : "";
+						const userMsg: Message = {
+							role: "user",
+							content: [{ type: "text", text: `${prefix}${nextQuestion}` }],
+							timestamp: Date.now(),
+						};
+						const llmContext: Context = {
+							systemPrompt,
+							messages: [...baseMessages, ...sideHistory, userMsg],
+						};
+						return ctx.modelRegistry.streamSimple(model, llmContext, {
+							signal,
+							reasoning: "low",
+						});
 					},
-				},
+					done: () => done(undefined),
+				}),
 			);
 		},
 	});

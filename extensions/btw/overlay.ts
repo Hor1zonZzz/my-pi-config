@@ -314,18 +314,14 @@ export class BtwOverlayComponent implements Component, Focusable {
 
 	render(width: number): readonly string[] {
 		const w = Math.max(40, width);
-		const innerW = Math.max(20, w - 4);
+		const innerW = Math.max(20, w - 2);
 		const t = this.theme;
 		const border = (s: string) => t.fg("borderAccent", s);
 		const muted = (s: string) => t.fg("muted", s);
 		const accent = (s: string) => t.fg("accent", s);
 		const text = (s: string) => t.fg("text", s);
 
-		const boxLine = (content: string): string => {
-			const clipped = truncateToWidth(content, innerW);
-			const pad = " ".repeat(Math.max(0, innerW - visibleWidth(clipped)));
-			return `${border("│")} ${clipped}${pad} ${border("│")}`;
-		};
+		const padLine = (content: string): string => ` ${truncateToWidth(content, innerW)}`;
 
 		const lastTurn = this.turns[this.turns.length - 1];
 		let statusStr: string;
@@ -343,29 +339,29 @@ export class BtwOverlayComponent implements Component, Focusable {
 		}
 
 		const turnTag = this.turns.length > 1 ? ` · ${this.turns.length} 轮` : "";
-		const leftTitle = `${border("╭─")} ${t.bold(accent("btw"))} ${muted(`· ${this.modelLabel}${turnTag}`)} `;
-		const rightTitle = ` ${statusStr} ${border("─╮")}`;
+		const leftTitle = `${border("──")} ${t.bold(accent("btw"))} ${muted(`· ${this.modelLabel}${turnTag}`)} `;
+		const rightTitle = statusStr ? ` ${statusStr} ${border("──")}` : ` ${border("──")}`;
 		const topFill = Math.max(1, w - visibleWidth(leftTitle) - visibleWidth(rightTitle));
-		const topBorder = truncateToWidth(`${leftTitle}${border("─".repeat(topFill))}${rightTitle}`, w);
+		const topRule = truncateToWidth(`${leftTitle}${border("─".repeat(topFill))}${rightTitle}`, w);
 
-		// Render all Q&A turns into scrollable transcript body
+		// Render all Q&A turns into a compact scrollable body (keeps main transcript visible above)
 		const rawBody: string[] = [];
 		for (let i = 0; i < this.turns.length; i++) {
 			const turn = this.turns[i];
 			if (i > 0) {
 				rawBody.push(muted("─".repeat(Math.min(innerW, 48))));
 			}
-			rawBody.push(`${accent("›")} ${t.bold(text(turn.question))}`);
+			rawBody.push(`${accent("btw:")} ${t.bold(text(turn.question))}`);
 			if (turn.error) {
 				rawBody.push(t.fg("error", `Error: ${turn.error}`));
 			} else if (!turn.answer) {
-				rawBody.push(muted(`${SPINNER_FRAMES[this.spinnerIdx]} Asking side question (not added to context)…`));
+				rawBody.push(muted(`${SPINNER_FRAMES[this.spinnerIdx]} Answering… (not added to context)`));
 			} else {
 				rawBody.push(...turn.markdown.render(innerW));
 			}
 		}
 
-		const maxBodyRows = Math.max(6, Math.min(20, Math.floor((this.tui.terminal.rows || 40) * 0.52)));
+		const maxBodyRows = Math.max(4, Math.min(14, Math.floor((this.tui.terminal.rows || 40) * 0.35)));
 		this.maxScroll = Math.max(0, rawBody.length - maxBodyRows);
 		if (this.autoFollow) {
 			this.scrollOffset = this.maxScroll;
@@ -374,24 +370,24 @@ export class BtwOverlayComponent implements Component, Focusable {
 		}
 
 		const visibleRows = rawBody.slice(this.scrollOffset, this.scrollOffset + maxBodyRows);
-		const bodyLines = visibleRows.map((line) => boxLine(line));
+		const bodyLines = visibleRows.map((line) => padLine(line));
 
-		const sepLine = `${border("├")}${border("─".repeat(Math.max(1, w - 2)))}${border("┤")}`;
+		const sepRule = muted("─".repeat(w));
 
-		// Follow-up input row
+		// Inline follow-up input row
 		this.input.focused = this.focused && !this.streaming;
 		let inputRow: string;
 		if (this.streaming) {
-			inputRow = boxLine(muted(`${SPINNER_FRAMES[this.spinnerIdx]} 回复中… 按 Esc 可取消`));
+			inputRow = padLine(muted(`${SPINNER_FRAMES[this.spinnerIdx]} 回复中… 按 Esc 可取消`));
 		} else if (!this.input.getValue()) {
 			const rendered = this.input.render(Math.max(10, innerW - 2))[0] ?? "";
-			inputRow = boxLine(`${accent("›")} ${rendered}${muted("继续追问… (回车发送)")}`);
+			inputRow = padLine(`${accent("›")} ${rendered}${muted("继续追问… (Enter 发送)")}`);
 		} else {
 			const rendered = this.input.render(Math.max(10, innerW - 2))[0] ?? "";
-			inputRow = boxLine(`${accent("›")} ${rendered}`);
+			inputRow = padLine(`${accent("›")} ${rendered}`);
 		}
 
-		// Footer hints
+		// Compact bottom hint divider (sits right above Pi's status bar / footer)
 		let footerHint: string;
 		if (this.copiedFlash) {
 			footerHint = t.fg("success", "✓ 已复制最新回答");
@@ -399,13 +395,12 @@ export class BtwOverlayComponent implements Component, Focusable {
 			footerHint = muted("Esc 取消 · 不进入主对话 context");
 		} else {
 			const scrollHint = this.maxScroll > 0 ? " · ↑↓/滚轮 滚动" : "";
-			footerHint = muted(`Enter 发送追问 · Esc 关闭 · Ctrl+Y 复制${scrollHint}`);
+			footerHint = muted(`Enter 追问 · Esc 关闭 · Ctrl+Y 复制${scrollHint}`);
 		}
-		const botLeft = `${border("╰─")} ${footerHint} `;
-		const botRight = border("─╯");
-		const botFill = Math.max(1, w - visibleWidth(botLeft) - visibleWidth(botRight));
-		const bottomBorder = truncateToWidth(`${botLeft}${border("─".repeat(botFill))}${botRight}`, w);
+		const botLeft = `${border("──")} ${footerHint} `;
+		const botFill = Math.max(1, w - visibleWidth(botLeft));
+		const bottomRule = truncateToWidth(`${botLeft}${border("─".repeat(botFill))}`, w);
 
-		return [topBorder, ...bodyLines, sepLine, inputRow, bottomBorder];
+		return [topRule, ...bodyLines, sepRule, inputRow, bottomRule];
 	}
 }

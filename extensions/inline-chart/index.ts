@@ -198,7 +198,7 @@ function createInlineChartTool(pi: ExtensionAPI): ToolDefinition<TSchema, { char
 		name: "inline_chart",
 		label: "Inline Chart",
 		description:
-			"Render an interactive chart inline inside the conversation stream (auto-adapts to pane width and light/dark theme; hover crosshair, clickable series toggles, draggable sliders, opt-in wheel zoom).",
+			"Render an interactive chart inline inside the conversation stream (auto-adapts to pane width and light/dark theme; hover crosshair, clickable series toggles, draggable sliders).",
 		parameters: inlineChartParameters as unknown as TSchema,
 		exposure: "codemode",
 		namespace: inlineChartNamespace,

@@ -27,7 +27,7 @@ export interface HostThemeLike {
 }
 
 interface HitRegion {
-	kind: "toggle" | "slider" | "reset";
+	kind: "toggle" | "slider";
 	id: string;
 	row: number;
 	startCol: number;
@@ -91,8 +91,6 @@ export class InlineChartComponent implements Component {
 	private hoverX: number | null = null;
 	private hoverNormX: number | null = null;
 	private hoverNormY: number | null = null;
-	private viewXDomain: [number, number] | null = null;
-	private zoomActive = false;
 	private activeSliderId: string | null = null;
 
 	// Latest rendered frame from Rust
@@ -226,7 +224,7 @@ export class InlineChartComponent implements Component {
 				hover_x: this.hoverX,
 				hover_norm_x: this.hoverNormX,
 				hover_norm_y: this.hoverNormY,
-				view_x_domain: this.viewXDomain,
+				view_x_domain: null,
 				theme: snap.mode,
 				palette: snap.palette,
 			});
@@ -622,28 +620,8 @@ export class InlineChartComponent implements Component {
 			col += totalW + 2;
 		}
 
-		// Zoom reset button when zoomed
-		if (this.viewXDomain !== null) {
-			const txt = " [↺ 重置缩放] ";
-			const w = visibleWidth(txt);
-			if (col > 1 && col + w > width - 1) flushRow();
-			this.hitRegions.push({
-				kind: "reset",
-				id: "reset",
-				row: curRow,
-				startCol: col,
-				endCol: col + w - 1,
-			});
-			out += this.styleButton(txt, true);
-			col += w;
-		}
-
-		if (this.zoomActive) {
-			const hint = "滚轮缩放中 · Esc 退出";
-			out += this.styleFg("accent", hint, accentFallback);
-			col += visibleWidth(hint);
-		} else if (this.hitRegions.length === 0) {
-			const hint = "悬停看数值 · 点击图表启用缩放";
+		if (this.hitRegions.length === 0) {
+			const hint = "悬停查看数值";
 			out += this.styleFg("muted", hint, mutedFallback);
 			col += visibleWidth(hint);
 		}
@@ -744,17 +722,6 @@ export class InlineChartComponent implements Component {
 						return { handled: true, render: false };
 					}
 				}
-				if (region.kind === "reset") {
-					if (event.type === "press") {
-						this.viewXDomain = null;
-						this.zoomActive = false;
-						this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px);
-						return { handled: true, render: true };
-					}
-					if (event.type === "click" || event.type === "release") {
-						return { handled: true, render: false };
-					}
-				}
 				if (region.kind === "slider" && event.type === "press") {
 					this.activeSliderId = region.id;
 					this.updateSliderFromCol(region, event.x);
@@ -763,18 +730,11 @@ export class InlineChartComponent implements Component {
 			}
 		}
 
-		// Plot area hover, click-to-toggle zoom mode, and opt-in wheel zoom
+		// Plot area hover only (wheel and clicks pass straight through to Pi so scrolling/selection is never interrupted)
 		if (event.y >= this.imageStartRow && event.y < this.imageStartRow + this.lastRenderedImageRows) {
 			const relY = event.y - this.imageStartRow;
 			const relX = event.x - this.plotStartCol;
-			if (relX >= 0 && relX < this.lastImageCols && event.type === "press" && event.button === "left") {
-				this.zoomActive = !this.zoomActive;
-				return { handled: true, focus: this.zoomActive, render: true };
-			}
-			if (relX >= 0 && relX < this.lastImageCols && (event.type === "click" || event.type === "release")) {
-				return { handled: true, render: false };
-			}
-			if (relX >= 0 && relX < this.lastImageCols && (event.type === "move" || event.type === "drag")) {
+			if (relX >= 0 && relX < this.lastImageCols && event.type === "move") {
 				const is2DHover = !this.frame.native_axes_used;
 				if (!is2DHover) {
 					// Cartesian chart: only redraw when mouse moves to a different X column (ignore vertical jitter!)
@@ -801,21 +761,6 @@ export class InlineChartComponent implements Component {
 					return { handled: true, render: false };
 				}
 			}
-
-			// Wheel zoom ONLY when user clicked the chart to activate zoom mode or holds Ctrl/Alt/Shift;
-			// otherwise return undefined so normal transcript scrolling is never hijacked.
-			if (event.type === "wheel" && event.wheelDelta && (this.zoomActive || event.ctrl || event.alt || event.shift)) {
-				const center = this.columnToDataX(event.x) ?? (this.frame.x_domain[0] + this.frame.x_domain[1]) / 2;
-				const [xMin, xMax] = this.viewXDomain ?? this.frame.x_domain;
-				const factor = event.wheelDelta < 0 ? 0.82 : 1.22;
-				const newMin = center - (center - xMin) * factor;
-				const newMax = center + (xMax - center) * factor;
-				if (newMax - newMin > 1e-6 && newMax - newMin < 1e9) {
-					this.viewXDomain = [newMin, newMax];
-					this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px);
-				}
-				return { handled: true, render: true };
-			}
 		}
 
 		return undefined;
@@ -827,20 +772,14 @@ export class InlineChartComponent implements Component {
 		const stepX = (xMax - xMin) / 40;
 		if (data === "\x1b[D") {
 			this.hoverX = Math.max(xMin, (this.hoverX ?? (xMin + xMax) / 2) - stepX);
-			this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px);
+			this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px, undefined, "hover");
 		} else if (data === "\x1b[C") {
 			this.hoverX = Math.min(xMax, (this.hoverX ?? (xMin + xMax) / 2) + stepX);
-			this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px);
+			this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px, undefined, "hover");
 		} else if (data === "\x1b") {
 			this.hoverX = null;
-			this.zoomActive = false;
-			this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px);
-			this.onInvalidate();
-		} else if (data === "r" || data === "R") {
-			this.viewXDomain = null;
-			this.zoomActive = false;
-			this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px);
-			this.onInvalidate();
+			this.lastHoverCol = null;
+			this.scheduleRender(this.lastTargetW || this.frame.width_px, this.lastTargetH || this.frame.height_px, undefined, "hover");
 		}
 	}
 }

@@ -374,17 +374,17 @@ export class BtwOverlayComponent implements Component, Focusable {
 
 		const sepRule = muted("─".repeat(w));
 
-		// Inline follow-up input row
+		// Inline follow-up input row (Input already renders its own `> ` prompt prefix)
 		this.input.focused = this.focused && !this.streaming;
 		let inputRow: string;
 		if (this.streaming) {
 			inputRow = padLine(muted(`${SPINNER_FRAMES[this.spinnerIdx]} 回复中… 按 Esc 可取消`));
 		} else if (!this.input.getValue()) {
-			const rendered = this.input.render(Math.max(10, innerW - 2))[0] ?? "";
-			inputRow = padLine(`${accent("›")} ${rendered}${muted("继续追问… (Enter 发送)")}`);
+			const rendered = (this.input.render(innerW)[0] ?? "> ").trimEnd();
+			inputRow = padLine(`${rendered} ${muted("继续追问… (Enter 发送)")}`);
 		} else {
-			const rendered = this.input.render(Math.max(10, innerW - 2))[0] ?? "";
-			inputRow = padLine(`${accent("›")} ${rendered}`);
+			const rendered = (this.input.render(innerW)[0] ?? "").trimEnd();
+			inputRow = padLine(rendered);
 		}
 
 		// Compact bottom hint divider (sits right above Pi's status bar / footer)

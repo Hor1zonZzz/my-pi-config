@@ -194,13 +194,95 @@ test("a foreground command is not promoted while the task limit is reached", asy
 	assert.deepEqual(result, { promoted: false, exitCode: 0 });
 });
 
+test("a foreground command waits without a time threshold until it exits", async (t) => {
+	const { root, manager, sent } = await fixture(t);
+	const chunks: string[] = [];
+	const result = await manager.runForeground("sleep 0.15; echo finished", root, {
+		onData: (data) => chunks.push(data.toString()),
+	});
+
+	assert.deepEqual(result, { promoted: false, exitCode: 0 });
+	assert.equal(chunks.join(""), "finished\n");
+	assert.equal(manager.hasForeground(), false);
+	assert.deepEqual(await backgroundFiles(root), []);
+	assert.equal(sent.length, 0);
+});
+
+test("promoteForeground moves running foreground commands to the background without stopping them", async (t) => {
+	const { root, manager, sent, statuses } = await fixture(t);
+	const chunks: string[] = [];
+	const tool = new AbortController();
+	const running = manager.runForeground("echo early; sleep 0.4; echo late; exit 2", root, {
+		onData: (data) => chunks.push(data.toString()),
+		signal: tool.signal,
+	});
+	// Wait until the foreground command has started and emitted its early output.
+	await new Promise((resolveWait) => setTimeout(resolveWait, 120));
+	assert.equal(manager.hasForeground(), true);
+	assert.equal(manager.promoteForeground("user"), 1);
+	assert.equal(manager.promoteForeground("user"), 0);
+
+	const result = await running;
+	assert.equal(result.promoted, true);
+	if (!result.promoted) return;
+	assert.equal(result.task.id, "bg-1");
+	assert.equal(result.task.promotedBy, "user");
+	assert.ok(result.task.pgid && result.task.pgid > 0);
+	assert.deepEqual(result.tail, ["early"]);
+	assert.deepEqual(statuses.slice(-1), ["bg 1"]);
+	assert.equal(manager.hasForeground(), false);
+
+	// Aborting the returned tool call must not affect the backgrounded task.
+	tool.abort();
+	await manager.whenDone(result.task.id);
+
+	assert.equal(chunks.join(""), "early\n");
+	assert.equal(await readFile(result.task.logPath, "utf8"), "early\nlate\n");
+	assert.equal(sent.length, 1);
+	assert.deepEqual(sent[0].options, { deliverAs: "steer", triggerTurn: true });
+	assert.match(sent[0].message.content, /bg-1 exited with code 2/);
+	assert.match(sent[0].message.content, /early\nlate/);
+});
+
+test("promoteForeground preserves a command's timeout in the background", async (t) => {
+	const { root, manager, sent } = await fixture(t);
+	const running = manager.runForeground("sleep 30", root, { onData: () => {}, timeout: 0.3 });
+	await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+	assert.equal(manager.promoteForeground("user"), 1);
+	const result = await running;
+	assert.equal(result.promoted, true);
+	if (!result.promoted) return;
+	assert.equal(result.task.promotedBy, "user");
+	await manager.whenDone(result.task.id);
+
+	assert.deepEqual(sent[0].options, { deliverAs: "steer", triggerTurn: true });
+	assert.match(sent[0].message.content, /killed by its 0.3-second timeout/);
+});
+
+test("promoteImmediately moves a new foreground command straight to the background", async (t) => {
+	const { root, manager, sent } = await fixture(t);
+	const result = await manager.runForeground("sleep 0.25; echo done", root, {
+		onData: () => {},
+		promoteImmediately: "user",
+	});
+	assert.equal(result.promoted, true);
+	if (!result.promoted) return;
+	assert.equal(result.task.promotedBy, "user");
+	assert.ok(result.task.pgid && result.task.pgid > 0);
+	await manager.whenDone(result.task.id);
+
+	assert.equal(sent.length, 1);
+	assert.match(sent[0].message.content, /bg-1 exited with code 0/);
+	assert.match(sent[0].message.content, /done/);
+});
+
 test("the promotion threshold comes from the environment", () => {
-	assert.equal(promoteAfterMsFrom(undefined), 30_000);
-	assert.equal(promoteAfterMsFrom(""), 30_000);
+	assert.equal(promoteAfterMsFrom(undefined), 0);
+	assert.equal(promoteAfterMsFrom(""), 0);
 	assert.equal(promoteAfterMsFrom("5000"), 5000);
 	assert.equal(promoteAfterMsFrom("0"), 0);
-	assert.equal(promoteAfterMsFrom("-1"), 30_000);
-	assert.equal(promoteAfterMsFrom("soon"), 30_000);
+	assert.equal(promoteAfterMsFrom("-1"), 0);
+	assert.equal(promoteAfterMsFrom("soon"), 0);
 });
 
 test("reminds the model to check a task at every interval while it runs", async (t) => {

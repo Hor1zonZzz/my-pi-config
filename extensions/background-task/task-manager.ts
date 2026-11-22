@@ -5,6 +5,7 @@ import {
 	checkMessage,
 	completionMessage,
 	previewLines,
+	type PromotionReason,
 	signalFromExitCode,
 	type StopReason,
 	type TaskRecord,
@@ -56,7 +57,19 @@ export interface ForegroundOptions {
 	env?: NodeJS.ProcessEnv;
 	/** Seconds; applies to the whole run, before and after the move. */
 	timeout?: number;
-	promoteAfterMs: number;
+	/**
+	 * Optional automatic promotion delay in milliseconds. `0` or `undefined` waits in the
+	 * foreground until the command exits, times out, is aborted, or `promoteForeground()` is called.
+	 */
+	promoteAfterMs?: number;
+	/** When set, move the command to the background right away (e.g. a user message is already queued). */
+	promoteImmediately?: PromotionReason;
+}
+
+interface ForegroundRun {
+	controller: AbortController;
+	promoting: boolean;
+	promote: (reason: PromotionReason) => void;
 }
 
 export type ForegroundResult =
@@ -91,8 +104,8 @@ export interface TaskManagerOptions {
 export class BackgroundTaskManager {
 	private session?: SessionBinding;
 	private readonly running = new Map<string, RunningTask>();
-	/** Controllers of `bash` commands still running in the foreground. */
-	private readonly foreground = new Set<AbortController>();
+	/** `bash` commands still running in the foreground. */
+	private readonly foreground = new Set<ForegroundRun>();
 	private finished: TaskRecord[] = [];
 	/** The last lines of finished tasks, for snapshots. */
 	private readonly finishedTails = new Map<string, string[]>();
@@ -200,10 +213,33 @@ export class BackgroundTaskManager {
 		return { ...record };
 	}
 
+	/** Whether any `bash` command is currently waiting in the foreground. */
+	hasForeground(): boolean {
+		for (const entry of this.foreground) {
+			if (!entry.promoting) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Move every `bash` command currently waiting in the foreground to the background without
+	 * stopping it, e.g. when a new user message arrives. Returns how many commands were signaled.
+	 */
+	promoteForeground(reason: PromotionReason = "user"): number {
+		let count = 0;
+		for (const entry of [...this.foreground]) {
+			if (entry.promoting) continue;
+			count += 1;
+			entry.promote(reason);
+		}
+		return count;
+	}
+
 	/**
 	 * Run a `bash` tool command in the foreground. Output and the tool's abort signal behave as
-	 * for a plain execution until `promoteAfterMs`; a command still running then becomes a
-	 * background task, detached from the tool's signal, and the call resolves with that task.
+	 * for a plain execution until the command exits, `promoteAfterMs` elapses (when > 0), or
+	 * `promoteForeground()` / `promoteImmediately` triggers; a command still running then becomes
+	 * a background task, detached from the tool's signal, and the call resolves with that task.
 	 * Errors before promotion (`aborted`, `timeout:<seconds>`, spawn failures) are rethrown.
 	 */
 	async runForeground(command: string, cwd: string, options: ForegroundOptions): Promise<ForegroundResult> {
@@ -233,27 +269,45 @@ export class BackgroundTaskManager {
 				if (!promoted) options.onData(data);
 			},
 		});
-		this.foreground.add(run.controller);
+		let resolvePromotion!: (reason: PromotionReason) => void;
+		const promotion = new Promise<PromotionReason>((resolveProm) => {
+			resolvePromotion = resolveProm;
+		});
+		const entry: ForegroundRun = {
+			controller: run.controller,
+			promoting: false,
+			promote: (reason) => {
+				if (entry.promoting) return;
+				entry.promoting = true;
+				resolvePromotion(reason);
+			},
+		};
+		this.foreground.add(entry);
 		const onToolAbort = () => run.controller.abort();
 		if (options.signal?.aborted) onToolAbort();
 		else options.signal?.addEventListener("abort", onToolAbort, { once: true });
 
 		let timer: ReturnType<typeof setTimeout> | undefined;
-		const promotion = new Promise<"promote">((resolvePromotion) => {
-			timer = setTimeout(() => resolvePromotion("promote"), Math.max(0, options.promoteAfterMs));
-		});
-		const first = await Promise.race([run.execution.then(() => "done" as const), promotion]);
+		if (options.promoteImmediately) {
+			entry.promote(options.promoteImmediately);
+		} else if (options.promoteAfterMs !== undefined && options.promoteAfterMs > 0) {
+			timer = setTimeout(() => entry.promote("timeout"), options.promoteAfterMs);
+		}
+		const first = await Promise.race([
+			run.execution.then(() => ({ kind: "done" as const })),
+			promotion.then((reason) => ({ kind: "promote" as const, reason })),
+		]);
 		clearTimeout(timer);
 
 		// The ID is reserved first, so a failure leaves the command running in the foreground.
 		const id =
-			first === "promote" && this.canPromote(session)
+			first.kind === "promote" && this.canPromote(session)
 				? await this.ids.reserve(taskDir).catch(() => undefined)
 				: undefined;
 		// A command that ended or was aborted meanwhile is answered in the foreground.
 		if (id !== undefined && (run.ended || run.controller.signal.aborted || !this.canPromote(session))) {
 			await rm(join(taskDir, `${id}.json`), { force: true }).catch(() => {});
-		} else if (id !== undefined) {
+		} else if (id !== undefined && first.kind === "promote") {
 			promoted = true;
 			options.signal?.removeEventListener("abort", onToolAbort);
 			await touch(session.scratchpad).catch(() => {});
@@ -271,20 +325,24 @@ export class BackgroundTaskManager {
 				status: "running",
 				lines: run.output.lineCount,
 				promotedAfterMs: this.now() - startedAt,
+				promotedBy: first.reason,
 				timeout: options.timeout,
 				pgid: await readPid(pidPath),
 			};
-			this.foreground.delete(run.controller);
+			this.foreground.delete(entry);
 			const done = this.track(record, run, pidPath, metaPath);
 			this.running.set(id, { record, controller: run.controller, output: run.output, done });
 			this.updateStatus();
+			if (record.pgid === undefined) {
+				record.pgid ??= await waitForPid(pidPath, () => run.ended, this.now);
+			}
 			await writeJsonAtomic(metaPath, record).catch(() => {});
 			return { promoted: true, task: { ...record }, tail: [...run.output.tail] };
 		}
 
 		const result = await run.execution;
 		options.signal?.removeEventListener("abort", onToolAbort);
-		this.foreground.delete(run.controller);
+		this.foreground.delete(entry);
 		run.output.end();
 		await closeStream(run.stream);
 		await Promise.all([rm(pendingLog, { force: true }), rm(pidPath, { force: true })]).catch(() => {});
@@ -452,7 +510,7 @@ export class BackgroundTaskManager {
 	/** Kill every running task without notifying the model, then wait briefly for cleanup. */
 	async shutdown(): Promise<void> {
 		this.shuttingDown = true;
-		for (const controller of this.foreground) controller.abort("shutdown" satisfies StopReason);
+		for (const entry of this.foreground) entry.controller.abort("shutdown" satisfies StopReason);
 		const pending = [...this.running.values()];
 		for (const task of pending) task.controller.abort("shutdown" satisfies StopReason);
 		await Promise.race([
@@ -506,9 +564,12 @@ export class BackgroundTaskManager {
 	}
 }
 
-export const DEFAULT_PROMOTE_AFTER_MS = 30_000;
+export const DEFAULT_PROMOTE_AFTER_MS = 0;
 
-/** `PI_BASH_BACKGROUND_AFTER_MS`: milliseconds before `bash` moves a command to the background; 0 disables it. */
+/**
+ * `PI_BASH_BACKGROUND_AFTER_MS`: optional milliseconds before `bash` moves a command to the
+ * background automatically. `0` (default) waits in the foreground until exit or a new user message.
+ */
 export function promoteAfterMsFrom(value: string | undefined): number {
 	if (value === undefined || value.trim() === "") return DEFAULT_PROMOTE_AFTER_MS;
 	const ms = Number(value);

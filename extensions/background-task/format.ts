@@ -7,6 +7,7 @@ const COMMAND_CHARS = 500;
 
 export type TaskStatus = "running" | "exited" | "stopped" | "failed";
 export type StopReason = "user" | "shutdown" | "timeout";
+export type PromotionReason = "timeout" | "user";
 
 export interface TaskRecord {
 	id: string;
@@ -25,6 +26,8 @@ export interface TaskRecord {
 	lines: number;
 	/** Set when a `bash` call was moved to the background after running this long. */
 	promotedAfterMs?: number;
+	/** Why a foreground `bash` command was moved to the background. */
+	promotedBy?: PromotionReason;
 	/** The `bash` call's timeout in seconds, which still applies in the background. */
 	timeout?: number;
 }
@@ -122,11 +125,18 @@ export function startedMessage(task: TaskRecord): string {
 /** The `bash` result for a command that is still running and continues in the background. */
 export function promotedMessage(task: TaskRecord, tail: readonly string[]): string {
 	const after = formatDuration(task.promotedAfterMs ?? 0);
-	const lines = [
-		`The command was still running after ${after}, so it continues as background task ${task.id}${task.pgid ? ` (process group ${task.pgid})` : ""}.`,
+	const pgid = task.pgid ? ` (process group ${task.pgid})` : "";
+	const lines =
+		task.promotedBy === "user"
+			? [
+					`The command was moved to the background after ${after} because a new user message arrived, and continues as background task ${task.id}${pgid}.`,
+					"Read and address the new user message first.",
+				]
+			: [`The command was still running after ${after}, so it continues as background task ${task.id}${pgid}.`];
+	lines.push(
 		`Log: ${task.logPath} (complete output from the start; ${task.lines} line${task.lines === 1 ? "" : "s"} so far)`,
 		"Its exit will be reported automatically with the exit code and the end of the log; do not poll, sleep, or rerun the command waiting for it.",
-	];
+	);
 	if (task.timeout !== undefined) lines.push(`It is still killed when its ${task.timeout}-second timeout expires.`);
 	lines.push(
 		task.pgid

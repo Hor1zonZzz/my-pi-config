@@ -5,6 +5,7 @@ import {
 	completionMessage,
 	firstLine,
 	formatDuration,
+	promotedMessage,
 	signalFromExitCode,
 	type TaskRecord,
 } from "./format.ts";
@@ -52,4 +53,22 @@ test("the tail is bounded in lines and bytes", () => {
 	assert.ok(tail.length <= 30);
 	assert.ok(Buffer.byteLength(tail.join("\n")) <= 4096);
 	assert.match(tail.at(-1) ?? "", /^99 /);
+});
+
+test("promoted message distinguishes user interruption from timeout promotion", () => {
+	const running: TaskRecord = {
+		...base,
+		status: "running",
+		pgid: 4242,
+		lines: 2,
+		promotedAfterMs: 3_000,
+	};
+	const byUser = promotedMessage({ ...running, promotedBy: "user" }, ["building"]);
+	assert.match(byUser, /moved to the background after 3s because a new user message arrived/);
+	assert.match(byUser, /Read and address the new user message first\./);
+	assert.match(byUser, /kill -- -4242/);
+
+	const byTimeout = promotedMessage({ ...running, promotedBy: "timeout", promotedAfterMs: 30_000 }, ["building"]);
+	assert.match(byTimeout, /was still running after 30s, so it continues as background task bg-1/);
+	assert.doesNotMatch(byTimeout, /new user message/);
 });

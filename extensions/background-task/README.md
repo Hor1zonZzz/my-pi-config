@@ -5,7 +5,7 @@ Gives every Pi session its own scratchpad directory and adds two tools that run 
 - `background_task` reports a command once, when it exits.
 - `monitor` delivers each stdout line of a watch script as an event while it runs, modeled on Claude Code's Monitor tool.
 
-In TUI and RPC sessions it also takes over the built-in `bash` tool, so a `bash` command that is still running after 30 seconds becomes a background task instead of blocking the turn.
+In TUI and RPC sessions it also takes over the built-in `bash` tool, so a `bash` command normally waits for completion in the foreground, but moves to the background immediately (without killing the process) if a new user steering message arrives—or optionally after `PI_BASH_BACKGROUND_AFTER_MS` milliseconds if configured.
 
 ## Session scratchpad
 
@@ -55,13 +55,13 @@ bash({ command: string, timeout?: number })
 ```
 
 - The extension registers a `bash` tool built from Pi's own `createBashToolDefinition()`, so the schema, output truncation, live output, `PI_*` environment variables, and rendering stay those of the built-in tool. Only its process backend is replaced.
-- A command that finishes within the threshold returns exactly as before. Esc before the threshold aborts it as before.
-- A command still running at the threshold becomes background task `bg-N` and the call returns at once with the task ID, process group, log path, and up to the last 30 lines (4 KiB) of output so far. The log at `<scratchpad>/background/<id>.log` holds the complete output from the start; the TUI shows it as `Full output: <log>`.
-- From then on it is an ordinary background task: Esc no longer stops it, it appears in `/bg` and the `bg` footer entry, and its exit is reported like any other task's. A `timeout` longer than the threshold still applies to the whole run; when it expires, the task is killed and the report wakes the model.
-- A `timeout` no longer than the threshold always ends the command in the foreground. While 16 background tasks are already running, a slow command stays in the foreground.
-- `PI_BASH_BACKGROUND_AFTER_MS` sets the threshold in milliseconds (default `30000`); `0` disables the takeover and leaves the built-in `bash` in place.
+- By default a command runs in the foreground until it exits, hits its `timeout`, or is aborted with Esc.
+- If a new user steering message arrives (Enter in TUI or `steer` in RPC; `followUp` via Alt+Enter does not interrupt) while a `bash` command is running in the foreground—or is already queued when `bash` starts—the command is immediately moved to background task `bg-N` without stopping it. The call returns at once with the task ID, process group, log path, and up to the last 30 lines (4 KiB) of output so far, instructing the model to read the new user message first. The log at `<scratchpad>/background/<id>.log` holds the complete output from the start; the TUI shows it as `Full output: <log>`.
+- From then on it is an ordinary background task: Esc no longer stops it, it appears in `/bg` and the `bg` footer entry, and its exit is reported like any other task's. Any `timeout` passed to `bash` still applies to the whole run; when it expires, the task is killed and the report wakes the model.
+- While 16 background tasks are already running, a foreground command cannot be promoted and stays in the foreground.
+- `PI_BASH_BACKGROUND_AFTER_MS` optionally sets a timed promotion threshold in milliseconds (default `0`, meaning wait in the foreground until exit or a new user message). When set to a positive number, a command still running at that threshold also moves to the background automatically.
 - The takeover is registered from `session_start`. If `bash` was not active (for example `--tools read`), it stays inactive.
-- Before the threshold, output is also written to a hidden `.foreground-*` file under `<scratchpad>/background/`, which is renamed to the task log on promotion and deleted otherwise.
+- Before promotion, output is also written to a hidden `.foreground-*` file under `<scratchpad>/background/`, which is renamed to the task log on promotion and deleted otherwise.
 - Codemode scripts that call `bash` receive the promoted result as text, without `structuredContent`.
 
 ## Print and JSON modes

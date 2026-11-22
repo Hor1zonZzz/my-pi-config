@@ -16,6 +16,7 @@ import {
 	outcomeText,
 	previewLines,
 	promotedMessage,
+	type PromotionReason,
 	shortOutcome,
 	startedMessage,
 	type TaskRecord,
@@ -102,22 +103,35 @@ export default function (pi: ExtensionAPI) {
 	const promoteAfterMs = promoteAfterMsFrom(process.env.PI_BASH_BACKGROUND_AFTER_MS);
 	const promoteAfter = formatDuration(promoteAfterMs);
 	let bashRegistered = false;
+	let pendingUserSteer = false;
 
 	// Takes over the built-in bash tool: the built-in definition keeps its schema, truncation,
 	// streaming, PI_* environment, and rendering; only its process backend is replaced.
 	const registerBash = () => {
 		const builtin = createBashToolDefinition(process.cwd());
+		const bashDescription =
+			promoteAfterMs > 0
+				? `${builtin.description} A command still running after ${promoteAfter} (or when a new user message arrives) continues as a background task, and its exit is reported later.`
+				: `${builtin.description} If a new user message arrives while a command is running, the command continues as a background task and its exit is reported later.`;
+		const bashGuideline =
+			promoteAfterMs > 0
+				? `A bash command still running after ${promoteAfter}, or when a new user message arrives, is moved to the background: the call returns with the task ID, log path, and output so far, and the exit is reported automatically. Do not rerun, poll, or sleep waiting for it; address any new user message, continue with other work, or end your turn.`
+				: "A bash command normally waits for completion in the foreground. If a new user message arrives while it is running, it is moved to the background automatically and the call returns with the task ID, log path, and output so far; read and address the new user message first, and do not rerun, poll, or sleep waiting for the backgrounded command.";
 		pi.registerTool({
 			...builtin,
-			description: `${builtin.description} A command still running after ${promoteAfter} continues as a background task, and its exit is reported later.`,
-			promptGuidelines: [
-				...(builtin.promptGuidelines ?? []),
-				`A bash command still running after ${promoteAfter} is moved to the background: the call returns with the task ID, log path, and output so far, and the exit is reported automatically. Do not rerun, poll, or sleep waiting for it; continue with other work or end your turn.`,
-			],
+			description: bashDescription,
+			promptGuidelines: [...(builtin.promptGuidelines ?? []), bashGuideline],
 			// A command moved to the background is shown as a task row; anything else keeps the built-in look.
 			renderResult(result, options, theme, context) {
 				const details = result.details as
-					| { backgroundTaskId?: string; pgid?: number; fullOutputPath?: string; promotedAfterMs?: number; tail?: string[] }
+					| {
+							backgroundTaskId?: string;
+							pgid?: number;
+							fullOutputPath?: string;
+							promotedAfterMs?: number;
+							promotedBy?: PromotionReason;
+							tail?: string[];
+					  }
 					| undefined;
 				if (!details?.backgroundTaskId || options.isPartial) {
 					return builtin.renderResult
@@ -137,21 +151,24 @@ export default function (pi: ExtensionAPI) {
 						pgid: details.pgid,
 						logPath: details.fullOutputPath,
 						promotedAfterMs: details.promotedAfterMs ?? promoteAfterMs,
+						promotedBy: details.promotedBy,
 						tail: details.tail,
 					},
 					options.expanded,
 				);
 			},
 			async execute(toolCallId, params, signal, onUpdate, ctx) {
-				// A timeout no longer than the threshold always ends the command in the foreground.
-				if (params.timeout !== undefined && params.timeout * 1000 <= promoteAfterMs) {
-					return builtin.execute(toolCallId, params, signal, onUpdate, ctx);
-				}
+				const promoteImmediately = pendingUserSteer && ctx.hasPendingMessages() ? ("user" as const) : undefined;
+				if (promoteImmediately) pendingUserSteer = false;
 				let promoted: { task: TaskRecord; tail: string[] } | undefined;
 				const definition = createBashToolDefinition(ctx.cwd, {
 					operations: {
 						exec: async (command, cwd, options) => {
-							const result = await manager.runForeground(command, cwd, { ...options, promoteAfterMs });
+							const result = await manager.runForeground(command, cwd, {
+								...options,
+								promoteAfterMs: promoteAfterMs > 0 ? promoteAfterMs : undefined,
+								promoteImmediately,
+							});
 							if (!result.promoted) return { exitCode: result.exitCode };
 							promoted = { task: result.task, tail: result.tail };
 							throw new Error(PROMOTED);
@@ -168,12 +185,14 @@ export default function (pi: ExtensionAPI) {
 						backgroundTaskId: string;
 						pgid?: number;
 						promotedAfterMs?: number;
+						promotedBy?: PromotionReason;
 						tail: string[];
 					} = {
 						fullOutputPath: task.logPath,
 						backgroundTaskId: task.id,
 						pgid: task.pgid,
 						promotedAfterMs: task.promotedAfterMs,
+						promotedBy: task.promotedBy,
 						tail: previewLines(tail, 8),
 					};
 					return { content: [{ type: "text", text: promotedMessage(task, tail) }], details };
@@ -249,8 +268,8 @@ export default function (pi: ExtensionAPI) {
 			promptSnippet: "Run long shell commands in the background; their exit is reported automatically",
 			promptGuidelines: [
 				promoteAfterMs > 0
-					? `Use background_task for servers, watchers, and other commands that keep running, and for commands you know will take minutes, so the call returns at once. Other long commands can use bash, which moves a command still running after ${promoteAfter} to the background by itself.`
-					: "Use background_task instead of bash for commands likely to take more than about 30 seconds (builds, full test suites, installs, downloads) and for servers or watchers that keep running.",
+					? `Use background_task for servers, watchers, and other commands that keep running, and for commands you know will take minutes, so the call returns at once. Other long commands can use bash, which moves a command to the background after ${promoteAfter} or when a new user message arrives.`
+					: "Use background_task for servers, watchers, and other commands that keep running, and for commands you know will take minutes that you do not need to wait for, so the call returns at once. Commands run with bash wait in the foreground unless a new user message arrives, in which case they move to the background automatically.",
 				"After starting a background task, continue with other work or end your turn. Do not poll, sleep, or tail the log in a loop waiting for it; its exit is reported automatically.",
 				"Read a background task's log with read; the exit report gives its line count, so use an offset near the end. Stop a task with `kill -- -<pgid>`, and stop servers you started once they are no longer needed.",
 				`Every ${CHECK_INTERVAL_MS / 60_000} minutes a task is still running, you are sent the end of its log and asked to check it: if it is stuck, failing, or no longer needed, stop it and adjust; otherwise answer in one line. Prefer commands that print progress as they go, so these checks show whether it is advancing.`,
@@ -406,7 +425,30 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.on("input", (event, ctx) => {
+		if (!ctx.hasUI) return;
+		if (event.source === "extension" || event.streamingBehavior !== "steer") return;
+		// Defer one turn so Pi finishes queueing the steer message (or skips it if a later input
+		// handler returns { action: "handled" }) before foreground bash returns to the agent loop.
+		const timer = setTimeout(() => {
+			if (!ctx.hasPendingMessages()) return;
+			if (manager.promoteForeground("user") === 0) {
+				pendingUserSteer = true;
+			}
+		}, 0);
+		timer.unref?.();
+	});
+
+	pi.on("message_start", (event) => {
+		if (event.message.role === "user") pendingUserSteer = false;
+	});
+
+	pi.on("agent_end", () => {
+		pendingUserSteer = false;
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
+		pendingUserSteer = false;
 		const agentDir = getAgentDir();
 		const sessionId = ctx.sessionManager.getSessionId();
 		const dir = sessionScratchpad(agentDir, sessionId);
@@ -424,7 +466,7 @@ export default function (pi: ExtensionAPI) {
 			// Print and JSON modes dispose the session as soon as the agent settles, which would
 			// kill background work silently, so they keep plain synchronous bash only.
 			pi.setActiveTools(pi.getActiveTools().filter((name) => !BACKGROUND_TOOLS.includes(name)));
-		} else if (promoteAfterMs > 0 && !bashRegistered) {
+		} else if (!bashRegistered) {
 			bashRegistered = true;
 			const bashActive = pi.getActiveTools().includes("bash");
 			registerBash();

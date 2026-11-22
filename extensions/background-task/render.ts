@@ -7,7 +7,7 @@
  */
 import { getMarkdownTheme, type MessageRenderer, type Theme } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, Markdown, Spacer, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { firstLine, formatDuration, type TaskRecord } from "./format.ts";
+import { firstLine, formatDuration, type PromotionReason, type TaskRecord } from "./format.ts";
 import type { MonitorRecord } from "./monitor-format.ts";
 
 type Color = Parameters<Theme["fg"]>[0];
@@ -113,6 +113,8 @@ export interface TaskRowInfo {
 	logPath?: string;
 	/** Set for a `bash` command that moved to the background. */
 	promotedAfterMs?: number;
+	/** Why the `bash` command moved to the background. */
+	promotedBy?: PromotionReason;
 	/** Output before the move, for a `bash` command. */
 	tail?: string[];
 	lines?: number;
@@ -123,9 +125,11 @@ export function renderTaskRow(theme: Theme, info: TaskRowInfo, expanded: boolean
 		const lines: string[] = [];
 		const dot = theme.fg("accent", "●");
 		if (info.promotedAfterMs !== undefined) {
-			lines.push(
-				`${dot} ${theme.bold(info.taskId)}  ${theme.fg("accent", "moved to the background")}${theme.fg("muted", ` · still running after ${formatDuration(info.promotedAfterMs)}`)}`,
-			);
+			const detail =
+				info.promotedBy === "user"
+					? ` · new user message after ${formatDuration(info.promotedAfterMs)}`
+					: ` · still running after ${formatDuration(info.promotedAfterMs)}`;
+			lines.push(`${dot} ${theme.bold(info.taskId)}  ${theme.fg("accent", "moved to the background")}${theme.fg("muted", detail)}`);
 			const tail = (info.tail ?? []).slice(-(expanded ? EXPANDED_TAIL : COLLAPSED_TAIL));
 			if (tail.length > 0) lines.push(...gutterLines(theme, tail));
 		} else {

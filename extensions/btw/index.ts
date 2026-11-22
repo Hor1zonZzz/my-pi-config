@@ -348,18 +348,10 @@ export default function btwExtension(pi: ExtensionAPI): void {
 				}
 			}
 
-			let question = args.trim();
-			let initialHistory: BtwPersistedTurn[] = [];
-			if (!question) {
-				if (priorTurns.length > 0) {
-					// Bare `/btw` opens this session's /btw history for review or follow-up
-					initialHistory = priorTurns;
-				} else {
-					const entered = await ctx.ui.input("btw", "Ask a quick side question (won't enter context)…");
-					if (!entered || !entered.trim()) return;
-					question = entered.trim();
-				}
-			}
+			const question = trimmedArgs;
+			// Bare `/btw` always opens the panel directly (with prior history if any, or ready for
+			// immediate input / model switching via `m` without forcing a separate input modal first).
+			const initialHistory: BtwPersistedTurn[] = !question ? priorTurns : [];
 
 			let activeSelection = resolveBtwModel(ctx);
 			if (!activeSelection.model) {

@@ -1,22 +1,25 @@
 import { execFile } from "node:child_process";
-import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent, Message } from "@earendil-works/pi-ai";
 import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import {
+	Input,
 	Markdown,
 	matchesKey,
 	truncateToWidth,
 	visibleWidth,
 	type Component,
+	type Focusable,
 	type MarkdownTheme,
 	type TUI,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 function safeMarkdownTheme(theme: Theme): MarkdownTheme {
 	try {
 		const mt = getMarkdownTheme();
-		// Probe once to ensure Pi's global theme singleton is initialized
 		mt.bold("x");
 		return mt;
 	} catch {
@@ -40,33 +43,45 @@ function safeMarkdownTheme(theme: Theme): MarkdownTheme {
 	}
 }
 
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+interface BtwTurn {
+	question: string;
+	answer: string;
+	markdown: Markdown;
+	error?: string;
+	elapsedMs: number;
+	cacheRead: number;
+	outputTokens: number;
+}
 
 export interface BtwOverlayOptions {
 	tui: TUI;
 	theme: Theme;
-	question: string;
+	initialQuestion: string;
 	modelLabel: string;
-	stream: AsyncIterable<AssistantMessageEvent>;
-	abortController: AbortController;
+	askSideQuestion: (
+		sideHistory: readonly Message[],
+		question: string,
+		signal: AbortSignal,
+	) => AsyncIterable<AssistantMessageEvent>;
 	done: () => void;
 }
 
-export class BtwOverlayComponent implements Component {
+export class BtwOverlayComponent implements Component, Focusable {
+	focused = true;
+
 	private tui: TUI;
 	private theme: Theme;
-	private question: string;
+	private mdTheme: MarkdownTheme;
 	private modelLabel: string;
-	private abortController: AbortController;
+	private askSideQuestion: BtwOverlayOptions["askSideQuestion"];
 	private done: () => void;
 
-	private answerText = "";
-	private errorText: string | null = null;
-	private streaming = true;
-	private startMs = performance.now();
-	private elapsedMs = 0;
-	private cacheReadTokens = 0;
-	private outputTokens = 0;
+	private turns: BtwTurn[] = [];
+	private sideHistory: Message[] = [];
+	private input: Input;
+	private abortController: AbortController | null = null;
+	private streaming = false;
+	private startMs = 0;
 
 	private scrollOffset = 0;
 	private autoFollow = true;
@@ -77,51 +92,117 @@ export class BtwOverlayComponent implements Component {
 	private copiedTimer: ReturnType<typeof setTimeout> | null = null;
 	private disposed = false;
 
-	private markdown: Markdown;
-
 	constructor(opts: BtwOverlayOptions) {
 		this.tui = opts.tui;
 		this.theme = opts.theme;
-		this.question = opts.question;
+		this.mdTheme = safeMarkdownTheme(opts.theme);
 		this.modelLabel = opts.modelLabel;
-		this.abortController = opts.abortController;
+		this.askSideQuestion = opts.askSideQuestion;
 		this.done = opts.done;
-		this.markdown = new Markdown("", 0, 0, safeMarkdownTheme(opts.theme));
 
-		this.spinnerTimer = setInterval(() => {
-			if (!this.streaming || this.disposed) return;
-			this.spinnerIdx = (this.spinnerIdx + 1) % SPINNER_FRAMES.length;
-			this.tui.requestRender();
-		}, 90);
+		this.input = new Input();
+		this.input.focused = true;
+		this.input.onSubmit = (val) => {
+			const q = val.trim();
+			if (!q || this.streaming) return;
+			this.input.setValue("");
+			this.startTurn(q);
+		};
+		this.input.onEscape = () => {
+			this.handleEscape();
+		};
 
-		void this.consumeStream(opts.stream);
+		this.startTurn(opts.initialQuestion);
 	}
 
-	private async consumeStream(stream: AsyncIterable<AssistantMessageEvent>): Promise<void> {
+	private startTurn(question: string): void {
+		if (this.disposed || this.streaming) return;
+		const turn: BtwTurn = {
+			question,
+			answer: "",
+			markdown: new Markdown("", 0, 0, this.mdTheme),
+			elapsedMs: 0,
+			cacheRead: 0,
+			outputTokens: 0,
+		};
+		this.turns.push(turn);
+		this.streaming = true;
+		this.autoFollow = true;
+		this.startMs = performance.now();
+
+		const ac = new AbortController();
+		this.abortController = ac;
+
+		if (!this.spinnerTimer) {
+			this.spinnerTimer = setInterval(() => {
+				if (!this.streaming || this.disposed) return;
+				this.spinnerIdx = (this.spinnerIdx + 1) % SPINNER_FRAMES.length;
+				this.tui.requestRender();
+			}, 90);
+		}
+
+		const historySnapshot = [...this.sideHistory];
+		const stream = this.askSideQuestion(historySnapshot, question, ac.signal);
+		this.tui.requestRender();
+		void this.consumeStream(turn, question, stream, ac);
+	}
+
+	private async consumeStream(
+		turn: BtwTurn,
+		question: string,
+		stream: AsyncIterable<AssistantMessageEvent>,
+		ac: AbortController,
+	): Promise<void> {
+		let finalMessage: Message | null = null;
 		try {
 			for await (const ev of stream) {
-				if (this.disposed) break;
+				if (this.disposed || ac.signal.aborted) break;
 				if (ev.type === "text_delta") {
-					this.answerText += ev.delta;
-					this.markdown.setText(this.answerText);
+					turn.answer += ev.delta;
+					turn.markdown.setText(turn.answer);
 					this.tui.requestRender();
 				} else if (ev.type === "done") {
+					finalMessage = ev.message;
 					const usage = ev.message.usage;
 					if (usage) {
-						this.cacheReadTokens = usage.cacheRead ?? 0;
-						this.outputTokens = usage.output ?? 0;
+						turn.cacheRead = usage.cacheRead ?? 0;
+						turn.outputTokens = usage.output ?? 0;
 					}
 				} else if (ev.type === "error") {
-					this.errorText = ev.error.errorMessage || "Request failed";
+					turn.error = ev.error.errorMessage || "Request failed";
 				}
 			}
 		} catch (err) {
-			if (!this.disposed && !this.abortController.signal.aborted) {
-				this.errorText = err instanceof Error ? err.message : String(err);
+			if (!this.disposed && !ac.signal.aborted) {
+				turn.error = err instanceof Error ? err.message : String(err);
 			}
 		} finally {
-			this.streaming = false;
-			this.elapsedMs = performance.now() - this.startMs;
+			turn.elapsedMs = performance.now() - this.startMs;
+			if (!ac.signal.aborted && !turn.error && turn.answer.trim()) {
+				this.sideHistory.push({
+					role: "user",
+					content: [{ type: "text", text: question }],
+					timestamp: Date.now(),
+				});
+				if (finalMessage) {
+					this.sideHistory.push(finalMessage);
+				} else {
+					this.sideHistory.push({
+						role: "assistant",
+						content: [{ type: "text", text: turn.answer }],
+						api: "openai-completions",
+						provider: "btw",
+						model: this.modelLabel,
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+						stopReason: "stop",
+						timestamp: Date.now(),
+					});
+				}
+			}
+			if (this.abortController === ac) {
+				this.abortController = null;
+				this.streaming = false;
+			}
 			if (this.spinnerTimer) {
 				clearInterval(this.spinnerTimer);
 				this.spinnerTimer = null;
@@ -133,7 +214,10 @@ export class BtwOverlayComponent implements Component {
 	}
 
 	invalidate(): void {
-		this.markdown.invalidate();
+		for (const turn of this.turns) {
+			turn.markdown.invalidate();
+		}
+		this.input.invalidate();
 	}
 
 	dispose(): void {
@@ -146,13 +230,25 @@ export class BtwOverlayComponent implements Component {
 			clearTimeout(this.copiedTimer);
 			this.copiedTimer = null;
 		}
-		if (!this.abortController.signal.aborted) {
+		if (this.abortController && !this.abortController.signal.aborted) {
 			this.abortController.abort();
 		}
 	}
 
-	private copyAnswer(): void {
-		if (!this.answerText.trim()) return;
+	private handleEscape(): void {
+		if (this.streaming && this.abortController) {
+			this.abortController.abort();
+			this.streaming = false;
+			this.tui.requestRender();
+			return;
+		}
+		this.dispose();
+		this.done();
+	}
+
+	private copyLastAnswer(): void {
+		const last = [...this.turns].reverse().find((t) => t.answer.trim().length > 0);
+		if (!last) return;
 		const child = execFile("pbcopy", [], () => {
 			if (this.disposed) return;
 			this.copiedFlash = true;
@@ -163,32 +259,26 @@ export class BtwOverlayComponent implements Component {
 				if (!this.disposed) this.tui.requestRender();
 			}, 1400);
 		});
-		child.stdin?.end(this.answerText);
+		child.stdin?.end(last.answer);
 	}
 
 	handleInput(data: string): void {
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
-			this.dispose();
-			this.done();
+			this.handleEscape();
 			return;
 		}
-		if (!this.streaming && (matchesKey(data, "return") || data === " ")) {
-			this.dispose();
-			this.done();
+		if (matchesKey(data, "ctrl+y")) {
+			this.copyLastAnswer();
 			return;
 		}
-		if (data === "c" || data === "C") {
-			this.copyAnswer();
-			return;
-		}
-		if (matchesKey(data, "up") || data === "k") {
+		if (matchesKey(data, "up")) {
 			this.autoFollow = false;
-			this.scrollOffset = Math.max(0, this.scrollOffset - 1);
+			this.scrollOffset = Math.max(0, this.scrollOffset - 2);
 			this.tui.requestRender();
 			return;
 		}
-		if (matchesKey(data, "down") || data === "j") {
-			this.scrollOffset = Math.min(this.maxScroll, this.scrollOffset + 1);
+		if (matchesKey(data, "down")) {
+			this.scrollOffset = Math.min(this.maxScroll, this.scrollOffset + 2);
 			if (this.scrollOffset >= this.maxScroll) this.autoFollow = true;
 			this.tui.requestRender();
 			return;
@@ -205,6 +295,11 @@ export class BtwOverlayComponent implements Component {
 			this.tui.requestRender();
 			return;
 		}
+		// Forward typing/editing/Enter to follow-up input box when idle
+		if (!this.streaming) {
+			this.input.handleInput(data);
+			this.tui.requestRender();
+		}
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
@@ -218,7 +313,7 @@ export class BtwOverlayComponent implements Component {
 	}
 
 	render(width: number): readonly string[] {
-		const w = Math.max(36, width);
+		const w = Math.max(40, width);
 		const innerW = Math.max(20, w - 4);
 		const t = this.theme;
 		const border = (s: string) => t.fg("borderAccent", s);
@@ -232,43 +327,45 @@ export class BtwOverlayComponent implements Component {
 			return `${border("│")} ${clipped}${pad} ${border("│")}`;
 		};
 
-		// Header status
+		const lastTurn = this.turns[this.turns.length - 1];
 		let statusStr: string;
 		if (this.streaming) {
 			statusStr = accent(`${SPINNER_FRAMES[this.spinnerIdx]} thinking…`);
-		} else if (this.errorText) {
+		} else if (lastTurn?.error) {
 			statusStr = t.fg("error", "error");
-		} else {
-			const parts = [`${(this.elapsedMs / 1000).toFixed(1)}s`];
-			if (this.cacheReadTokens > 0) {
-				parts.push(`cache ${Math.round(this.cacheReadTokens / 1000)}k`);
-			}
-			if (this.outputTokens > 0) {
-				parts.push(`↓${this.outputTokens}`);
-			}
+		} else if (lastTurn) {
+			const parts = [`${(lastTurn.elapsedMs / 1000).toFixed(1)}s`];
+			if (lastTurn.cacheRead > 0) parts.push(`cache ${Math.round(lastTurn.cacheRead / 1000)}k`);
+			if (lastTurn.outputTokens > 0) parts.push(`↓${lastTurn.outputTokens}`);
 			statusStr = muted(parts.join(" · "));
+		} else {
+			statusStr = "";
 		}
 
-		const leftTitle = `${border("╭─")} ${t.bold(accent("btw"))} ${muted(`· ${this.modelLabel}`)} `;
+		const turnTag = this.turns.length > 1 ? ` · ${this.turns.length} 轮` : "";
+		const leftTitle = `${border("╭─")} ${t.bold(accent("btw"))} ${muted(`· ${this.modelLabel}${turnTag}`)} `;
 		const rightTitle = ` ${statusStr} ${border("─╮")}`;
 		const topFill = Math.max(1, w - visibleWidth(leftTitle) - visibleWidth(rightTitle));
 		const topBorder = truncateToWidth(`${leftTitle}${border("─".repeat(topFill))}${rightTitle}`, w);
 
-		// Question line
-		const qLine = boxLine(`${accent("›")} ${text(this.question)}`);
-		const sepLine = `${border("├")}${border("─".repeat(Math.max(1, w - 2)))}${border("┤")}`;
-
-		// Body lines (Markdown or loading/error)
-		let rawBody: string[];
-		if (this.errorText) {
-			rawBody = [t.fg("error", `Error: ${this.errorText}`)];
-		} else if (!this.answerText) {
-			rawBody = [muted(`${SPINNER_FRAMES[this.spinnerIdx]} Asking side question (not added to context)…`)];
-		} else {
-			rawBody = [...this.markdown.render(innerW)];
+		// Render all Q&A turns into scrollable transcript body
+		const rawBody: string[] = [];
+		for (let i = 0; i < this.turns.length; i++) {
+			const turn = this.turns[i];
+			if (i > 0) {
+				rawBody.push(muted("─".repeat(Math.min(innerW, 48))));
+			}
+			rawBody.push(`${accent("›")} ${t.bold(text(turn.question))}`);
+			if (turn.error) {
+				rawBody.push(t.fg("error", `Error: ${turn.error}`));
+			} else if (!turn.answer) {
+				rawBody.push(muted(`${SPINNER_FRAMES[this.spinnerIdx]} Asking side question (not added to context)…`));
+			} else {
+				rawBody.push(...turn.markdown.render(innerW));
+			}
 		}
 
-		const maxBodyRows = Math.max(6, Math.min(22, Math.floor((this.tui.terminal.rows || 40) * 0.55)));
+		const maxBodyRows = Math.max(6, Math.min(20, Math.floor((this.tui.terminal.rows || 40) * 0.52)));
 		this.maxScroll = Math.max(0, rawBody.length - maxBodyRows);
 		if (this.autoFollow) {
 			this.scrollOffset = this.maxScroll;
@@ -279,21 +376,36 @@ export class BtwOverlayComponent implements Component {
 		const visibleRows = rawBody.slice(this.scrollOffset, this.scrollOffset + maxBodyRows);
 		const bodyLines = visibleRows.map((line) => boxLine(line));
 
+		const sepLine = `${border("├")}${border("─".repeat(Math.max(1, w - 2)))}${border("┤")}`;
+
+		// Follow-up input row
+		this.input.focused = this.focused && !this.streaming;
+		let inputRow: string;
+		if (this.streaming) {
+			inputRow = boxLine(muted(`${SPINNER_FRAMES[this.spinnerIdx]} 回复中… 按 Esc 可取消`));
+		} else if (!this.input.getValue()) {
+			const rendered = this.input.render(Math.max(10, innerW - 2))[0] ?? "";
+			inputRow = boxLine(`${accent("›")} ${rendered}${muted("继续追问… (回车发送)")}`);
+		} else {
+			const rendered = this.input.render(Math.max(10, innerW - 2))[0] ?? "";
+			inputRow = boxLine(`${accent("›")} ${rendered}`);
+		}
+
 		// Footer hints
 		let footerHint: string;
 		if (this.copiedFlash) {
-			footerHint = t.fg("success", "✓ 已复制到剪贴板");
+			footerHint = t.fg("success", "✓ 已复制最新回答");
 		} else if (this.streaming) {
 			footerHint = muted("Esc 取消 · 不进入主对话 context");
 		} else {
 			const scrollHint = this.maxScroll > 0 ? " · ↑↓/滚轮 滚动" : "";
-			footerHint = muted(`Esc / Enter / Space 关闭 · c 复制${scrollHint}`);
+			footerHint = muted(`Enter 发送追问 · Esc 关闭 · Ctrl+Y 复制${scrollHint}`);
 		}
 		const botLeft = `${border("╰─")} ${footerHint} `;
 		const botRight = border("─╯");
 		const botFill = Math.max(1, w - visibleWidth(botLeft) - visibleWidth(botRight));
 		const bottomBorder = truncateToWidth(`${botLeft}${border("─".repeat(botFill))}${botRight}`, w);
 
-		return [topBorder, qLine, sepLine, ...bodyLines, bottomBorder];
+		return [topBorder, ...bodyLines, sepLine, inputRow, bottomBorder];
 	}
 }

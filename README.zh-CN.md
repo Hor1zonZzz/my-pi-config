@@ -20,6 +20,7 @@
 
 - `questionnaire.ts` — Pi 官方的交互式多问题工具示例
 - `notify.ts` — 整个运行结束（`agent_settled`）后的终端通知
+- `esc-clear/` — 空闲时输入框里有内容，500 毫秒内连按两次 Esc 清空；编辑器的撤销（`ctrl+-`）可以恢复。Esc 的其他用途不变：中断运行、关闭补全菜单和选择器，以及 Pi 自带的空输入框双击 Esc
 - `herdr/` — 统一持有本地 Herdr 集成检查器、异步 `herdr_agent prompt` 监控器和 `herdr-pi-reference` 技能源码；它让显式 `wait: false` 调用保持非阻塞，并注入会话级完成 follow-up
 - `background-task/` — 为每个 session 提供位于 `~/.pi/agent/scratchpad/<session-id>/` 的 scratchpad 目录，并新增 `background_task` 工具：长耗时 shell 命令在后台运行、不阻塞主循环，结束时以 steer 消息把退出码和日志末尾送回会话；`/bg` 可列出或停止任务（[详细说明](extensions/background-task/README.md)）
 - `memory/` — 按项目的记忆：注入记忆的用途和在 session 开始时冻结的笔记索引（不破坏 prompt cache），提供 `memory` 工具（Anthropic memory tool 命令，路径为 `/memories`），以及 Dream（DeepSeek Flash agent 会话逐个读历史会话核对笔记，再整体整理）；`/memory` 打开类似 `/settings` 的面板，管理开关、笔记、Dream 和模型调用历史（[详细说明](extensions/memory/README.md)）

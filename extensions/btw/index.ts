@@ -161,6 +161,7 @@ export default function btwExtension(pi: ExtensionAPI): void {
 						return ctx.modelRegistry.streamSimple(model, llmContext, {
 							signal,
 							reasoning: "low",
+							sessionId: ctx.sessionManager.getSessionId(),
 						});
 					},
 					onTurnComplete: (turn) => {

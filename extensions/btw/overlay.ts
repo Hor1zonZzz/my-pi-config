@@ -106,6 +106,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 	private scrollOffset = 0;
 	private autoFollow = true;
 	private maxScroll = 0;
+	private historyExpanded = false;
 	private spinnerIdx = 0;
 	private spinnerTimer: ReturnType<typeof setInterval> | null = null;
 	private copiedFlash = false;
@@ -347,6 +348,12 @@ export class BtwOverlayComponent implements Component, Focusable {
 			this.copyLastAnswer();
 			return;
 		}
+		if (matchesKey(data, "tab") && this.turns.length > 1) {
+			this.historyExpanded = !this.historyExpanded;
+			this.autoFollow = true;
+			this.tui.requestRender();
+			return;
+		}
 		if (matchesKey(data, "up")) {
 			this.autoFollow = false;
 			this.scrollOffset = Math.max(0, this.scrollOffset - 2);
@@ -388,6 +395,14 @@ export class BtwOverlayComponent implements Component, Focusable {
 		return { handled: true, render: false };
 	}
 
+	private summarizeInline(text: string): string {
+		return text
+			.replace(/\[\[([^\[\]\n]+)\]\]/g, "$1")
+			.replace(/[*_`#>-]+/g, " ")
+			.replace(/\s+/g, " ")
+			.trim();
+	}
+
 	render(width: number): readonly string[] {
 		const w = Math.max(40, width);
 		const innerW = Math.max(20, w - 2);
@@ -414,26 +429,40 @@ export class BtwOverlayComponent implements Component, Focusable {
 			statusStr = "";
 		}
 
+		// Scheme B: Minimal 2-rule frame (1 accent top rule + 1 muted bottom rule)
+		const topRule = border("─".repeat(w));
 		const turnTag = this.turns.length > 1 ? ` · ${this.turns.length} 轮` : "";
-		const leftTitle = `${border("──")} ${t.bold(accent("btw"))} ${muted(`· ${this.modelLabel}${turnTag}`)} `;
-		const rightTitle = statusStr ? ` ${statusStr} ${border("──")}` : ` ${border("──")}`;
-		const topFill = Math.max(1, w - visibleWidth(leftTitle) - visibleWidth(rightTitle));
-		const topRule = truncateToWidth(`${leftTitle}${border("─".repeat(topFill))}${rightTitle}`, w);
+		const headerLeft = `${t.bold(accent("btw"))} ${muted(`· ${this.modelLabel}${turnTag}`)}`;
+		const headerGap = Math.max(1, innerW - visibleWidth(headerLeft) - visibleWidth(statusStr));
+		const headerLine = padLine(`${headerLeft}${" ".repeat(headerGap)}${statusStr}`);
 
-		// Render all Q&A turns into a compact scrollable body (keeps main transcript visible above)
+		// Body: earlier turns collapse to 1-line summaries unless expanded via Tab
 		const rawBody: string[] = [];
+		const lastIdx = this.turns.length - 1;
 		for (let i = 0; i < this.turns.length; i++) {
 			const turn = this.turns[i];
-			if (i > 0) {
-				rawBody.push(muted("─".repeat(Math.min(innerW, 48))));
+			const isLast = i === lastIdx;
+			if (!isLast && !this.historyExpanded) {
+				const qBrief = turn.question.replace(/\s+/g, " ").trim();
+				const aBrief = turn.error ? `Error: ${turn.error}` : this.summarizeInline(turn.answer);
+				const summary = `${muted("▸")} ${muted(`${i + 1}.`)} ${muted(qBrief)} ${muted("→")} ${muted(aBrief || "…")}`;
+				rawBody.push(truncateToWidth(summary, innerW));
+				continue;
 			}
-			rawBody.push(`${accent("btw:")} ${t.bold(text(turn.question))}`);
+			if (i > 0 && this.historyExpanded) {
+				rawBody.push("");
+			}
+			const qPrefix = !isLast ? `${muted("▾")} ${muted(`${i + 1}.`)} ` : `${accent("›")} `;
+			rawBody.push(`${qPrefix}${t.bold(text(turn.question))}`);
 			if (turn.error) {
-				rawBody.push(t.fg("error", `Error: ${turn.error}`));
+				rawBody.push(`  ${t.fg("error", `Error: ${turn.error}`)}`);
 			} else if (!turn.answer) {
-				rawBody.push(muted(`${SPINNER_FRAMES[this.spinnerIdx]} Answering… (not added to context)`));
+				rawBody.push(`  ${muted(`${SPINNER_FRAMES[this.spinnerIdx]} Answering… (not added to context)`)}`);
 			} else {
-				rawBody.push(...turn.markdown.render(innerW));
+				const mdLines = turn.markdown.render(Math.max(16, innerW - 2));
+				for (const line of mdLines) {
+					rawBody.push(`  ${line}`);
+				}
 			}
 		}
 
@@ -448,35 +477,45 @@ export class BtwOverlayComponent implements Component, Focusable {
 		const visibleRows = rawBody.slice(this.scrollOffset, this.scrollOffset + maxBodyRows);
 		const bodyLines = visibleRows.map((line) => padLine(line));
 
-		const sepRule = muted("─".repeat(w));
+		// Subtle dotted divider before the inline input row
+		const inputSep = muted("┄".repeat(w));
 
-		// Inline follow-up input row (Input already renders its own `> ` prompt prefix)
+		// Compact inline hints on the right side of the input row
+		let rightHint: string;
+		if (this.copiedFlash) {
+			rightHint = t.fg("success", "✓ 已复制");
+		} else if (this.streaming) {
+			rightHint = muted("Esc 取消");
+		} else {
+			const hintParts = ["⏎ 追问", "Esc 关闭", "^Y 复制"];
+			if (this.turns.length > 1) hintParts.push(this.historyExpanded ? "Tab 折叠" : "Tab 展开");
+			if (this.maxScroll > 0) hintParts.push("↑↓ 滚动");
+			rightHint = muted(hintParts.join(" · "));
+		}
+
+		// Inline follow-up input row (Input renders its own `> ` prefix)
 		this.input.focused = this.focused && !this.streaming;
-		let inputRow: string;
+		let inputLeft: string;
 		if (this.streaming) {
-			inputRow = padLine(muted(`${SPINNER_FRAMES[this.spinnerIdx]} 回复中… 按 Esc 可取消`));
+			inputLeft = muted(`${SPINNER_FRAMES[this.spinnerIdx]} 回复中…`);
 		} else if (!this.input.getValue()) {
 			const rendered = (this.input.render(innerW)[0] ?? "> ").trimEnd();
-			inputRow = padLine(`${rendered} ${muted("继续追问… (Enter 发送)")}`);
+			inputLeft = `${rendered} ${muted("继续追问…")}`;
 		} else {
-			const rendered = (this.input.render(innerW)[0] ?? "").trimEnd();
-			inputRow = padLine(rendered);
+			inputLeft = (this.input.render(innerW)[0] ?? "").trimEnd();
 		}
 
-		// Compact bottom hint divider (sits right above Pi's status bar / footer)
-		let footerHint: string;
-		if (this.copiedFlash) {
-			footerHint = t.fg("success", "✓ 已复制最新回答");
-		} else if (this.streaming) {
-			footerHint = muted("Esc 取消 · 不进入主对话 context");
+		const leftW = visibleWidth(inputLeft);
+		const hintW = visibleWidth(rightHint);
+		let inputRow: string;
+		if (leftW + 2 + hintW <= innerW) {
+			inputRow = padLine(`${inputLeft}${" ".repeat(innerW - leftW - hintW)}${rightHint}`);
 		} else {
-			const scrollHint = this.maxScroll > 0 ? " · ↑↓/滚轮 滚动" : "";
-			footerHint = muted(`Enter 追问 · Esc 关闭 · Ctrl+Y 复制${scrollHint}`);
+			inputRow = padLine(inputLeft);
 		}
-		const botLeft = `${border("──")} ${footerHint} `;
-		const botFill = Math.max(1, w - visibleWidth(botLeft));
-		const bottomRule = truncateToWidth(`${botLeft}${border("─".repeat(botFill))}`, w);
 
-		return [topRule, ...bodyLines, sepRule, inputRow, bottomRule];
+		const bottomRule = muted("─".repeat(w));
+
+		return [topRule, headerLine, ...bodyLines, inputSep, inputRow, bottomRule];
 	}
 }

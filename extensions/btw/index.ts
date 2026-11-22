@@ -26,18 +26,44 @@ const BTW_CLEAR_ENTRY_TYPE = "btw_clear";
 const BTW_INSTRUCTION =
 	"[Side question via /btw — ephemeral, NOT added to main conversation history. IMPORTANT: All tools are DISABLED in /btw. Do NOT call or attempt to call any tools; answer directly and concisely in plain text/Markdown using only the conversation context above.]\n\n";
 
+const BTW_TOOL_DISABLED_SECTION =
+	"No tools are available in /btw side-question mode. Do NOT call or attempt to call any tools. Answer directly and concisely in plain text/Markdown using only the conversation context.";
+
+const STRIPPED_SYSTEM_SECTIONS = new Set(["tools", "docs", "skills", "mcp_servers"]);
+
 /**
- * Convert toolCall / toolResult / thinking blocks in the main conversation snapshot
- * into plain text so `/btw` works reliably with tools disabled across ALL providers
- * (Anthropic, OpenAI Responses, Gemini, etc.) without API errors or cross-model
- * thinking-signature mismatches.
+ * Strip tool definitions/skills from the system message and flatten toolCall / toolResult /
+ * thinking blocks in the main conversation snapshot into plain text so `/btw` works reliably
+ * with tools disabled across ALL providers & models (no hallucinated tool calls, no API errors,
+ * and ~8k fewer wasted input tokens).
  */
 function sanitizeMessagesForNoTools(messages: readonly Message[]): Message[] {
 	const out: Message[] = [];
 	for (const msg of messages) {
 		const role = (msg as { role?: string }).role;
 		if (role === "system") {
-			out.push(msg);
+			const sys = msg as { role: "system"; content?: string; sections?: Record<string, string>; timestamp?: number };
+			if (sys.sections && typeof sys.sections === "object") {
+				const cleanSections: Record<string, string> = {};
+				for (const [k, v] of Object.entries(sys.sections)) {
+					if (!STRIPPED_SYSTEM_SECTIONS.has(k)) {
+						cleanSections[k] = v;
+					}
+				}
+				cleanSections.tools = BTW_TOOL_DISABLED_SECTION;
+				out.push({
+					role: "system",
+					content: sys.content ?? "",
+					sections: cleanSections,
+					timestamp: sys.timestamp ?? Date.now(),
+				} as unknown as Message);
+			} else {
+				out.push({
+					role: "system",
+					content: `${sys.content ?? ""}\n\n${BTW_TOOL_DISABLED_SECTION}`.trim(),
+					timestamp: sys.timestamp ?? Date.now(),
+				} as unknown as Message);
+			}
 			continue;
 		}
 		if (role === "toolResult") {
@@ -388,9 +414,30 @@ export default function btwExtension(pi: ExtensionAPI): void {
 							content: [{ type: "text", text: `${prefix}${nextQuestion}` }],
 							timestamp: Date.now(),
 						};
+						// If baseMessages ends on a `user` message (e.g. a pending toolResult while main
+						// agent is mid-turn), insert a minimal assistant separator so the model cleanly
+						// distinguishes the user's new /btw question from the in-progress main turn.
+						const needsSep =
+							sideHistory.length === 0 &&
+							baseMessages.length > 0 &&
+							baseMessages[baseMessages.length - 1].role === "user";
+						const sepMsg: Message[] = needsSep
+							? [
+									{
+										role: "assistant",
+										content: [{ type: "text", text: "(Main task paused; ready for /btw side question.)" }],
+										api: currentModel.api,
+										provider: currentModel.provider,
+										model: currentModel.id,
+										usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+										stopReason: "stop",
+										timestamp: Date.now(),
+									},
+								]
+							: [];
 						const llmContext: Context = {
 							...(fallbackSystemPrompt ? { systemPrompt: fallbackSystemPrompt } : {}),
-							messages: [...baseMessages, ...sideHistory, userMsg],
+							messages: [...baseMessages, ...sepMsg, ...sideHistory, userMsg],
 						};
 						return ctx.modelRegistry.streamSimple(currentModel, llmContext, {
 							signal,

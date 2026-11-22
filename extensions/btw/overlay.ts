@@ -108,7 +108,8 @@ export class BtwOverlayComponent implements Component, Focusable {
 	private scrollOffset = 0;
 	private autoFollow = true;
 	private maxScroll = 0;
-	private historyExpanded = false;
+	private expandedTurns = new Set<number>();
+	private rowToTurnHeader = new Map<number, number>();
 	private spinnerIdx = 0;
 	private spinnerTimer: ReturnType<typeof setInterval> | null = null;
 	private copiedFlash = false;
@@ -358,10 +359,44 @@ export class BtwOverlayComponent implements Component, Focusable {
 		this.sideHistory = [];
 		this.scrollOffset = 0;
 		this.maxScroll = 0;
-		this.historyExpanded = false;
+		this.expandedTurns.clear();
+		this.rowToTurnHeader.clear();
 		this.autoFollow = true;
 		this.clearedNotice = true;
 		this.onClear?.();
+		this.tui.requestRender();
+	}
+
+	private allEarlierExpanded(): boolean {
+		if (this.turns.length <= 1) return false;
+		for (let i = 0; i < this.turns.length - 1; i++) {
+			if (!this.expandedTurns.has(i)) return false;
+		}
+		return true;
+	}
+
+	private toggleAllHistory(): void {
+		if (this.turns.length <= 1) return;
+		if (this.allEarlierExpanded()) {
+			this.expandedTurns.clear();
+		} else {
+			for (let i = 0; i < this.turns.length - 1; i++) {
+				this.expandedTurns.add(i);
+			}
+		}
+		this.autoFollow = false;
+		this.scrollOffset = 0;
+		this.tui.requestRender();
+	}
+
+	private toggleTurn(idx: number): void {
+		if (idx < 0 || idx >= this.turns.length - 1) return;
+		if (this.expandedTurns.has(idx)) {
+			this.expandedTurns.delete(idx);
+		} else {
+			this.expandedTurns.add(idx);
+		}
+		this.autoFollow = false;
 		this.tui.requestRender();
 	}
 
@@ -380,10 +415,10 @@ export class BtwOverlayComponent implements Component, Focusable {
 			}
 			return;
 		}
-		if (matchesKey(data, "tab") && this.turns.length > 1) {
-			this.historyExpanded = !this.historyExpanded;
-			this.autoFollow = true;
-			this.tui.requestRender();
+		if (matchesKey(data, "tab") || data === "\t" || matchesKey(data, "ctrl+o")) {
+			if (this.turns.length > 1) {
+				this.toggleAllHistory();
+			}
 			return;
 		}
 		if (matchesKey(data, "up")) {
@@ -423,6 +458,18 @@ export class BtwOverlayComponent implements Component, Focusable {
 			this.scrollOffset = next;
 			this.autoFollow = next >= this.maxScroll;
 			return { handled: true, render: true };
+		}
+		if (event.type === "press" && event.button === "left") {
+			const turnIdx = this.rowToTurnHeader.get(event.y);
+			if (turnIdx !== undefined) {
+				this.toggleTurn(turnIdx);
+				return { handled: true, render: true };
+			}
+		}
+		if (event.type === "click" || event.type === "release") {
+			if (this.rowToTurnHeader.has(event.y)) {
+				return { handled: true, render: false };
+			}
 		}
 		return { handled: true, render: false };
 	}
@@ -468,38 +515,42 @@ export class BtwOverlayComponent implements Component, Focusable {
 		const headerGap = Math.max(1, innerW - visibleWidth(headerLeft) - visibleWidth(statusStr));
 		const headerLine = padLine(`${headerLeft}${" ".repeat(headerGap)}${statusStr}`);
 
-		// Body: earlier turns collapse to 1-line summaries unless expanded via Tab
-		const rawBody: string[] = [];
+		// Body: earlier turns collapse to 1-line summaries unless expanded (via mouse click, Tab, or Ctrl+O)
+		const rawBody: { text: string; turnHeaderIdx?: number }[] = [];
 		if (this.turns.length === 0) {
 			const msg = this.clearedNotice
 				? "✓ 已清空当前追问上下文，直接输入新问题即可开始新对话（历史仍留存在 session 中）"
 				: "输入问题开始旁路对话（不进入主对话 context）";
-			rawBody.push(muted(msg));
+			rawBody.push({ text: muted(msg) });
 		}
 		const lastIdx = this.turns.length - 1;
 		for (let i = 0; i < this.turns.length; i++) {
 			const turn = this.turns[i];
 			const isLast = i === lastIdx;
-			if (!isLast && !this.historyExpanded) {
+			const isExpanded = isLast || this.expandedTurns.has(i);
+			if (!isExpanded) {
 				const qBrief = turn.question.replace(/\s+/g, " ").trim();
 				const aBrief = turn.error ? `Error: ${turn.error}` : this.summarizeInline(turn.answer);
 				const summary = `${muted("▸")} ${muted(`${i + 1}.`)} ${muted(qBrief)} ${muted("→")} ${muted(aBrief || "…")}`;
-				rawBody.push(truncateToWidth(summary, innerW));
+				rawBody.push({ text: truncateToWidth(summary, innerW), turnHeaderIdx: i });
 				continue;
 			}
-			if (i > 0 && this.historyExpanded) {
-				rawBody.push("");
+			if (i > 0 && rawBody.length > 0 && rawBody[rawBody.length - 1].turnHeaderIdx === undefined) {
+				rawBody.push({ text: "" });
 			}
 			const qPrefix = !isLast ? `${muted("▾")} ${muted(`${i + 1}.`)} ` : `${accent("›")} `;
-			rawBody.push(`${qPrefix}${t.bold(text(turn.question))}`);
+			rawBody.push({
+				text: `${qPrefix}${t.bold(text(turn.question))}`,
+				turnHeaderIdx: !isLast ? i : undefined,
+			});
 			if (turn.error) {
-				rawBody.push(`  ${t.fg("error", `Error: ${turn.error}`)}`);
+				rawBody.push({ text: `  ${t.fg("error", `Error: ${turn.error}`)}` });
 			} else if (!turn.answer) {
-				rawBody.push(`  ${muted(`${SPINNER_FRAMES[this.spinnerIdx]} Answering… (not added to context)`)}`);
+				rawBody.push({ text: `  ${muted(`${SPINNER_FRAMES[this.spinnerIdx]} Answering… (not added to context)`)}` });
 			} else {
 				const mdLines = turn.markdown.render(Math.max(16, innerW - 2));
 				for (const line of mdLines) {
-					rawBody.push(`  ${line}`);
+					rawBody.push({ text: `  ${line}` });
 				}
 			}
 		}
@@ -513,7 +564,14 @@ export class BtwOverlayComponent implements Component, Focusable {
 		}
 
 		const visibleRows = rawBody.slice(this.scrollOffset, this.scrollOffset + maxBodyRows);
-		const bodyLines = visibleRows.map((line) => padLine(line));
+		// Map rendered component row y (topRule = 0, headerLine = 1, body starts at y = 2) to turn header index
+		this.rowToTurnHeader.clear();
+		const bodyLines = visibleRows.map((row, idx) => {
+			if (row.turnHeaderIdx !== undefined) {
+				this.rowToTurnHeader.set(2 + idx, row.turnHeaderIdx);
+			}
+			return padLine(row.text);
+		});
 
 		// Subtle dotted divider before the inline input row
 		const inputSep = muted("┄".repeat(w));
@@ -527,7 +585,7 @@ export class BtwOverlayComponent implements Component, Focusable {
 		} else {
 			const hintParts = ["⏎ 追问", "Esc 关闭"];
 			if (this.turns.length > 0) hintParts.push("^Y 复制", "^L 清空");
-			if (this.turns.length > 1) hintParts.push(this.historyExpanded ? "Tab 折叠" : "Tab 展开");
+			if (this.turns.length > 1) hintParts.push(this.allEarlierExpanded() ? "Tab/点击 折叠" : "Tab/点击 展开");
 			if (this.maxScroll > 0) hintParts.push("↑↓ 滚动");
 			rightHint = muted(hintParts.join(" · "));
 		}

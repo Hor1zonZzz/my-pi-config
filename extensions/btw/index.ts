@@ -136,8 +136,13 @@ export default function btwExtension(pi: ExtensionAPI): void {
 
 			// Snapshot current session context read-only so main prompt cache prefix is reused
 			// without mutating sessionManager or polluting the main conversation.
-			const systemPrompt = ctx.getSystemPrompt();
+			// Note: in Pi >=1.6, buildSessionContext().messages already includes the session's
+			// `role: "system"` message (with sections). Do NOT also set llmContext.systemPrompt
+			// when a system message is already present, or the system prompt gets sent twice
+			// (~9k wasted tokens) and breaks prompt cache prefix matching on the first /btw turn.
 			const baseMessages: Message[] = convertToLlm(ctx.sessionManager.buildSessionContext().messages);
+			const hasSystemMsg = baseMessages.some((m) => (m as { role?: string }).role === "system");
+			const fallbackSystemPrompt = hasSystemMsg ? undefined : ctx.getSystemPrompt();
 			const modelLabel = `${model.provider}/${model.id}`;
 
 			// Render inline in Pi's bottom editor/status slot (not a centered modal overlay),
@@ -159,7 +164,7 @@ export default function btwExtension(pi: ExtensionAPI): void {
 							timestamp: Date.now(),
 						};
 						const llmContext: Context = {
-							systemPrompt,
+							...(fallbackSystemPrompt ? { systemPrompt: fallbackSystemPrompt } : {}),
 							messages: [...baseMessages, ...sideHistory, userMsg],
 						};
 						return ctx.modelRegistry.streamSimple(model, llmContext, {

@@ -114,8 +114,8 @@ impl Renderer {
 
     pub fn render(&mut self, req: &RenderRequest) -> RenderResponse {
         let t0 = Instant::now();
-        let w = req.width_px.clamp(240, 2400);
-        let h = req.height_px.clamp(140, 1200);
+        let w = req.width_px.clamp(240, 3600);
+        let h = req.height_px.clamp(140, 1800);
         let dpr = req.dpr.unwrap_or_else(|| (w as f32 / 900.0).clamp(1.0, 2.2)).clamp(1.0, 3.0);
         let is_light = req.theme.as_deref() == Some("light");
         let theme = (if is_light {

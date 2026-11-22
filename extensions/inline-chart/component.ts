@@ -329,8 +329,8 @@ export class InlineChartComponent implements Component {
 		const targetRows = Math.max(12, Math.min(22, Math.round(idealHeightPx / Math.max(1, cell.heightPx))));
 		const paneHeightPx = targetRows * cell.heightPx;
 
-		// Uniform DPR scale capped at 1600x760 for ultra-fast interactive hover/drag while staying Retina-crisp
-		const dpr = Math.min(2.0, 1600 / Math.max(1, paneWidthPx), 760 / Math.max(1, paneHeightPx));
+		// True 2x Retina pixel-for-pixel sharpness (capped at 3200x1400; with Default+Sub PNG compression, frames stay ~25-55KB)
+		const dpr = Math.min(2.0, 3200 / Math.max(1, paneWidthPx), 1400 / Math.max(1, paneHeightPx));
 		const targetW = Math.max(480, Math.round(paneWidthPx * dpr));
 		const targetH = Math.max(240, Math.round(paneHeightPx * dpr));
 

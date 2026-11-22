@@ -324,3 +324,115 @@ test("a task that ends before the interval gets no check", async (t) => {
 	await manager.whenDone(task.id);
 	assert.equal(sent.filter((entry) => entry.message.details.kind === "check").length, 0);
 });
+
+test("wait returns task completion directly and suppresses duplicate exit messages", async (t) => {
+	const { root, manager, sent } = await fixture(t);
+	const task = await manager.start("sleep 0.15; echo done-from-wait; exit 2", root);
+
+	const result = await manager.wait({ taskId: task.id, timeoutMs: 5000 });
+	assert.equal(result.kind, "completed");
+	if (result.kind !== "completed") return;
+	assert.equal(result.alreadyFinished, false);
+	assert.equal(result.task.id, task.id);
+	assert.equal(result.task.exitCode, 2);
+	assert.deepEqual(result.tail, ["done-from-wait"]);
+	await manager.whenDone(task.id);
+	assert.equal(sent.length, 0, "completion consumed by wait_background must not send a duplicate steer message");
+
+	// Calling wait again on an already-finished task returns its stored outcome immediately.
+	const again = await manager.wait({ taskId: task.id, timeoutMs: 5000 });
+	assert.equal(again.kind, "completed");
+	if (again.kind !== "completed") return;
+	assert.equal(again.alreadyFinished, true);
+	assert.deepEqual(again.tail, ["done-from-wait"]);
+});
+
+test("wait without an id resolves when any running background task finishes", async (t) => {
+	const { root, manager, sent } = await fixture(t);
+	const slow = await manager.start("sleep 30", root);
+	const fast = await manager.start("sleep 0.12; echo fast-done", root);
+
+	const result = await manager.wait({ timeoutMs: 5000 });
+	assert.equal(result.kind, "completed");
+	if (result.kind !== "completed") return;
+	assert.equal(result.task.id, fast.id);
+	assert.deepEqual(result.tail, ["fast-done"]);
+	assert.equal(sent.length, 0);
+	assert.equal(manager.stop(slow.id), true);
+	await manager.whenDone(slow.id);
+});
+
+test("interruptWaiters wakes wait without stopping the task, and later exit is still reported", async (t) => {
+	const { root, manager, sent } = await fixture(t);
+	const task = await manager.start("echo step1; sleep 0.35; echo step2", root);
+	const waiting = manager.wait({ taskId: task.id, timeoutMs: 5000 });
+	await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+
+	assert.equal(manager.hasWaiters(), true);
+	assert.equal(manager.interruptWaiters("user"), 1);
+	assert.equal(manager.interruptWaiters("user"), 0);
+
+	const interrupted = await waiting;
+	assert.equal(interrupted.kind, "interrupted");
+	if (interrupted.kind !== "interrupted") return;
+	assert.equal(interrupted.reason, "user");
+	assert.equal(interrupted.running.length, 1);
+	assert.equal(interrupted.running[0].id, task.id);
+	assert.equal(manager.hasWaiters(), false);
+
+	// The task keeps running and its eventual exit wakes the session normally.
+	await manager.whenDone(task.id);
+	assert.equal(sent.length, 1);
+	assert.deepEqual(sent[0].options, { deliverAs: "steer", triggerTurn: true });
+	assert.match(sent[0].message.content, /bg-1 exited with code 0/);
+	assert.match(sent[0].message.content, /step1\nstep2/);
+});
+
+test("aborting wait with Esc stops waiting without stopping the background task", async (t) => {
+	const { root, manager, sent } = await fixture(t);
+	const task = await manager.start("sleep 0.3; echo survived", root);
+	const ac = new AbortController();
+	const waiting = manager.wait({ taskId: task.id, timeoutMs: 5000, signal: ac.signal });
+	setTimeout(() => ac.abort(), 80);
+
+	const result = await waiting;
+	assert.equal(result.kind, "interrupted");
+	if (result.kind !== "interrupted") return;
+	assert.equal(result.reason, "aborted");
+
+	await manager.whenDone(task.id);
+	assert.equal(sent.length, 1);
+	assert.match(sent[0].message.content, /survived/);
+});
+
+test("wait returns a progress snapshot when the wait window expires and handles idle/missing", async (t) => {
+	const { root, manager } = await fixture(t);
+	const idle = await manager.wait({ timeoutMs: 1000 });
+	assert.equal(idle.kind, "idle");
+
+	const missing = await manager.wait({ taskId: "bg-999", timeoutMs: 1000 });
+	assert.deepEqual(missing, { kind: "missing", taskId: "bg-999" });
+
+	const task = await manager.start("echo first; sleep 0.2; echo second; sleep 30", root);
+	await new Promise((resolveWait) => setTimeout(resolveWait, 60));
+	const timedOut = await manager.wait({ taskId: task.id, timeoutMs: 1000 });
+	assert.equal(timedOut.kind, "timeout");
+	if (timedOut.kind !== "timeout") return;
+	assert.equal(timedOut.running.length, 1);
+	assert.equal(timedOut.running[0].id, task.id);
+	assert.ok(timedOut.running[0].tail.includes("second"));
+	assert.equal(manager.stop(task.id), true);
+	await manager.whenDone(task.id);
+});
+
+test("wait with interruptImmediately returns at once without parking", async (t) => {
+	const { root, manager } = await fixture(t);
+	const task = await manager.start("sleep 30", root);
+	const result = await manager.wait({ taskId: task.id, timeoutMs: 5000, interruptImmediately: "user" });
+	assert.equal(result.kind, "interrupted");
+	if (result.kind !== "interrupted") return;
+	assert.equal(result.reason, "user");
+	assert.equal(result.running.length, 1);
+	assert.equal(manager.stop(task.id), true);
+	await manager.whenDone(task.id);
+});

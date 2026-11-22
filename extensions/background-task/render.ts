@@ -7,7 +7,7 @@
  */
 import { getMarkdownTheme, type MessageRenderer, type Theme } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, Markdown, Spacer, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { firstLine, formatDuration, type PromotionReason, type TaskRecord } from "./format.ts";
+import { firstLine, formatDuration, type PromotionReason, type TaskRecord, type WaitRunningSummary } from "./format.ts";
 import type { MonitorRecord } from "./monitor-format.ts";
 
 type Color = Parameters<Theme["fg"]>[0];
@@ -149,6 +149,101 @@ export function renderTaskCall(theme: Theme, command: string | undefined, cwd: s
 		let line = `${theme.fg("accent", theme.bold("bg"))} ${theme.fg("toolTitle", theme.bold("❯ "))}${theme.fg("toolTitle", theme.bold(commandHead(theme, command ?? "…")))}`;
 		if (cwd) line += theme.fg("muted", ` in ${cwd}`);
 		return [line];
+	});
+}
+
+export function renderWaitCall(
+	theme: Theme,
+	args: { id?: string; timeout_seconds?: number },
+	defaultTimeoutMs: number,
+): Component {
+	return new Lines(() => {
+		const target = args.id ? args.id : "any background task";
+		const timeoutMs =
+			typeof args.timeout_seconds === "number" && Number.isFinite(args.timeout_seconds) && args.timeout_seconds > 0
+				? args.timeout_seconds * 1000
+				: defaultTimeoutMs;
+		return [
+			`${theme.fg("accent", theme.bold("wait"))} ${theme.fg("toolTitle", theme.bold("❯ "))}${theme.fg("toolTitle", theme.bold(target))}${theme.fg("muted", ` · up to ${formatDuration(timeoutMs)}`)}`,
+		];
+	});
+}
+
+export interface WaitRowDetails {
+	kind?: "waiting" | "completed" | "interrupted" | "timeout" | "idle" | "missing";
+	taskId?: string;
+	runningCount?: number;
+	reason?: "user" | "aborted" | "shutdown";
+	waitedMs?: number;
+	task?: TaskRecord;
+	tail?: string[];
+	running?: WaitRunningSummary[];
+	recentId?: string;
+	recentState?: string;
+}
+
+export function renderWaitRow(theme: Theme, details: WaitRowDetails, expanded: boolean): Component {
+	return new Lines((width) => {
+		if (details.kind === "waiting") {
+			const label = details.taskId
+				? `waiting for ${details.taskId}`
+				: `waiting for ${plural(details.runningCount ?? 1, "background task")}`;
+			return [`${theme.fg("accent", spinner())} ${theme.fg("accent", label)}${theme.fg("muted", " · send a message anytime to interrupt")}`];
+		}
+		if (details.kind === "completed" && details.task) {
+			const task = details.task;
+			const state = taskState(task);
+			const elapsed = formatDuration((task.endedAt ?? task.startedAt) - task.startedAt);
+			const lines = [
+				header(theme, state, task.id, undefined, `${elapsed} · ${plural(task.lines, "line")}`, width),
+				`  ${theme.fg("dim", "❯")} ${theme.fg("muted", commandHead(theme, task.command))}`,
+			];
+			if (task.status === "failed" && task.error) lines.push(`  ${theme.fg("error", oneLine(task.error))}`);
+			const tail = (details.tail ?? []).slice(-(expanded ? EXPANDED_TAIL : COLLAPSED_TAIL));
+			if (tail.length > 0) lines.push(...gutterLines(theme, tail));
+			if (expanded && task.logPath) lines.push(`  ${theme.fg("dim", "log   ")} ${theme.fg("muted", task.logPath)}`);
+			return lines;
+		}
+		if (details.kind === "interrupted") {
+			const running = details.running ?? [];
+			const why =
+				details.reason === "user"
+					? "paused waiting · new user message"
+					: "stopped waiting · background tasks keep running";
+			const lines = [`${theme.fg("accent", "●")} ${theme.fg("accent", why)}`];
+			for (const task of running) {
+				lines.push(
+					`  ${theme.fg("dim", "•")} ${theme.bold(task.id)} ${theme.fg("muted", `running ${formatDuration(task.elapsedMs)} · ${plural(task.lines, "line")} · ${firstLine(task.command, 60)}`)}`,
+				);
+			}
+			return lines;
+		}
+		if (details.kind === "timeout") {
+			const running = details.running ?? [];
+			const waited = formatDuration(details.waitedMs ?? 0);
+			const lines = [
+				`${theme.fg("warning", "◷")} ${theme.fg("warning", `still running after ${waited}`)}${theme.fg("muted", ` · ${plural(running.length, "task")}`)}`,
+			];
+			for (const task of running) {
+				const delta =
+					task.newLines === undefined
+						? ""
+						: task.newLines > 0
+							? ` · +${plural(task.newLines, "new line")}`
+							: " · no new output";
+				lines.push(
+					`  ${theme.fg("dim", "•")} ${theme.bold(task.id)} ${theme.fg("muted", `${formatDuration(task.elapsedMs)} · ${plural(task.lines, "line")}${delta} · ${firstLine(task.command, 60)}`)}`,
+				);
+				const tail = task.tail.slice(-(expanded ? EXPANDED_TAIL : COLLAPSED_TAIL));
+				if (tail.length > 0) lines.push(...gutterLines(theme, tail));
+			}
+			return lines;
+		}
+		if (details.kind === "idle") {
+			const extra = details.recentId ? theme.fg("muted", ` · last: ${details.recentId} ${details.recentState ?? ""}`) : "";
+			return [`${theme.fg("muted", "■")} ${theme.fg("muted", "no background tasks running")}${extra}`];
+		}
+		return [`${theme.fg("error", "✗")} ${theme.fg("error", `unknown background task ${details.taskId ?? ""}`.trim())}`];
 	});
 }
 

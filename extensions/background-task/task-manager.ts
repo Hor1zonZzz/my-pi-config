@@ -4,12 +4,16 @@ import { join, resolve } from "node:path";
 import {
 	checkMessage,
 	completionMessage,
+	DEFAULT_WAIT_TIMEOUT_MS,
+	MAX_WAIT_TIMEOUT_MS,
+	MIN_WAIT_TIMEOUT_MS,
 	previewLines,
 	type PromotionReason,
 	signalFromExitCode,
 	type StopReason,
 	type TaskRecord,
 	TAIL_LINES,
+	type WaitRunningSummary,
 } from "./format.ts";
 import { OutputLog } from "./output-log.ts";
 import {
@@ -72,6 +76,33 @@ interface ForegroundRun {
 	promote: (reason: PromotionReason) => void;
 }
 
+export type WaitInterruptReason = "user" | "aborted" | "shutdown";
+
+export interface WaitOptions {
+	/** Specific task ID to wait for; omit to wait for any running background task. */
+	taskId?: string;
+	/** Max milliseconds to wait before returning a status snapshot (default 270000, clamped to 1000–600000). */
+	timeoutMs?: number;
+	/** Tool abort signal (Esc); cancels the wait without stopping any background task. */
+	signal?: AbortSignal;
+	/** If set, return immediately without parking (e.g. a user message is already queued). */
+	interruptImmediately?: "user";
+}
+
+export type WaitResult =
+	| { kind: "completed"; task: TaskRecord; tail: string[]; alreadyFinished: boolean }
+	| { kind: "interrupted"; reason: WaitInterruptReason; running: WaitRunningSummary[] }
+	| { kind: "timeout"; waitedMs: number; running: WaitRunningSummary[] }
+	| { kind: "idle"; recent?: TaskRecord }
+	| { kind: "missing"; taskId: string };
+
+interface TaskWaiter {
+	taskId?: string;
+	settled: boolean;
+	resolveCompleted: (task: TaskRecord, tail: string[]) => void;
+	interrupt: (reason: WaitInterruptReason) => void;
+}
+
 export type ForegroundResult =
 	| { promoted: false; exitCode: number | null }
 	| { promoted: true; task: TaskRecord; tail: string[] };
@@ -106,8 +137,10 @@ export class BackgroundTaskManager {
 	private readonly running = new Map<string, RunningTask>();
 	/** `bash` commands still running in the foreground. */
 	private readonly foreground = new Set<ForegroundRun>();
+	/** Active `wait_background` callers parked on one or any running task. */
+	private readonly waiters = new Set<TaskWaiter>();
 	private finished: TaskRecord[] = [];
-	/** The last lines of finished tasks, for snapshots. */
+	/** The bounded output tail of finished tasks, for snapshots and `wait_background`. */
 	private readonly finishedTails = new Map<string, string[]>();
 	private readonly ids = new IdSequence("bg");
 	private shuttingDown = false;
@@ -155,7 +188,7 @@ export class BackgroundTaskManager {
 		}
 		// IDs restart in every session, so only this session's finished tasks match.
 		const record = this.finished.find((task) => task.id === id && task.sessionId === this.session?.sessionId);
-		return record ? { record: { ...record }, tail: this.finishedTails.get(id) ?? [] } : undefined;
+		return record ? { record: { ...record }, tail: previewLines(this.finishedTails.get(id) ?? [], PREVIEW_LINES) } : undefined;
 	}
 
 	/** Resolves when the task has finished and its completion has been handled. */
@@ -211,6 +244,163 @@ export class BackgroundTaskManager {
 		record.pgid ??= pgid;
 		await writeJsonAtomic(metaPath, record).catch(() => {});
 		return { ...record };
+	}
+
+	/** Whether any `wait_background` call is currently parked waiting for a task. */
+	hasWaiters(): boolean {
+		for (const waiter of this.waiters) {
+			if (!waiter.settled) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Wake every parked `wait_background` call without stopping any background task (e.g. when
+	 * a new user message arrives). Returns how many waiters were signaled.
+	 */
+	interruptWaiters(reason: WaitInterruptReason = "user"): number {
+		let count = 0;
+		for (const waiter of [...this.waiters]) {
+			if (waiter.settled) continue;
+			count += 1;
+			waiter.interrupt(reason);
+		}
+		return count;
+	}
+
+	/**
+	 * Park until the named background task (or any running background task when `taskId` is
+	 * omitted) finishes, a new user steering message interrupts the wait, `signal` aborts, or
+	 * `timeoutMs` elapses. When a task finishes while a waiter is waiting on it, the completion
+	 * is returned directly and no duplicate exit message is sent to the session.
+	 */
+	async wait(options: WaitOptions = {}): Promise<WaitResult> {
+		const rawTimeout = options.timeoutMs;
+		if (rawTimeout !== undefined && (!Number.isFinite(rawTimeout) || rawTimeout <= 0)) {
+			throw new Error("Invalid timeout: must be a positive finite number of seconds.");
+		}
+		const timeoutMs =
+			rawTimeout === undefined
+				? DEFAULT_WAIT_TIMEOUT_MS
+				: Math.min(Math.max(Math.floor(rawTimeout), MIN_WAIT_TIMEOUT_MS), MAX_WAIT_TIMEOUT_MS);
+
+		if (options.taskId !== undefined) {
+			if (!this.running.has(options.taskId)) {
+				const done = this.finished.find(
+					(task) => task.id === options.taskId && task.sessionId === this.session?.sessionId,
+				);
+				if (done) {
+					return {
+						kind: "completed",
+						task: { ...done },
+						tail: [...(this.finishedTails.get(done.id) ?? [])],
+						alreadyFinished: true,
+					};
+				}
+				return { kind: "missing", taskId: options.taskId };
+			}
+		} else if (this.running.size === 0) {
+			const recent = [...this.finished]
+				.reverse()
+				.find((task) => task.sessionId === this.session?.sessionId);
+			return { kind: "idle", recent: recent ? { ...recent } : undefined };
+		}
+
+		const baselineLines = new Map<string, number>();
+		for (const task of this.targetTasks(options.taskId)) {
+			baselineLines.set(task.record.id, task.output.lineCount);
+		}
+		if (this.shuttingDown) {
+			return { kind: "interrupted", reason: "shutdown", running: this.runningSummaries(options.taskId, baselineLines) };
+		}
+		if (options.signal?.aborted) {
+			return { kind: "interrupted", reason: "aborted", running: this.runningSummaries(options.taskId, baselineLines) };
+		}
+		if (options.interruptImmediately) {
+			return {
+				kind: "interrupted",
+				reason: options.interruptImmediately,
+				running: this.runningSummaries(options.taskId, baselineLines),
+			};
+		}
+
+		const startedAt = this.now();
+		return await new Promise<WaitResult>((resolveWait) => {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const cleanup = () => {
+				if (timer !== undefined) clearTimeout(timer);
+				timer = undefined;
+				options.signal?.removeEventListener("abort", onAbort);
+				this.waiters.delete(waiter);
+			};
+			const waiter: TaskWaiter = {
+				taskId: options.taskId,
+				settled: false,
+				resolveCompleted: (task, tail) => {
+					if (waiter.settled) return;
+					waiter.settled = true;
+					cleanup();
+					resolveWait({ kind: "completed", task, tail, alreadyFinished: false });
+				},
+				interrupt: (reason) => {
+					if (waiter.settled) return;
+					waiter.settled = true;
+					cleanup();
+					resolveWait({
+						kind: "interrupted",
+						reason,
+						running: this.runningSummaries(options.taskId, baselineLines),
+					});
+				},
+			};
+			const onAbort = () => waiter.interrupt("aborted");
+			this.waiters.add(waiter);
+			options.signal?.addEventListener("abort", onAbort, { once: true });
+			timer = setTimeout(() => {
+				if (waiter.settled) return;
+				waiter.settled = true;
+				cleanup();
+				resolveWait({
+					kind: "timeout",
+					waitedMs: this.now() - startedAt,
+					running: this.runningSummaries(options.taskId, baselineLines),
+				});
+			}, timeoutMs);
+			timer.unref?.();
+		});
+	}
+
+	private hasWaiterFor(taskId: string): boolean {
+		for (const waiter of this.waiters) {
+			if (!waiter.settled && (waiter.taskId === undefined || waiter.taskId === taskId)) return true;
+		}
+		return false;
+	}
+
+	private targetTasks(taskId: string | undefined): RunningTask[] {
+		if (taskId !== undefined) {
+			const one = this.running.get(taskId);
+			return one ? [one] : [];
+		}
+		return [...this.running.values()].sort((a, b) => a.record.startedAt - b.record.startedAt);
+	}
+
+	private runningSummaries(taskId: string | undefined, baselineLines: Map<string, number>): WaitRunningSummary[] {
+		const now = this.now();
+		return this.targetTasks(taskId).map((task) => {
+			const lineCount = task.output.lineCount;
+			const base = baselineLines.get(task.record.id);
+			return {
+				id: task.record.id,
+				command: task.record.command,
+				pgid: task.record.pgid,
+				logPath: task.record.logPath,
+				elapsedMs: Math.max(0, now - task.record.startedAt),
+				lines: lineCount,
+				newLines: base === undefined ? undefined : Math.max(0, lineCount - base),
+				tail: [...task.output.tail],
+			};
+		});
 	}
 
 	/** Whether any `bash` command is currently waiting in the foreground. */
@@ -424,13 +614,24 @@ export class BackgroundTaskManager {
 			await rm(pidPath, { force: true }).catch(() => {});
 			this.running.delete(record.id);
 			this.finished.push(record);
-			this.finishedTails.set(record.id, previewLines(run.output.tail, PREVIEW_LINES));
+			this.finishedTails.set(record.id, [...run.output.tail]);
 			if (this.finished.length > MAX_FINISHED_TASKS) {
 				const dropped = this.finished.shift();
 				if (dropped) this.finishedTails.delete(dropped.id);
 			}
 			this.updateStatus();
-			this.deliver(record, run.output.tail);
+			let consumedByWaiter = false;
+			if (!this.shuttingDown && record.stopReason !== "shutdown") {
+				for (const waiter of [...this.waiters]) {
+					if (waiter.settled) continue;
+					if (waiter.taskId !== undefined && waiter.taskId !== record.id) continue;
+					consumedByWaiter = true;
+					waiter.resolveCompleted({ ...record }, [...run.output.tail]);
+				}
+			}
+			if (!consumedByWaiter) {
+				this.deliver(record, run.output.tail);
+			}
 		});
 	}
 
@@ -453,6 +654,11 @@ export class BackgroundTaskManager {
 			timer = undefined;
 			if (run.ended || run.controller.signal.aborted) return;
 			const lineCount = run.output.lineCount;
+			if (this.hasWaiterFor(record.id)) {
+				linesAtLastCheck = lineCount;
+				schedule();
+				return;
+			}
 			const newLines = linesAtLastCheck === undefined ? undefined : lineCount - linesAtLastCheck;
 			this.deliverCheck(record, this.now() - record.startedAt, lineCount, newLines, run.output.tail);
 			linesAtLastCheck = lineCount;
@@ -510,6 +716,7 @@ export class BackgroundTaskManager {
 	/** Kill every running task without notifying the model, then wait briefly for cleanup. */
 	async shutdown(): Promise<void> {
 		this.shuttingDown = true;
+		this.interruptWaiters("shutdown");
 		for (const entry of this.foreground) entry.controller.abort("shutdown" satisfies StopReason);
 		const pending = [...this.running.values()];
 		for (const task of pending) task.controller.abort("shutdown" satisfies StopReason);

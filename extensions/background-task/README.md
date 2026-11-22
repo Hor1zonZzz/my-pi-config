@@ -1,8 +1,9 @@
 # Background Task
 
-Gives every Pi session its own scratchpad directory and adds two tools that run shell commands without blocking the agent loop:
+Gives every Pi session its own scratchpad directory and adds three tools that run and coordinate shell commands without blocking the user:
 
 - `background_task` reports a command once, when it exits.
+- `wait_background` parks waiting for a specific (or any) running background task—returning immediately on completion, on a new user steering message (without stopping the task), or after a bounded wait window (default 4m30s, just under a 5-minute prompt cache window) with a progress snapshot.
 - `monitor` delivers each stdout line of a watch script as an event while it runs, modeled on Claude Code's Monitor tool.
 
 In TUI and RPC sessions it also takes over the built-in `bash` tool, so a `bash` command normally waits for completion in the foreground, but moves to the background immediately (without killing the process) if a new user steering message arrives—or optionally after `PI_BASH_BACKGROUND_AFTER_MS` milliseconds if configured.
@@ -56,7 +57,7 @@ bash({ command: string, timeout?: number })
 
 - The extension registers a `bash` tool built from Pi's own `createBashToolDefinition()`, so the schema, output truncation, live output, `PI_*` environment variables, and rendering stay those of the built-in tool. Only its process backend is replaced.
 - By default a command runs in the foreground until it exits, hits its `timeout`, or is aborted with Esc.
-- If a new user steering message arrives (Enter in TUI or `steer` in RPC; `followUp` via Alt+Enter does not interrupt) while a `bash` command is running in the foreground—or is already queued when `bash` starts—the command is immediately moved to background task `bg-N` without stopping it. The call returns at once with the task ID, process group, log path, and up to the last 30 lines (4 KiB) of output so far, instructing the model to read the new user message first. The log at `<scratchpad>/background/<id>.log` holds the complete output from the start; the TUI shows it as `Full output: <log>`.
+- If a new user steering message arrives (Enter in TUI or `steer` in RPC; `followUp` via Alt+Enter does not interrupt) while a `bash` command is running in the foreground—or is already queued when `bash` starts—the command is immediately moved to background task `bg-N` without stopping it. The call returns at once with the task ID, process group, log path, and up to the last 30 lines (4 KiB) of output so far, instructing the model to read the new user message first and optionally call `wait_background` afterwards if its next step still depends on `bg-N`. The log at `<scratchpad>/background/<id>.log` holds the complete output from the start; the TUI shows it as `Full output: <log>`.
 - From then on it is an ordinary background task: Esc no longer stops it, it appears in `/bg` and the `bg` footer entry, and its exit is reported like any other task's. Any `timeout` passed to `bash` still applies to the whole run; when it expires, the task is killed and the report wakes the model.
 - While 16 background tasks are already running, a foreground command cannot be promoted and stays in the foreground.
 - `PI_BASH_BACKGROUND_AFTER_MS` optionally sets a timed promotion threshold in milliseconds (default `0`, meaning wait in the foreground until exit or a new user message). When set to a positive number, a command still running at that threshold also moves to the background automatically.
@@ -64,9 +65,21 @@ bash({ command: string, timeout?: number })
 - Before promotion, output is also written to a hidden `.foreground-*` file under `<scratchpad>/background/`, which is renamed to the task log on promotion and deleted otherwise.
 - Codemode scripts that call `bash` receive the promoted result as text, without `structuredContent`.
 
+## `wait_background`
+
+```ts
+wait_background({ id?: string, timeout_seconds?: number })
+```
+
+- Modeled on Claude Code Code Mode's `Poll` wait loop: lets the model resume waiting for a specific background task (`id`) or any running background task (when `id` is omitted) after handling a mid-run user message or whenever the next step depends on the task's result.
+- Returns immediately when a matching task finishes—returning its full exit report directly and suppressing the duplicate `background-task` steer message.
+- Returns immediately when a new user steering message arrives (or if one is already queued), leaving all background tasks running so the model can answer the user and call `wait_background` again afterwards.
+- Pressing Esc during `wait_background` cancels only the wait; background tasks keep running and their exit reports still wake the session later.
+- Bounded by `timeout_seconds` (default `270`s = 4m30s, clamped to `1`–`600`s) so long waits return a progress snapshot with new line counts and output tail before a 5-minute prompt cache expires; the model can call `wait_background` again to keep waiting, stop a stuck task, or end its turn and let the exit report wake it automatically.
+
 ## Print and JSON modes
 
-`pi -p` and `--mode json` dispose the session as soon as the agent settles, which would kill every background task and monitor without a report. Sessions without a UI (`ctx.hasUI` false) therefore keep the built-in synchronous `bash` and deactivate `background_task` and `monitor`.
+`pi -p` and `--mode json` dispose the session as soon as the agent settles, which would kill every background task and monitor without a report. Sessions without a UI (`ctx.hasUI` false) therefore keep the built-in synchronous `bash` and deactivate `background_task`, `wait_background`, and `monitor`.
 
 ## `monitor`
 

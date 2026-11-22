@@ -1,6 +1,9 @@
 import { constants } from "node:os";
 
 export const TAIL_LINES = 30;
+export const DEFAULT_WAIT_TIMEOUT_MS = 270_000;
+export const MIN_WAIT_TIMEOUT_MS = 1_000;
+export const MAX_WAIT_TIMEOUT_MS = 600_000;
 const TAIL_LINE_CHARS = 300;
 const TAIL_BYTES = 4 * 1024;
 const COMMAND_CHARS = 500;
@@ -8,6 +11,17 @@ const COMMAND_CHARS = 500;
 export type TaskStatus = "running" | "exited" | "stopped" | "failed";
 export type StopReason = "user" | "shutdown" | "timeout";
 export type PromotionReason = "timeout" | "user";
+
+export interface WaitRunningSummary {
+	id: string;
+	command: string;
+	pgid?: number;
+	logPath: string;
+	elapsedMs: number;
+	lines: number;
+	newLines?: number;
+	tail: string[];
+}
 
 export interface TaskRecord {
 	id: string;
@@ -131,11 +145,12 @@ export function promotedMessage(task: TaskRecord, tail: readonly string[]): stri
 			? [
 					`The command was moved to the background after ${after} because a new user message arrived, and continues as background task ${task.id}${pgid}.`,
 					"Read and address the new user message first.",
+					`After answering, if your next step still depends on ${task.id}, call \`wait_background({ id: "${task.id}" })\` to resume waiting (it remains interruptible if the user sends another message); otherwise continue other work or end your turn and its exit will wake you automatically.`,
 				]
 			: [`The command was still running after ${after}, so it continues as background task ${task.id}${pgid}.`];
 	lines.push(
 		`Log: ${task.logPath} (complete output from the start; ${task.lines} line${task.lines === 1 ? "" : "s"} so far)`,
-		"Its exit will be reported automatically with the exit code and the end of the log; do not poll, sleep, or rerun the command waiting for it.",
+		"Its exit will be reported automatically with the exit code and the end of the log; do not sleep or poll in bash waiting for it.",
 	);
 	if (task.timeout !== undefined) lines.push(`It is still killed when its ${task.timeout}-second timeout expires.`);
 	lines.push(
@@ -206,4 +221,67 @@ const PREVIEW_LINE_CHARS = 240;
 /** The last `count` lines, clipped for message details that renderers show without parsing content. */
 export function previewLines(lines: readonly string[], count: number): string[] {
 	return lines.slice(-count).map((line) => clip(line, PREVIEW_LINE_CHARS));
+}
+
+function runningSummaryLines(running: readonly WaitRunningSummary[], includeTail: boolean): string[] {
+	const lines: string[] = [];
+	for (const task of running) {
+		const elapsed = formatDuration(task.elapsedMs);
+		const delta =
+			task.newLines === undefined
+				? ""
+				: task.newLines > 0
+					? `, +${task.newLines} new line${task.newLines === 1 ? "" : "s"}`
+					: ", no new output";
+		const pgid = task.pgid ? `, pgid ${task.pgid}` : "";
+		lines.push(
+			`- ${task.id} (running ${elapsed}, ${task.lines} line${task.lines === 1 ? "" : "s"}${delta}${pgid}): ${clip(task.command.trim().replace(/\s*\n\s*/g, " ; "), COMMAND_CHARS)}`,
+		);
+		lines.push(`  Log: ${task.logPath}`);
+		if (includeTail) {
+			const shown = boundedTail(task.tail);
+			if (shown.length > 0) {
+				lines.push(`  Output so far (last ${shown.length} line${shown.length === 1 ? "" : "s"}):`, codeBlock(shown.join("\n")));
+			} else {
+				lines.push("  No output so far.");
+			}
+		}
+	}
+	return lines;
+}
+
+export function waitInterruptedMessage(
+	running: readonly WaitRunningSummary[],
+	reason: "user" | "aborted" | "shutdown",
+): string {
+	const header =
+		reason === "user"
+			? "Stopped waiting because a new user message arrived. Read and address the new user message first."
+			: "Stopped waiting; background tasks continue running in the background.";
+	if (running.length === 0) return header;
+	const lines = [
+		header,
+		"",
+		`Still running (${running.length}):`,
+		...runningSummaryLines(running, false),
+		"",
+		"Call `wait_background` again afterwards if you still want to wait for them (remains interruptible), or end your turn and their exit will wake you automatically.",
+	];
+	return lines.join("\n");
+}
+
+export function waitTimeoutMessage(waitedMs: number, running: readonly WaitRunningSummary[]): string {
+	const lines = [
+		`Wait window elapsed after ${formatDuration(waitedMs)}; ${running.length} background task${running.length === 1 ? " is" : "s are"} still running.`,
+		"",
+		...runningSummaryLines(running, true),
+		"",
+		"Call `wait_background` again to keep waiting, stop any stuck task with `kill -- -<pgid>`, or end your turn and its exit will wake you automatically.",
+	];
+	return lines.join("\n");
+}
+
+export function waitIdleMessage(recent?: TaskRecord): string {
+	if (!recent) return "No background tasks are currently running.";
+	return `No background tasks are currently running. Most recent task: ${recent.id} ${outcomeText(recent)} (log: ${recent.logPath}).`;
 }

@@ -11,8 +11,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
+	completionMessage,
+	DEFAULT_WAIT_TIMEOUT_MS,
 	firstLine,
 	formatDuration,
+	MAX_WAIT_TIMEOUT_MS,
+	MIN_WAIT_TIMEOUT_MS,
 	outcomeText,
 	previewLines,
 	promotedMessage,
@@ -20,6 +24,9 @@ import {
 	shortOutcome,
 	startedMessage,
 	type TaskRecord,
+	waitIdleMessage,
+	waitInterruptedMessage,
+	waitTimeoutMessage,
 } from "./format.ts";
 import {
 	DEFAULT_TIMEOUT_MS,
@@ -44,6 +51,9 @@ import {
 	renderTaskCall,
 	renderTaskMessage,
 	renderTaskRow,
+	renderWaitCall,
+	renderWaitRow,
+	type WaitRowDetails,
 } from "./render.ts";
 import { type PanelDetail, type PanelRow, StatusPanels } from "./status-ui.ts";
 import { BackgroundTaskManager, CHECK_INTERVAL_MS, MESSAGE_TYPE, promoteAfterMsFrom } from "./task-manager.ts";
@@ -52,7 +62,7 @@ const STATUS_KEY = "background-task";
 const MONITOR_STATUS_KEY = "monitor";
 const PROMPT_SECTION = "scratchpad";
 /** Tools that need a session that outlives the turn; print and JSON modes exit once the agent settles. */
-const BACKGROUND_TOOLS = ["background_task", "monitor"];
+const BACKGROUND_TOOLS = ["background_task", "wait_background", "monitor"];
 /** Thrown through the built-in bash execution once its command has moved to the background. */
 const PROMOTED = "moved to background";
 
@@ -115,8 +125,8 @@ export default function (pi: ExtensionAPI) {
 				: `${builtin.description} If a new user message arrives while a command is running, the command continues as a background task and its exit is reported later.`;
 		const bashGuideline =
 			promoteAfterMs > 0
-				? `A bash command still running after ${promoteAfter}, or when a new user message arrives, is moved to the background: the call returns with the task ID, log path, and output so far, and the exit is reported automatically. Do not rerun, poll, or sleep waiting for it; address any new user message, continue with other work, or end your turn.`
-				: "A bash command normally waits for completion in the foreground. If a new user message arrives while it is running, it is moved to the background automatically and the call returns with the task ID, log path, and output so far; read and address the new user message first, and do not rerun, poll, or sleep waiting for the backgrounded command.";
+				? `A bash command still running after ${promoteAfter}, or when a new user message arrives, is moved to the background: the call returns with the task ID, log path, and output so far, and the exit is reported automatically. Address any new user message first, then call wait_background if your next step depends on the command, continue other work, or end your turn.`
+				: "A bash command normally waits for completion in the foreground. If a new user message arrives while it is running, it is moved to the background automatically and the call returns with the task ID, log path, and output so far; read and address the new user message first, then call wait_background if your next step still depends on it (or end your turn and its exit will wake you automatically).";
 		pi.registerTool({
 			...builtin,
 			description: bashDescription,
@@ -270,7 +280,7 @@ export default function (pi: ExtensionAPI) {
 				promoteAfterMs > 0
 					? `Use background_task for servers, watchers, and other commands that keep running, and for commands you know will take minutes, so the call returns at once. Other long commands can use bash, which moves a command to the background after ${promoteAfter} or when a new user message arrives.`
 					: "Use background_task for servers, watchers, and other commands that keep running, and for commands you know will take minutes that you do not need to wait for, so the call returns at once. Commands run with bash wait in the foreground unless a new user message arrives, in which case they move to the background automatically.",
-				"After starting a background task, continue with other work or end your turn. Do not poll, sleep, or tail the log in a loop waiting for it; its exit is reported automatically.",
+				"After starting a background task, do not sleep or poll in bash waiting for it. Continue with other work, call wait_background when your next step depends on its completion (it remains interruptible by new user messages), or end your turn and let its exit report wake you automatically.",
 				"Read a background task's log with read; the exit report gives its line count, so use an offset near the end. Stop a task with `kill -- -<pgid>`, and stop servers you started once they are no longer needed.",
 				`Every ${CHECK_INTERVAL_MS / 60_000} minutes a task is still running, you are sent the end of its log and asked to check it: if it is stuck, failing, or no longer needed, stop it and adjust; otherwise answer in one line. Prefer commands that print progress as they go, so these checks show whether it is advancing.`,
 			],
@@ -295,6 +305,110 @@ export default function (pi: ExtensionAPI) {
 				return {
 					content: [{ type: "text", text: startedMessage(task) }],
 					details: { taskId: task.id, pgid: task.pgid, logPath: task.logPath },
+				};
+			},
+		}),
+	);
+
+	pi.registerTool(
+		defineTool({
+			name: "wait_background",
+			label: "Wait Background",
+			description:
+				`Wait for a running background task (or any running background task when id is omitted) to finish, up to a bounded window (default ${formatDuration(DEFAULT_WAIT_TIMEOUT_MS)}, max ${formatDuration(MAX_WAIT_TIMEOUT_MS)}). Returns immediately when a task finishes, when a new user steering message arrives (leaving tasks running so you can answer the user and wait again), or when the window elapses with a progress snapshot.`,
+			promptSnippet: "Park waiting for a background task to finish; wakes immediately on completion or a new user message",
+			promptGuidelines: [
+				"Use wait_background to resume waiting for a background task (or any running task when id is omitted) when your next step still depends on its completion—for example after answering a mid-run user message that moved a bash command to the background.",
+				`wait_background wakes immediately if the user sends another steering message (leaving the task running so you can answer and call wait_background again) or after its wait window (default ${formatDuration(DEFAULT_WAIT_TIMEOUT_MS)}, before prompt cache expires) with current progress so you can keep waiting.`,
+				"When nothing else depends on a background task right now, ending your turn also works—its exit report will wake you automatically.",
+			],
+			parameters: Type.Object({
+				id: Type.Optional(
+					Type.String({
+						description: 'Background task ID (e.g. "bg-1"). Omit to wait for any running background task.',
+					}),
+				),
+				timeout_seconds: Type.Optional(
+					Type.Number({
+						description: `Max seconds to wait before returning a progress snapshot (default ${DEFAULT_WAIT_TIMEOUT_MS / 1000}, ${MIN_WAIT_TIMEOUT_MS / 1000} to ${MAX_WAIT_TIMEOUT_MS / 1000})`,
+					}),
+				),
+			}),
+			renderCall(args, theme) {
+				return renderWaitCall(theme, args, DEFAULT_WAIT_TIMEOUT_MS);
+			},
+			renderResult(result, options, theme, context) {
+				const details = result.details as WaitRowDetails | undefined;
+				if (context.isError || !details?.kind) return errorText(result, theme);
+				return renderWaitRow(theme, details, options.expanded);
+			},
+			async execute(_toolCallId, params, signal, onUpdate, ctx) {
+				const interruptImmediately = pendingUserSteer && ctx.hasPendingMessages() ? ("user" as const) : undefined;
+				if (interruptImmediately) pendingUserSteer = false;
+				const runningCount = manager.runningIds().length;
+				if (!interruptImmediately && (params.id ? manager.runningIds().includes(params.id) : runningCount > 0)) {
+					onUpdate?.({
+						content: [
+							{
+								type: "text",
+								text: params.id
+									? `Waiting for ${params.id}…`
+									: `Waiting for ${runningCount} running background task${runningCount === 1 ? "" : "s"}…`,
+							},
+						],
+						details: { kind: "waiting", taskId: params.id, runningCount } satisfies WaitRowDetails,
+					});
+				}
+				const result = await manager.wait({
+					taskId: params.id,
+					timeoutMs: params.timeout_seconds !== undefined ? params.timeout_seconds * 1000 : undefined,
+					signal,
+					interruptImmediately,
+				});
+				if (result.kind === "completed") {
+					return {
+						content: [{ type: "text", text: completionMessage(result.task, result.tail) }],
+						details: {
+							kind: "completed",
+							task: result.task,
+							tail: previewLines(result.tail, 8),
+						} satisfies WaitRowDetails,
+					};
+				}
+				if (result.kind === "interrupted") {
+					return {
+						content: [{ type: "text", text: waitInterruptedMessage(result.running, result.reason) }],
+						details: {
+							kind: "interrupted",
+							reason: result.reason,
+							running: result.running.map((task) => ({ ...task, tail: previewLines(task.tail, 8) })),
+						} satisfies WaitRowDetails,
+					};
+				}
+				if (result.kind === "timeout") {
+					return {
+						content: [{ type: "text", text: waitTimeoutMessage(result.waitedMs, result.running) }],
+						details: {
+							kind: "timeout",
+							waitedMs: result.waitedMs,
+							running: result.running.map((task) => ({ ...task, tail: previewLines(task.tail, 8) })),
+						} satisfies WaitRowDetails,
+					};
+				}
+				if (result.kind === "idle") {
+					return {
+						content: [{ type: "text", text: waitIdleMessage(result.recent) }],
+						details: {
+							kind: "idle",
+							recentId: result.recent?.id,
+							recentState: result.recent ? shortOutcome(result.recent).text : undefined,
+						} satisfies WaitRowDetails,
+					};
+				}
+				return {
+					content: [{ type: "text", text: `No background task with id ${result.taskId} in this session.` }],
+					isError: true,
+					details: { kind: "missing", taskId: result.taskId } satisfies WaitRowDetails,
 				};
 			},
 		}),
@@ -432,7 +546,8 @@ export default function (pi: ExtensionAPI) {
 		// handler returns { action: "handled" }) before foreground bash returns to the agent loop.
 		const timer = setTimeout(() => {
 			if (!ctx.hasPendingMessages()) return;
-			if (manager.promoteForeground("user") === 0) {
+			const woken = manager.promoteForeground("user") + manager.interruptWaiters("user");
+			if (woken === 0) {
 				pendingUserSteer = true;
 			}
 		}, 0);

@@ -8,6 +8,9 @@ import {
 	promotedMessage,
 	signalFromExitCode,
 	type TaskRecord,
+	waitIdleMessage,
+	waitInterruptedMessage,
+	waitTimeoutMessage,
 } from "./format.ts";
 
 const base: TaskRecord = {
@@ -66,9 +69,36 @@ test("promoted message distinguishes user interruption from timeout promotion", 
 	const byUser = promotedMessage({ ...running, promotedBy: "user" }, ["building"]);
 	assert.match(byUser, /moved to the background after 3s because a new user message arrived/);
 	assert.match(byUser, /Read and address the new user message first\./);
+	assert.match(byUser, /wait_background\(\{ id: "bg-1" \}\)/);
 	assert.match(byUser, /kill -- -4242/);
 
 	const byTimeout = promotedMessage({ ...running, promotedBy: "timeout", promotedAfterMs: 30_000 }, ["building"]);
 	assert.match(byTimeout, /was still running after 30s, so it continues as background task bg-1/);
 	assert.doesNotMatch(byTimeout, /new user message/);
+});
+
+test("wait messages format interrupted, timed-out, and idle states", () => {
+	const running = [
+		{
+			id: "bg-1",
+			command: "pnpm test",
+			pgid: 1234,
+			logPath: "/scratch/background/bg-1.log",
+			elapsedMs: 65_000,
+			lines: 12,
+			newLines: 4,
+			tail: ["PASS a.test.ts", "running b.test.ts"],
+		},
+	];
+	const interrupted = waitInterruptedMessage(running, "user");
+	assert.match(interrupted, /Stopped waiting because a new user message arrived/);
+	assert.match(interrupted, /bg-1 \(running 1m05s, 12 lines, \+4 new lines, pgid 1234\)/);
+	assert.match(interrupted, /wait_background/);
+
+	const timedOut = waitTimeoutMessage(270_000, running);
+	assert.match(timedOut, /Wait window elapsed after 4m30s; 1 background task is still running/);
+	assert.match(timedOut, /PASS a\.test\.ts\nrunning b\.test\.ts/);
+
+	assert.match(waitIdleMessage(), /No background tasks are currently running\./);
+	assert.match(waitIdleMessage(base), /Most recent task: bg-1 exited with code 1/);
 });

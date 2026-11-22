@@ -4,13 +4,15 @@
 //! - 2D Heatmap (`heatmap`)
 //! - Pie & Donut chart (`pie`, `donut`)
 
+use crate::expr::parse_expr;
 use crate::render::{
-    draw_line, fill_circle, fill_rect, format_tick, hex, nice_ticks, stroke_rect, text_hex, Renderer, ThemeColors,
-    DEFAULT_PALETTE,
+    draw_arrow, draw_line, fill_circle, fill_rect, format_tick, hex, nice_ticks, stroke_rect, text_hex, Renderer,
+    ThemeColors, DEFAULT_PALETTE,
 };
-use crate::spec::{BoxGroup, ChartSeries, HoverReading, PlotBoxFrac, RenderRequest};
+use crate::spec::{ChartSeries, HoverReading, PlotBoxFrac, RenderRequest, SubplotSpec};
+use std::collections::HashMap;
 use std::f32::consts::PI;
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use tiny_skia::{Color, FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, StrokeDash, Transform};
 
 pub struct SpecialRenderOutput {
     pub x_domain: [f64; 2],
@@ -40,6 +42,7 @@ pub fn render_barh(
             .map(|(i, &v)| crate::spec::ChartPoint {
                 x: i as f64,
                 y: v,
+                yerr: None,
                 y_low: None,
                 y_high: None,
                 r: None,
@@ -693,4 +696,344 @@ fn viridis_color(t: f64) -> Color {
         }
     }
     Color::from_rgba8(253, 231, 37, 255)
+}
+
+/// Multi-subplot grid (`grid: { rows, cols }` + `subplots: [...]`).
+pub fn render_grid(
+    r: &mut Renderer,
+    pixmap: &mut Pixmap,
+    req: &RenderRequest,
+    subplots: &[SubplotSpec],
+    theme: &ThemeColors,
+    dpr: f32,
+) -> SpecialRenderOutput {
+    let w = pixmap.width() as f32;
+    let h = pixmap.height() as f32;
+    let n = subplots.len().max(1);
+    let (rows, cols) = if let Some(g) = &req.spec.grid {
+        (g.rows.max(1), g.cols.max(1))
+    } else if n <= 2 {
+        (1, n)
+    } else {
+        let c = (n as f64).sqrt().ceil() as usize;
+        let rw = (n + c - 1) / c;
+        (rw.max(1), c.max(1))
+    };
+
+    let outer_pad = 6.0 * dpr;
+    let gap_x = 18.0 * dpr;
+    let gap_y = 16.0 * dpr;
+    let cell_w = ((w - outer_pad * 2.0 - gap_x * (cols.saturating_sub(1) as f32)) / cols as f32).max(80.0 * dpr);
+    let cell_h = ((h - outer_pad * 2.0 - gap_y * (rows.saturating_sub(1) as f32)) / rows as f32).max(60.0 * dpr);
+
+    // Build shared variable environment for formula series
+    let mut vars: HashMap<String, f64> = HashMap::new();
+    if let Some(params) = &req.spec.params {
+        for (k, v) in params {
+            vars.insert(k.clone(), *v);
+        }
+    }
+    if let Some(controls) = &req.spec.controls {
+        for c in controls {
+            vars.insert(c.id.clone(), c.value);
+        }
+    }
+    for (k, v) in &req.control_values {
+        vars.insert(k.clone(), *v);
+    }
+    let samples = req.spec.samples.unwrap_or(160).clamp(16, 1000);
+
+    let hover_px_x = req.hover_norm_x.map(|nx| nx as f32 * w);
+    let hover_px_y = req.hover_norm_y.map(|ny| ny as f32 * h);
+    let mut hover_readings: Option<Vec<HoverReading>> = None;
+
+    for (idx, sp) in subplots.iter().enumerate() {
+        if idx >= rows * cols {
+            break;
+        }
+        let gr = idx / cols;
+        let gc = idx % cols;
+        let cx = outer_pad + gc as f32 * (cell_w + gap_x);
+        let cy = outer_pad + gr as f32 * (cell_h + gap_y);
+
+        let pad_l = 44.0 * dpr;
+        let pad_r = 8.0 * dpr;
+        let pad_t = if sp.title.is_some() { 20.0 * dpr } else { 8.0 * dpr };
+        let pad_b = if sp.x_label.is_some() { 28.0 * dpr } else { 18.0 * dpr };
+
+        let px0 = cx + pad_l;
+        let py0 = cy + pad_t;
+        let pw = (cell_w - pad_l - pad_r).max(40.0 * dpr);
+        let ph = (cell_h - pad_t - pad_b).max(30.0 * dpr);
+
+        if let Some(t) = &sp.title {
+            r.draw_text(pixmap, t, px0, cy + 2.0 * dpr, 11.0 * dpr, theme.text_primary, true);
+        }
+
+        // Resolve X domain
+        let [x_min, x_max] = sp.x_domain.unwrap_or_else(|| {
+            if let Some(cats) = &sp.categories {
+                return [-0.5, (cats.len().max(1) as f64) - 0.5];
+            }
+            let mut mn = f64::INFINITY;
+            let mut mx = f64::NEG_INFINITY;
+            for s in &sp.series {
+                if let Some(pts) = &s.points {
+                    for p in pts {
+                        mn = mn.min(p.x);
+                        mx = mx.max(p.x);
+                    }
+                } else if let Some(vals) = &s.values {
+                    if !vals.is_empty() {
+                        mn = mn.min(0.0);
+                        mx = mx.max((vals.len() - 1) as f64);
+                    }
+                }
+            }
+            if mn.is_finite() && mx.is_finite() && (mx - mn).abs() > 1e-12 {
+                [mn, mx]
+            } else {
+                [0.0, 10.0]
+            }
+        });
+        let x_span = (x_max - x_min).max(1e-9);
+
+        // Resolve series points
+        struct SubPt {
+            x: f64,
+            y: f64,
+            yerr: Option<f64>,
+            yl: Option<f64>,
+            yh: Option<f64>,
+        }
+        let mut resolved: Vec<(&ChartSeries, String, Vec<SubPt>)> = Vec::new();
+        for (si, s) in sp.series.iter().enumerate() {
+            let color_hex = s.color.clone().unwrap_or_else(|| DEFAULT_PALETTE[(idx + si) % DEFAULT_PALETTE.len()].to_string());
+            let pts: Vec<SubPt> = if let Some(formula) = &s.formula {
+                if let Ok(expr) = parse_expr(formula) {
+                    let mut lv = vars.clone();
+                    (0..samples)
+                        .filter_map(|i| {
+                            let x = x_min + x_span * (i as f64) / ((samples - 1) as f64);
+                            lv.insert("x".to_string(), x);
+                            lv.insert("t".to_string(), x);
+                            let y = expr.eval(&lv);
+                            if y.is_finite() { Some(SubPt { x, y, yerr: None, yl: None, yh: None }) } else { None }
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            } else if let Some(pts) = &s.points {
+                pts.iter()
+                    .filter(|p| p.x.is_finite() && p.y.is_finite())
+                    .map(|p| SubPt { x: p.x, y: p.y, yerr: p.yerr, yl: p.y_low, yh: p.y_high })
+                    .collect()
+            } else if let Some(vals) = &s.values {
+                vals.iter()
+                    .enumerate()
+                    .filter(|(_, v)| v.is_finite())
+                    .map(|(i, &v)| SubPt { x: i as f64, y: v, yerr: None, yl: None, yh: None })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            resolved.push((s, color_hex, pts));
+        }
+
+        let [y_min, y_max] = sp.y_domain.unwrap_or_else(|| {
+            let mut mn = f64::INFINITY;
+            let mut mx = f64::NEG_INFINITY;
+            let has_bar = sp.series.iter().any(|s| s.style.as_deref() == Some("bar"));
+            for (_, _, pts) in &resolved {
+                for p in pts {
+                    mn = mn.min(p.yl.unwrap_or_else(|| p.y - p.yerr.unwrap_or(0.0).abs()));
+                    mx = mx.max(p.yh.unwrap_or_else(|| p.y + p.yerr.unwrap_or(0.0).abs()));
+                }
+            }
+            if has_bar {
+                mn = mn.min(0.0);
+            }
+            if !mn.is_finite() || !mx.is_finite() {
+                [0.0, 1.0]
+            } else {
+                let pad = (mx - mn).max(1e-6) * 0.1;
+                [if has_bar && mn >= 0.0 { 0.0 } else { mn - pad }, mx + pad]
+            }
+        });
+        let y_span = (y_max - y_min).max(1e-9);
+        let map_x = |x: f64| -> f32 { px0 + ((x - x_min) / x_span) as f32 * pw };
+        let map_y = |y: f64| -> f32 { py0 + ((y_max - y) / y_span) as f32 * ph };
+
+        // Axes + subtle grid
+        draw_line(pixmap, px0, py0, px0, py0 + ph, theme.border, 0.9 * dpr, None);
+        draw_line(pixmap, px0, py0 + ph, px0 + pw, py0 + ph, theme.border, 0.9 * dpr, None);
+        for &yv in &nice_ticks(y_min, y_max, 3) {
+            let py = map_y(yv);
+            if py < py0 - 1.0 || py > py0 + ph + 1.0 { continue; }
+            draw_line(pixmap, px0, py, px0 + pw, py, theme.grid, 0.7 * dpr, None);
+            r.draw_text_right(pixmap, &format_tick(yv), px0 - 5.0 * dpr, py - 5.0 * dpr, 9.5 * dpr, theme.text_muted);
+        }
+        for &xv in &nice_ticks(x_min, x_max, 4) {
+            let px = map_x(xv);
+            if px < px0 - 1.0 || px > px0 + pw + 1.0 { continue; }
+            draw_line(pixmap, px, py0, px, py0 + ph, theme.grid, 0.7 * dpr, None);
+            r.draw_text_center(pixmap, &format_tick(xv), px, py0 + ph + 3.0 * dpr, 9.5 * dpr, theme.text_muted);
+        }
+
+        // Draw series inside subplot
+        for (s, col_hex, pts) in &resolved {
+            let col = hex(col_hex);
+            let st = s.style.as_deref().unwrap_or("solid");
+            let lw = s.line_width.unwrap_or(if st == "dashed" { 1.3 } else { 2.0 }) * dpr;
+            match st {
+                "bar" => {
+                    let bw = (pw / pts.len().max(1) as f32 * 0.65).clamp(3.0 * dpr, 28.0 * dpr);
+                    let by0 = map_y(0.0_f64.clamp(y_min, y_max));
+                    for p in pts {
+                        let px = map_x(p.x) - bw * 0.5;
+                        let py = map_y(p.y).clamp(py0, py0 + ph);
+                        fill_rect(pixmap, px, py.min(by0), bw, (by0 - py).abs().max(1.0), col);
+                    }
+                }
+                "scatter" => {
+                    for p in pts {
+                        fill_circle(pixmap, map_x(p.x), map_y(p.y).clamp(py0, py0 + ph), 3.0 * dpr, col);
+                    }
+                }
+                "step" => {
+                    let mut pb = PathBuilder::new();
+                    let mut prev: Option<(f32, f32)> = None;
+                    for p in pts {
+                        let px = map_x(p.x);
+                        let py = map_y(p.y).clamp(py0, py0 + ph);
+                        if let Some((_, py_prev)) = prev {
+                            pb.line_to(px, py_prev);
+                            pb.line_to(px, py);
+                        } else {
+                            pb.move_to(px, py);
+                        }
+                        prev = Some((px, py));
+                    }
+                    if let Some(path) = pb.finish() {
+                        let mut paint = Paint::default();
+                        paint.set_color(col);
+                        paint.anti_alias = true;
+                        pixmap.stroke_path(&path, &paint, &Stroke { width: lw, ..Stroke::default() }, Transform::identity(), None);
+                    }
+                }
+                "errorbar" => {
+                    let mut pb = PathBuilder::new();
+                    for (i, p) in pts.iter().enumerate() {
+                        let px = map_x(p.x);
+                        let py = map_y(p.y).clamp(py0, py0 + ph);
+                        if i == 0 { pb.move_to(px, py); } else { pb.line_to(px, py); }
+                    }
+                    if let Some(path) = pb.finish() {
+                        let mut paint = Paint::default();
+                        paint.set_color(col);
+                        paint.anti_alias = true;
+                        pixmap.stroke_path(&path, &paint, &Stroke { width: lw, ..Stroke::default() }, Transform::identity(), None);
+                    }
+                    let cap = 3.8 * dpr;
+                    for p in pts {
+                        let px = map_x(p.x);
+                        let py = map_y(p.y).clamp(py0, py0 + ph);
+                        let plo = map_y(p.yl.unwrap_or_else(|| p.y - p.yerr.unwrap_or(0.0).abs())).clamp(py0, py0 + ph);
+                        let phi = map_y(p.yh.unwrap_or_else(|| p.y + p.yerr.unwrap_or(0.0).abs())).clamp(py0, py0 + ph);
+                        draw_line(pixmap, px, phi, px, plo, col, 1.2 * dpr, None);
+                        draw_line(pixmap, px - cap, phi, px + cap, phi, col, 1.2 * dpr, None);
+                        draw_line(pixmap, px - cap, plo, px + cap, plo, col, 1.2 * dpr, None);
+                        fill_circle(pixmap, px, py, 3.0 * dpr, col);
+                    }
+                }
+                _ => {
+                    let dash = if st == "dashed" { StrokeDash::new(vec![5.0 * dpr, 3.5 * dpr], 0.0) } else { None };
+                    let mut pb = PathBuilder::new();
+                    for (i, p) in pts.iter().enumerate() {
+                        let px = map_x(p.x);
+                        let py = map_y(p.y).clamp(py0, py0 + ph);
+                        if i == 0 { pb.move_to(px, py); } else { pb.line_to(px, py); }
+                    }
+                    if let Some(path) = pb.finish() {
+                        let mut paint = Paint::default();
+                        paint.set_color(col);
+                        paint.anti_alias = true;
+                        let stroke = Stroke { width: lw, line_cap: LineCap::Round, line_join: LineJoin::Round, dash, ..Stroke::default() };
+                        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                    }
+                }
+            }
+        }
+
+        // Subplot annotations
+        if let Some(annos) = &sp.annotations {
+            for a in annos {
+                let col_hex = a.color.as_deref().unwrap_or("#e53e3e");
+                let col = hex(col_hex);
+                match a.kind.as_str() {
+                    "hline" => {
+                        let py = map_y(a.value);
+                        if py >= py0 && py <= py0 + ph {
+                            draw_line(pixmap, px0, py, px0 + pw, py, col, 1.1 * dpr, StrokeDash::new(vec![4.0 * dpr, 3.0 * dpr], 0.0));
+                        }
+                    }
+                    "vspan" => {
+                        if let (Some(f), Some(t)) = (a.from, a.to) {
+                            let x1 = map_x(f.min(t)).clamp(px0, px0 + pw);
+                            let x2 = map_x(f.max(t)).clamp(px0, px0 + pw);
+                            let mut fill = col;
+                            fill.set_alpha(a.opacity.unwrap_or(0.14));
+                            fill_rect(pixmap, x1, py0, (x2 - x1).max(1.0), ph, fill);
+                        }
+                    }
+                    "arrow" => {
+                        if let (Some(ax), Some(ay)) = (a.x, a.y) {
+                            let tx = map_x(ax).clamp(px0, px0 + pw);
+                            let ty = map_y(ay).clamp(py0, py0 + ph);
+                            let sx = a.text_x.map(&map_x).unwrap_or(tx - 36.0 * dpr).clamp(px0 + 4.0, px0 + pw - 4.0);
+                            let sy = a.text_y.map(&map_y).unwrap_or((ty - 20.0 * dpr).max(py0 + 8.0)).clamp(py0 + 6.0, py0 + ph - 6.0);
+                            draw_arrow(pixmap, sx, sy, tx, ty, col, 1.3 * dpr, dpr);
+                            if let Some(lbl) = &a.label {
+                                r.draw_text(pixmap, lbl, sx, (sy - 6.0 * dpr).max(py0), 9.5 * dpr, text_hex(col_hex), true);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Hover crosshair if mouse is inside this subplot
+        if let (Some(hpx), Some(hpy)) = (hover_px_x, hover_px_y) {
+            if hpx >= px0 && hpx <= px0 + pw && hpy >= py0 && hpy <= py0 + ph {
+                let hx = x_min + ((hpx - px0) / pw) as f64 * x_span;
+                draw_line(pixmap, hpx, py0, hpx, py0 + ph, theme.crosshair, 1.1 * dpr, None);
+                let mut rds = Vec::new();
+                for (s, col_hex, pts) in &resolved {
+                    if let Some(near) = pts.iter().min_by(|a, b| (a.x - hx).abs().partial_cmp(&(b.x - hx).abs()).unwrap_or(std::cmp::Ordering::Equal)) {
+                        fill_circle(pixmap, map_x(near.x), map_y(near.y).clamp(py0, py0 + ph), 4.2 * dpr, hex(col_hex));
+                        let prefix = sp.title.as_deref().unwrap_or(&s.label);
+                        rds.push(HoverReading {
+                            label: prefix.to_string(),
+                            color: col_hex.clone(),
+                            x: near.x,
+                            y: near.y,
+                            text: Some(format!("{}: x={}, y={:.3}", prefix, format_tick(near.x), near.y)),
+                        });
+                    }
+                }
+                if !rds.is_empty() {
+                    hover_readings = Some(rds);
+                }
+            }
+        }
+    }
+
+    SpecialRenderOutput {
+        x_domain: [0.0, 1.0],
+        y_domain: [0.0, 1.0],
+        plot_box: PlotBoxFrac { left: 0.0, right: 1.0, top: 0.0, bottom: 1.0 },
+        hover_readings,
+    }
 }

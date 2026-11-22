@@ -5,6 +5,8 @@ use std::collections::HashMap;
 pub struct ChartPoint {
     pub x: f64,
     pub y: f64,
+    #[serde(default)]
+    pub yerr: Option<f64>,
     #[serde(default, rename = "yLow")]
     pub y_low: Option<f64>,
     #[serde(default, rename = "yHigh")]
@@ -44,16 +46,58 @@ pub struct PieSlice {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChartAnnotation {
-    /// "hline" | "vline"
+    /// "hline" | "vline" | "vspan" | "hspan" | "arrow"
     pub kind: String,
+    #[serde(default)]
     pub value: f64,
+    #[serde(default)]
+    pub from: Option<f64>,
+    #[serde(default)]
+    pub to: Option<f64>,
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
+    #[serde(default, rename = "textX")]
+    pub text_x: Option<f64>,
+    #[serde(default, rename = "textY")]
+    pub text_y: Option<f64>,
+    #[serde(default)]
+    pub opacity: Option<f32>,
     #[serde(default)]
     pub label: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
-    /// "left" | "right" (for hline)
+    /// "left" | "right" (for hline / hspan / arrow)
     #[serde(default, rename = "yAxis")]
     pub y_axis: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GridSpec {
+    pub rows: usize,
+    pub cols: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubplotSpec {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default, rename = "xLabel")]
+    pub x_label: Option<String>,
+    #[serde(default, rename = "yLabel")]
+    pub y_label: Option<String>,
+    #[serde(default, rename = "xType")]
+    pub x_type: Option<String>,
+    #[serde(default)]
+    pub categories: Option<Vec<String>>,
+    #[serde(default, rename = "xDomain")]
+    pub x_domain: Option<[f64; 2]>,
+    #[serde(default, rename = "yDomain")]
+    pub y_domain: Option<[f64; 2]>,
+    #[serde(default)]
+    pub annotations: Option<Vec<ChartAnnotation>>,
+    pub series: Vec<ChartSeries>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -154,6 +198,11 @@ pub struct ChartSpec {
     pub annotations: Option<Vec<ChartAnnotation>>,
     #[serde(default, rename = "showLegend")]
     pub show_legend: Option<bool>,
+    #[serde(default)]
+    pub grid: Option<GridSpec>,
+    #[serde(default)]
+    pub subplots: Option<Vec<SubplotSpec>>,
+    #[serde(default)]
     pub series: Vec<ChartSeries>,
     #[serde(default)]
     pub controls: Option<Vec<ChartControl>>,

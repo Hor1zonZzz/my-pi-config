@@ -137,7 +137,7 @@ export class InlineChartComponent implements Component {
 		for (const c of init.spec.controls ?? []) {
 			this.controlValues[c.id] = c.value;
 		}
-		for (const s of init.spec.series) {
+		for (const s of init.spec.series ?? []) {
 			if (s.visible === false) {
 				this.hiddenSeries.add(s.id);
 			}
@@ -495,8 +495,9 @@ export class InlineChartComponent implements Component {
 
 		// Inline color dots legend (only when multiple series and room allows)
 		let legendStyled = "";
-		if (this.spec.series.length > 1 && width >= 64) {
-			const parts = this.spec.series.slice(0, 4).map((s, idx) => {
+		const allSeries = this.spec.series ?? [];
+		if (allSeries.length > 1 && width >= 64) {
+			const parts = allSeries.slice(0, 4).map((s, idx) => {
 				const hex = s.color || ["#0f766e", "#4F8CFF", "#c6a0f6", "#38a169"][idx % 4];
 				const m = hex.replace("#", "");
 				const r = parseInt(m.slice(0, 2), 16) || 15;
@@ -557,7 +558,7 @@ export class InlineChartComponent implements Component {
 		// Toggleable series buttons (grouped by label)
 		const toggleGroups: Array<{ label: string; ids: string[] }> = [];
 		const seen = new Map<string, string[]>();
-		for (const s of this.spec.series) {
+		for (const s of this.spec.series ?? []) {
 			if (!s.toggleable) continue;
 			let arr = seen.get(s.label);
 			if (!arr) {

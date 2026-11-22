@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 export interface ChartPoint {
 	x: number;
 	y: number;
+	yerr?: number;
 	yLow?: number;
 	yHigh?: number;
 	r?: number;
@@ -31,11 +32,35 @@ export interface PieSlice {
 }
 
 export interface ChartAnnotation {
-	kind: "hline" | "vline";
-	value: number;
+	kind: "hline" | "vline" | "vspan" | "hspan" | "arrow";
+	value?: number;
+	from?: number;
+	to?: number;
+	x?: number;
+	y?: number;
+	textX?: number;
+	textY?: number;
+	opacity?: number;
 	label?: string;
 	color?: string;
 	yAxis?: "left" | "right";
+}
+
+export interface GridSpec {
+	rows: number;
+	cols: number;
+}
+
+export interface SubplotSpec {
+	title?: string;
+	xLabel?: string;
+	yLabel?: string;
+	xType?: "number" | "date" | "category";
+	categories?: string[];
+	xDomain?: [number, number];
+	yDomain?: [number, number];
+	annotations?: ChartAnnotation[];
+	series: ChartSeries[];
 }
 
 export interface ChartSeries {
@@ -48,6 +73,7 @@ export interface ChartSeries {
 		| "area"
 		| "step"
 		| "scatter"
+		| "errorbar"
 		| "bar"
 		| "barh"
 		| "band"
@@ -102,7 +128,9 @@ export interface ChartSpec {
 	params?: Record<string, number>;
 	annotations?: ChartAnnotation[];
 	showLegend?: boolean;
-	series: ChartSeries[];
+	grid?: GridSpec;
+	subplots?: SubplotSpec[];
+	series?: ChartSeries[];
 	controls?: ChartControl[];
 }
 

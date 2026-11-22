@@ -1,5 +1,5 @@
 use crate::expr::{parse_expr, Expr};
-use crate::render_special::{render_barh, render_boxplot, render_heatmap, render_pie};
+use crate::render_special::{render_barh, render_boxplot, render_grid, render_heatmap, render_pie};
 use crate::spec::{AxisTick, ChartSeries, HoverReading, PlotBoxFrac, RenderRequest, RenderResponse, ThemePalette};
 use base64::Engine as _;
 use cosmic_text::{Attrs, Buffer, Color as TextColor, Family, FontSystem, Metrics, Shaping, SwashCache};
@@ -151,6 +151,14 @@ impl Renderer {
         pixmap.fill(Color::TRANSPARENT);
 
         // Title, subtitle, and legend are rendered natively in the terminal card header for crisp vector typography.
+        // Dispatch multi-subplot grid if subplots are provided
+        if let Some(subplots) = &req.spec.subplots {
+            if !subplots.is_empty() {
+                let out = render_grid(self, &mut pixmap, req, subplots, &theme, dpr);
+                return self.finish(req.req_id, &pixmap, out.x_domain, out.y_domain, out.plot_box, false, None, None, out.hover_readings, t0);
+            }
+        }
+
         // Dispatch special standalone chart types if primary series uses them:
         if let Some(first) = req.spec.series.first() {
             match first.style.as_deref() {
@@ -305,6 +313,7 @@ impl Renderer {
         struct ResolvedPoint {
             x: f64,
             y: f64,
+            yerr: Option<f64>,
             y_low: Option<f64>,
             y_high: Option<f64>,
             r: Option<f32>,
@@ -371,6 +380,7 @@ impl Renderer {
                         .map(|(i, c)| ResolvedPoint {
                             x: lo + (i as f64 + 0.5) * bw,
                             y: c as f64,
+                            yerr: None,
                             y_low: None,
                             y_high: None,
                             r: None,
@@ -393,6 +403,7 @@ impl Renderer {
                             pts.push(ResolvedPoint {
                                 x,
                                 y: (yl + yh) * 0.5,
+                                yerr: None,
                                 y_low: Some(yl),
                                 y_high: Some(yh),
                                 r: None,
@@ -413,7 +424,7 @@ impl Renderer {
                         lv.insert("t".to_string(), x);
                         let y = expr.eval(&lv);
                         if y.is_finite() {
-                            pts.push(ResolvedPoint { x, y, y_low: None, y_high: None, r: None });
+                            pts.push(ResolvedPoint { x, y, yerr: None, y_low: None, y_high: None, r: None });
                         }
                     }
                     parsed_expr = Some(expr);
@@ -427,6 +438,7 @@ impl Renderer {
                     .map(|p| ResolvedPoint {
                         x: p.x,
                         y: p.y,
+                        yerr: p.yerr,
                         y_low: p.y_low,
                         y_high: p.y_high,
                         r: p.r,
@@ -440,6 +452,7 @@ impl Renderer {
                     .map(|(i, &v)| ResolvedPoint {
                         x: i as f64,
                         y: v,
+                        yerr: None,
                         y_low: None,
                         y_high: None,
                         r: None,
@@ -476,8 +489,10 @@ impl Renderer {
                     has_bar_or_hist = true;
                 }
                 for p in &r.points {
-                    min_y = min_y.min(p.y_low.unwrap_or(p.y));
-                    max_y = max_y.max(p.y_high.unwrap_or(p.y));
+                    let lo = p.y_low.unwrap_or_else(|| p.y - p.yerr.unwrap_or(0.0).abs());
+                    let hi = p.y_high.unwrap_or_else(|| p.y + p.yerr.unwrap_or(0.0).abs());
+                    min_y = min_y.min(lo);
+                    max_y = max_y.max(hi);
                 }
             }
             if has_bar_or_hist {
@@ -740,6 +755,46 @@ impl Renderer {
                         }
                     }
                 }
+                "errorbar" => {
+                    // Connect centers with a crisp line + error bars with caps + circular markers
+                    let mut pb = PathBuilder::new();
+                    let mut started = false;
+                    for p in &r.points {
+                        let px = map_x(p.x);
+                        let py = map_y(p.y).clamp(plot_y, plot_y + plot_h);
+                        if !started {
+                            pb.move_to(px, py);
+                            started = true;
+                        } else {
+                            pb.line_to(px, py);
+                        }
+                    }
+                    if let Some(path) = pb.finish() {
+                        let mut paint = Paint::default();
+                        paint.set_color(col);
+                        paint.anti_alias = true;
+                        let stroke = Stroke { width: lw, line_cap: LineCap::Round, line_join: LineJoin::Round, ..Stroke::default() };
+                        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                    }
+                    let cap_half = 5.0 * dpr;
+                    for p in &r.points {
+                        let px = map_x(p.x);
+                        let py = map_y(p.y).clamp(plot_y, plot_y + plot_h);
+                        if px < plot_x - 2.0 || px > plot_x + plot_w + 2.0 {
+                            continue;
+                        }
+                        let lo = p.y_low.unwrap_or_else(|| p.y - p.yerr.unwrap_or(0.0).abs());
+                        let hi = p.y_high.unwrap_or_else(|| p.y + p.yerr.unwrap_or(0.0).abs());
+                        let py_lo = map_y(lo).clamp(plot_y, plot_y + plot_h);
+                        let py_hi = map_y(hi).clamp(plot_y, plot_y + plot_h);
+                        let mut err_col = col;
+                        err_col.set_alpha(0.75);
+                        draw_line(pixmap, px, py_hi, px, py_lo, err_col, 1.4 * dpr, None);
+                        draw_line(pixmap, px - cap_half, py_hi, px + cap_half, py_hi, err_col, 1.4 * dpr, None);
+                        draw_line(pixmap, px - cap_half, py_lo, px + cap_half, py_lo, err_col, 1.4 * dpr, None);
+                        fill_circle(pixmap, px, py, 3.8 * dpr, col);
+                    }
+                }
                 "scatter" => {
                     for p in &r.points {
                         let px = map_x(p.x);
@@ -861,46 +916,70 @@ impl Renderer {
             }
         }
 
-        // Annotations (hline / vline)
+        // Annotations (hline / vline / vspan / hspan / arrow)
         if let Some(annos) = &req.spec.annotations {
             for a in annos {
-                let col = hex(a.color.as_deref().unwrap_or("#e53e3e"));
+                let col_hex = a.color.as_deref().unwrap_or("#e53e3e");
+                let col = hex(col_hex);
                 let dash = StrokeDash::new(vec![5.0 * dpr, 4.0 * dpr], 0.0);
-                if a.kind == "hline" {
-                    let py = if a.y_axis.as_deref() == Some("right") {
-                        map_y_right(a.value)
-                    } else {
-                        map_y_left(a.value)
-                    };
-                    if py >= plot_y && py <= plot_y + plot_h {
-                        draw_line(pixmap, plot_x, py, plot_x + plot_w, py, col, 1.4 * dpr, dash);
-                        if let Some(lbl) = &a.label {
-                            self.draw_text_right(
-                                pixmap,
-                                lbl,
-                                plot_x + plot_w - 6.0 * dpr,
-                                (py - 16.0 * dpr).max(plot_y + 2.0 * dpr),
-                                11.0 * dpr,
-                                text_hex(a.color.as_deref().unwrap_or("#e53e3e")),
-                            );
+                match a.kind.as_str() {
+                    "hline" => {
+                        let py = if a.y_axis.as_deref() == Some("right") { map_y_right(a.value) } else { map_y_left(a.value) };
+                        if py >= plot_y && py <= plot_y + plot_h {
+                            draw_line(pixmap, plot_x, py, plot_x + plot_w, py, col, 1.4 * dpr, dash);
+                            if let Some(lbl) = &a.label {
+                                self.draw_text_right(pixmap, lbl, plot_x + plot_w - 6.0 * dpr, (py - 16.0 * dpr).max(plot_y + 2.0 * dpr), 11.0 * dpr, text_hex(col_hex));
+                            }
                         }
                     }
-                } else if a.kind == "vline" {
-                    let px = map_x(a.value);
-                    if px >= plot_x && px <= plot_x + plot_w {
-                        draw_line(pixmap, px, plot_y, px, plot_y + plot_h, col, 1.4 * dpr, dash);
-                        if let Some(lbl) = &a.label {
-                            self.draw_text(
-                                pixmap,
-                                lbl,
-                                (px + 5.0 * dpr).min(plot_x + plot_w - 60.0 * dpr),
-                                plot_y + 4.0 * dpr,
-                                11.0 * dpr,
-                                text_hex(a.color.as_deref().unwrap_or("#e53e3e")),
-                                false,
-                            );
+                    "vline" => {
+                        let px = map_x(a.value);
+                        if px >= plot_x && px <= plot_x + plot_w {
+                            draw_line(pixmap, px, plot_y, px, plot_y + plot_h, col, 1.4 * dpr, dash);
+                            if let Some(lbl) = &a.label {
+                                self.draw_text(pixmap, lbl, (px + 5.0 * dpr).min(plot_x + plot_w - 60.0 * dpr), plot_y + 4.0 * dpr, 11.0 * dpr, text_hex(col_hex), false);
+                            }
                         }
                     }
+                    "vspan" => {
+                        if let (Some(f), Some(t)) = (a.from, a.to) {
+                            let x1 = map_x(f.min(t)).clamp(plot_x, plot_x + plot_w);
+                            let x2 = map_x(f.max(t)).clamp(plot_x, plot_x + plot_w);
+                            let mut fill = col;
+                            fill.set_alpha(a.opacity.unwrap_or(0.14).clamp(0.03, 0.5));
+                            fill_rect(pixmap, x1, plot_y, (x2 - x1).max(1.0), plot_h, fill);
+                            if let Some(lbl) = &a.label {
+                                self.draw_text_center(pixmap, lbl, (x1 + x2) * 0.5, plot_y + 6.0 * dpr, 10.5 * dpr, text_hex(col_hex));
+                            }
+                        }
+                    }
+                    "hspan" => {
+                        if let (Some(f), Some(t)) = (a.from, a.to) {
+                            let map_y = |v: f64| if a.y_axis.as_deref() == Some("right") { map_y_right(v) } else { map_y_left(v) };
+                            let y1 = map_y(f.max(t)).clamp(plot_y, plot_y + plot_h);
+                            let y2 = map_y(f.min(t)).clamp(plot_y, plot_y + plot_h);
+                            let mut fill = col;
+                            fill.set_alpha(a.opacity.unwrap_or(0.14).clamp(0.03, 0.5));
+                            fill_rect(pixmap, plot_x, y1, plot_w, (y2 - y1).max(1.0), fill);
+                            if let Some(lbl) = &a.label {
+                                self.draw_text_right(pixmap, lbl, plot_x + plot_w - 6.0 * dpr, y1 + 4.0 * dpr, 10.5 * dpr, text_hex(col_hex));
+                            }
+                        }
+                    }
+                    "arrow" => {
+                        if let (Some(ax), Some(ay)) = (a.x, a.y) {
+                            let tx = map_x(ax).clamp(plot_x, plot_x + plot_w);
+                            let ty = (if a.y_axis.as_deref() == Some("right") { map_y_right(ay) } else { map_y_left(ay) }).clamp(plot_y, plot_y + plot_h);
+                            let sx = a.text_x.map(&map_x).unwrap_or_else(|| if tx > plot_x + plot_w * 0.6 { tx - 70.0 * dpr } else { tx + 50.0 * dpr }).clamp(plot_x + 8.0 * dpr, plot_x + plot_w - 8.0 * dpr);
+                            let sy = a.text_y.map(|vy| if a.y_axis.as_deref() == Some("right") { map_y_right(vy) } else { map_y_left(vy) }).unwrap_or_else(|| (ty - 32.0 * dpr).max(plot_y + 16.0 * dpr)).clamp(plot_y + 10.0 * dpr, plot_y + plot_h - 10.0 * dpr);
+                            draw_arrow(pixmap, sx, sy, tx, ty, col, 1.6 * dpr, dpr);
+                            if let Some(lbl) = &a.label {
+                                let lx = if sx <= tx { (sx - self.measure_text_width(lbl, 11.0 * dpr) - 4.0 * dpr).max(plot_x + 4.0 * dpr) } else { (sx + 4.0 * dpr).min(plot_x + plot_w - 60.0 * dpr) };
+                                self.draw_text(pixmap, lbl, lx, (sy - 7.0 * dpr).max(plot_y + 2.0 * dpr), 11.0 * dpr, text_hex(col_hex), true);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1081,6 +1160,36 @@ pub fn draw_line(pixmap: &mut Pixmap, x1: f32, y1: f32, x2: f32, y2: f32, color:
         paint.anti_alias = true;
         let stroke = Stroke { width, dash, ..Stroke::default() };
         pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
+}
+
+pub fn draw_arrow(pixmap: &mut Pixmap, x1: f32, y1: f32, x2: f32, y2: f32, color: Color, width: f32, dpr: f32) {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let len = (dx * dx + dy * dy).sqrt().max(1.0);
+    let ux = dx / len;
+    let uy = dy / len;
+    let head_len = 8.5 * dpr;
+    let head_w = 4.2 * dpr;
+    // Stop shaft slightly before tip so arrowhead looks sharp
+    let sx2 = x2 - ux * (head_len * 0.7);
+    let sy2 = y2 - uy * (head_len * 0.7);
+    draw_line(pixmap, x1, y1, sx2, sy2, color, width, None);
+
+    let bx = x2 - ux * head_len;
+    let by = y2 - uy * head_len;
+    let px = -uy * head_w;
+    let py = ux * head_w;
+    let mut pb = PathBuilder::new();
+    pb.move_to(x2, y2);
+    pb.line_to(bx + px, by + py);
+    pb.line_to(bx - px, by - py);
+    pb.close();
+    if let Some(path) = pb.finish() {
+        let mut paint = Paint::default();
+        paint.set_color(color);
+        paint.anti_alias = true;
+        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
     }
 }
 

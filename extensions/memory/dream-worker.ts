@@ -22,6 +22,7 @@ export interface WorkerArgs {
 	agentDir: string;
 	dir: string;
 	notes: string;
+	projectDir?: string;
 	sessionDir: string;
 	/** The session that started the worker: left out of the review, and used to attribute calls. */
 	session: string;
@@ -84,6 +85,7 @@ async function main(): Promise<void> {
 		const result = await dream({
 			dir: args.dir,
 			notes: args.notes,
+			projectDir: args.projectDir,
 			sessionDir: args.sessionDir,
 			session: args.session,
 			since,

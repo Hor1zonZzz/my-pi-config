@@ -16,6 +16,7 @@ import {
 	serializeNote,
 	snapshot,
 	writeConfig,
+	writeNote,
 } from "./store.ts";
 
 async function tempDir(t: test.TestContext): Promise<string> {
@@ -60,6 +61,31 @@ test("the index is sorted, byte-stable, and skips MEMORY.md and hidden files", a
 	assert.equal(await rebuildIndex(notes), first);
 	assert.equal((await listNotes(notes)).length, 2);
 	assert.equal(formatIndex([]), "(no notes yet)\n");
+});
+
+test("the index groups typed notes by priority (User & Feedback first) while staying byte-stable", async (t) => {
+	const notes = await tempDir(t);
+	await writeNote(notes, "z-ref.md", { name: "z-ref", description: "ref note", type: "reference" }, "ref");
+	await writeNote(notes, "a-proj.md", { name: "a-proj", description: "proj note", type: "project" }, "proj");
+	await writeNote(notes, "u-pref.md", { name: "u-pref", description: "user pref", type: "user" }, "pref");
+	await writeNote(notes, "b-fb.md", { name: "b-fb", description: "feedback", type: "feedback" }, "fb");
+	const index = await rebuildIndex(notes);
+	assert.equal(
+		index,
+		[
+			"## User & Feedback",
+			"- [b-fb](b-fb.md) — feedback",
+			"- [u-pref](u-pref.md) — user pref",
+			"",
+			"## Project",
+			"- [a-proj](a-proj.md) — proj note",
+			"",
+			"## Reference",
+			"- [z-ref](z-ref.md) — ref note",
+			"",
+		].join("\n"),
+	);
+	assert.equal(await rebuildIndex(notes), index);
 });
 
 test("the injected index stops at 200 lines", () => {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { readCalls } from "./call-log.ts";
-import { type AgentRun, type AgentTask, DREAM_WINDOW_MS, type DreamAgents, dream, dreamSince, WORK_DIR } from "./dream.ts";
+import { type AgentRun, type AgentTask, DREAM_WINDOW_MS, type DreamAgents, dream, dreamSince, findStaleRepoPaths, WORK_DIR } from "./dream.ts";
 import { listNotes, writeNote } from "./store.ts";
 import { executeMemoryCommand } from "./tool.ts";
 
@@ -176,4 +176,32 @@ test("only sessions from the last three days are read, even after a long gap", a
 	assert.equal(result.readUntil, at(100));
 	assert.equal(dreamSince(undefined, NOW.getTime()), NOW.getTime() - DREAM_WINDOW_MS);
 	assert.equal(dreamSince(at(100), NOW.getTime()), at(100));
+});
+
+test("findStaleRepoPaths flags missing repo files and passes hints to organizer without false positives", async (t) => {
+	const s = await setup(t);
+	const repo = join(s.root, "repo");
+	await mkdir(join(repo, "frontend", "components"), { recursive: true });
+	await writeFile(join(repo, "frontend", "components", "live.tsx"), "export {};");
+	await writeNote(
+		s.notes,
+		"ui.md",
+		{ name: "ui", description: "UI notes", type: "reference" },
+		[
+			"- Exists: `frontend/components/live.tsx`",
+			"- Deleted: `frontend/components/legacy.tsx`",
+			"- URL ignored: https://example.com/frontend/components/missing.tsx",
+			"- Remote path ignored: /data/arex/frontend/components/missing.tsx",
+			"- Non-repo prefix ignored: other/dir/missing.ts",
+		].join("\n"),
+	);
+	await writeNote(s.notes, "prefs.md", { name: "prefs", description: "User prefs", type: "user" }, "Keep it short.");
+	const stale = await findStaleRepoPaths(s.notes, repo);
+	assert.deepEqual(stale, [{ note: "ui.md", paths: ["frontend/components/legacy.tsx"] }]);
+
+	await s.addSession("a", 100, "check ui");
+	const seen: AgentTask[] = [];
+	await dream({ ...input(s, agents(s.notes, async () => {}, async () => {}, seen)), projectDir: repo });
+	const orgTask = seen.find((task) => task.role === "organize");
+	assert.deepEqual(orgTask?.stalePaths, [{ note: "ui.md", paths: ["frontend/components/legacy.tsx"] }]);
 });

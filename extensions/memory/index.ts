@@ -35,6 +35,7 @@ const WORKER_SCRIPT = fileURLToPath(new URL("./dream-worker.ts", import.meta.url
 export default function memoryExtension(pi: ExtensionAPI) {
 	let dir: string | undefined;
 	let notes: string | undefined;
+	let projectDir = "";
 	let sessionId = "";
 	let sessionDir = "";
 	let project = "";
@@ -121,6 +122,7 @@ export default function memoryExtension(pi: ExtensionAPI) {
 			agentDir: getAgentDir(),
 			dir,
 			notes,
+			projectDir,
 			sessionDir,
 			session: sessionId,
 			trigger,
@@ -210,6 +212,7 @@ export default function memoryExtension(pi: ExtensionAPI) {
 		ui = ctx.hasUI ? ctx.ui : undefined;
 		dir = memoryDir(getAgentDir(), ctx.cwd);
 		notes = notesDir(dir);
+		projectDir = ctx.cwd;
 		project = ctx.cwd.split(/[/\\]/).filter(Boolean).pop() ?? ctx.cwd;
 		sessionId = ctx.sessionManager.getSessionId();
 		sessionDir = ctx.sessionManager.getSessionDir();

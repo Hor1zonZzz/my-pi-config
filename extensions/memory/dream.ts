@@ -6,7 +6,7 @@
  * reads only the notes and a copy of the raw session JSONL, not the project. This module only
  * orchestrates, so it stays free of Pi imports.
  */
-import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { access, copyFile, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { CallUsage } from "./call-log.ts";
 import { appendCall } from "./call-log.ts";
@@ -26,12 +26,19 @@ export function dreamSince(lastDreamAt: number | undefined, now = Date.now()): n
 }
 export const WORK_DIR = ".dream-work";
 
+export interface StalePathHint {
+	note: string;
+	paths: string[];
+}
+
 export interface AgentTask {
 	role: "analyze" | "organize";
 	/** The dream's work directory and the agent's cwd: holds sessions/. */
 	workDir: string;
 	/** Analyze only: the copied raw session JSONL files (absolute paths) and their ids, oldest first. */
 	transcripts?: { path: string; session: string }[];
+	/** Organize only: repo-relative file paths mentioned in notes that no longer exist on disk. */
+	stalePaths?: StalePathHint[];
 }
 
 export interface AgentRun {
@@ -59,6 +66,8 @@ export interface DreamAgents {
 export interface DreamInput {
 	dir: string;
 	notes: string;
+	/** Project working directory, used only for deterministic stale-path checks before organize. */
+	projectDir?: string;
 	/** Pi's session directory for this project. */
 	sessionDir: string;
 	/** The running session: left out of the review and used to attribute calls. */
@@ -82,6 +91,52 @@ export interface DreamResult {
 	organizeFailed: boolean;
 	/** The new lastDreamAt: the newest session file read. Unset unless status is "done" or "nothing". */
 	readUntil?: number;
+}
+
+const REPO_FILE_EXT = "(?:ts|tsx|js|jsx|mjs|cjs|py|sh|md|json|yaml|yml|sql|toml)";
+const REPO_PATH_RE = new RegExp(
+	`(?<![A-Za-z0-9_./:-])([A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+\\.${REPO_FILE_EXT})(?![A-Za-z0-9_./-])`,
+	"g",
+);
+
+/**
+ * Finds repo-relative file paths mentioned in notes that no longer exist under projectDir.
+ * Only checks paths whose first segment is an existing top-level directory in projectDir,
+ * so URLs, remote server paths, and placeholder patterns are never flagged.
+ */
+export async function findStaleRepoPaths(notes: string, projectDir: string): Promise<StalePathHint[]> {
+	let topDirs: Set<string>;
+	try {
+		const entries = await readdir(projectDir, { withFileTypes: true });
+		topDirs = new Set(entries.filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name));
+	} catch {
+		return [];
+	}
+	if (topDirs.size === 0) return [];
+	const out: StalePathHint[] = [];
+	const cache = new Map<string, boolean>();
+	for (const note of await listNotes(notes)) {
+		const missing = new Set<string>();
+		for (const match of note.body.matchAll(REPO_PATH_RE)) {
+			const candidate = match[1];
+			if (candidate.includes("..")) continue;
+			const first = candidate.slice(0, candidate.indexOf("/"));
+			if (!topDirs.has(first)) continue;
+			let exists = cache.get(candidate);
+			if (exists === undefined) {
+				try {
+					await access(join(projectDir, candidate));
+					exists = true;
+				} catch {
+					exists = false;
+				}
+				cache.set(candidate, exists);
+			}
+			if (!exists) missing.add(candidate);
+		}
+		if (missing.size > 0) out.push({ note: note.path, paths: [...missing].sort() });
+	}
+	return out;
 }
 
 async function noteTexts(notes: string): Promise<Map<string, string>> {
@@ -179,9 +234,10 @@ export async function dream(input: DreamInput): Promise<DreamResult> {
 
 		// Organize the whole store once.
 		if ((await listNotes(input.notes)).length > 1) {
+			const stalePaths = input.projectDir ? await findStaleRepoPaths(input.notes, input.projectDir) : [];
 			const started = Date.now();
-			const run = await safeRun(agents, { role: "organize", workDir }, signal);
-			await recordRun(input, ref, "deepseek-organize", {}, started, run);
+			const run = await safeRun(agents, { role: "organize", workDir, ...(stalePaths.length > 0 ? { stalePaths } : {}) }, signal);
+			await recordRun(input, ref, "deepseek-organize", stalePaths.length > 0 ? { stalePaths } : {}, started, run);
 			if (signal.aborted) return { ...result, status: "aborted" };
 			result.organizeFailed = !run.ok;
 		}

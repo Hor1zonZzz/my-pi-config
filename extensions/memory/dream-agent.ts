@@ -15,7 +15,7 @@ import { createAgentSession, DefaultResourceLoader, type ExtensionAPI, SessionMa
 import type { CallUsage } from "./call-log.ts";
 import type { AgentRun, AgentTask, DreamAgents } from "./dream.ts";
 import { createMemoryTool, MEMORY_TOOL } from "./memory-tool.ts";
-import { ANALYZER_AGENT_PROMPT, agentPrompt, analyzeTask, ORGANIZE_TASK, ORGANIZER_AGENT_PROMPT } from "./prompts.ts";
+import { ANALYZER_AGENT_PROMPT, agentPrompt, analyzeTask, ORGANIZER_AGENT_PROMPT, organizeTask } from "./prompts.ts";
 import { MEMORY_ROOT } from "./tool.ts";
 
 /** Pi's base tools, all of them. */
@@ -98,7 +98,7 @@ export function createDreamAgents(options: DreamAgentOptions): DreamAgents {
 			signal.addEventListener("abort", onAbort, { once: true });
 			try {
 				if (signal.aborted) throw new Error("aborted");
-				await session.prompt(analyzer ? analyzeTask(task.transcripts ?? []) : ORGANIZE_TASK);
+				await session.prompt(analyzer ? analyzeTask(task.transcripts ?? []) : organizeTask(task.stalePaths));
 				const last = [...session.messages].reverse().find((message) => message.role === "assistant") as
 					| { stopReason?: string; errorMessage?: string }
 					| undefined;

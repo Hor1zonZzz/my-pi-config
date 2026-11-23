@@ -190,10 +190,28 @@ export function oneLine(text: string, max: number): string {
 	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
+const INDEX_GROUPS = [
+	{ heading: "## User & Feedback", types: new Set(["user", "feedback"]) },
+	{ heading: "## Project", types: new Set(["project"]) },
+	{ heading: "## Reference", types: new Set(["reference"]) },
+] as const;
+
 /** No timestamps or counts: the same notes always give the same bytes, so prompt caches hit. */
 export function formatIndex(notes: NoteInfo[]): string {
 	if (notes.length === 0) return "(no notes yet)\n";
-	return `${notes.map((note) => `- [${note.name}](${note.path}) — ${note.description}`).join("\n")}\n`;
+	const line = (note: NoteInfo) => `- [${note.name}](${note.path}) — ${note.description}`;
+	const buckets: { heading: string; items: NoteInfo[] }[] = INDEX_GROUPS.map((g) => ({ heading: g.heading, items: [] }));
+	const other: NoteInfo[] = [];
+	for (const note of notes) {
+		const type = typeof note.meta.type === "string" ? note.meta.type : "";
+		const bucket = INDEX_GROUPS.findIndex((g) => g.types.has(type));
+		if (bucket >= 0) buckets[bucket].items.push(note);
+		else other.push(note);
+	}
+	if (other.length > 0) buckets.push({ heading: "## Other", items: other });
+	const nonEmpty = buckets.filter((b) => b.items.length > 0);
+	if (nonEmpty.length <= 1) return `${notes.map(line).join("\n")}\n`;
+	return `${nonEmpty.map((b) => `${b.heading}\n${b.items.map(line).join("\n")}`).join("\n\n")}\n`;
 }
 
 export async function rebuildIndex(notes: string): Promise<string> {
